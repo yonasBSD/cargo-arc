@@ -305,13 +305,128 @@ fn process_use_statement(
     None
 }
 
+/// Process a use statement that may contain multiple symbols (`{A, B, C}`) or glob (`*`).
+/// Returns a Vec of DependencyRefs, one per symbol.
+///
+/// Handles:
+/// - `use crate::module::{A, B, C}` → 3 DependencyRefs
+/// - `use crate::module::*` → 1 DependencyRef with target_item = "*"
+/// - `use crate::module::Item` → 1 DependencyRef (simple import)
+fn process_use_statement_multi(
+    line: &str,
+    line_num: usize,
+    current_crate: &str,
+    workspace_crates: &HashSet<String>,
+    source_file: &Path,
+) -> Vec<DependencyRef> {
+    let line = line.trim();
+    if !line.starts_with("use ") {
+        return vec![];
+    }
+
+    // Extract the path after "use "
+    let path = line
+        .strip_prefix("use ")
+        .unwrap()
+        .trim_end_matches(';')
+        .trim();
+
+    // Check for multi-symbol import: `use path::{A, B, C}`
+    if let Some(brace_start) = path.find('{')
+        && let Some(brace_end) = path.find('}')
+    {
+        let base_path = path[..brace_start].trim_end_matches(':');
+        let symbols_str = &path[brace_start + 1..brace_end];
+        let symbols: Vec<&str> = symbols_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // Parse base path to get crate and module
+        if let Some((target_crate, target_module)) =
+            parse_base_path(base_path, current_crate, workspace_crates)
+        {
+            return symbols
+                .into_iter()
+                .map(|sym| DependencyRef {
+                    target_crate: target_crate.clone(),
+                    target_module: target_module.clone(),
+                    target_item: Some(sym.to_string()),
+                    source_file: source_file.to_path_buf(),
+                    line: line_num,
+                })
+                .collect();
+        }
+        return vec![];
+    }
+
+    // Check for glob import: `use path::*`
+    if path.ends_with("::*") {
+        let base_path = path.trim_end_matches("::*");
+        if let Some((target_crate, target_module)) =
+            parse_base_path(base_path, current_crate, workspace_crates)
+        {
+            return vec![DependencyRef {
+                target_crate,
+                target_module,
+                target_item: Some("*".to_string()),
+                source_file: source_file.to_path_buf(),
+                line: line_num,
+            }];
+        }
+        return vec![];
+    }
+
+    // Fall back to simple import
+    if let Some(dep) =
+        process_use_statement(line, line_num, current_crate, workspace_crates, source_file)
+    {
+        return vec![dep];
+    }
+
+    vec![]
+}
+
+/// Parse a base path (before `::*` or `::{...}`) into (crate, module).
+fn parse_base_path(
+    base_path: &str,
+    current_crate: &str,
+    workspace_crates: &HashSet<String>,
+) -> Option<(String, String)> {
+    // Handle crate-local: `crate::module`
+    if let Some(after_crate) = base_path.strip_prefix("crate::") {
+        let parts: Vec<&str> = after_crate.split("::").collect();
+        if parts.is_empty() || parts[0].is_empty() {
+            return None;
+        }
+        return Some((normalize_crate_name(current_crate), parts[0].to_string()));
+    }
+
+    // Handle workspace crate: `other_crate::module`
+    let parts: Vec<&str> = base_path.split("::").collect();
+    if parts.len() >= 2 {
+        let first_segment = parts[0].trim();
+        let normalized_first = normalize_crate_name(first_segment);
+        let is_workspace_crate = workspace_crates
+            .iter()
+            .any(|ws_crate| normalize_crate_name(ws_crate) == normalized_first);
+
+        if is_workspace_crate {
+            return Some((first_segment.to_string(), parts[1].to_string()));
+        }
+    }
+
+    None
+}
+
 /// Parse use statements from source code, extracting workspace-relevant dependencies.
 ///
 /// Returns DependencyRefs for:
 /// - Crate-local imports (`use crate::module`)
 /// - Workspace crate imports (`use other_crate::module` where other_crate is in workspace)
 ///
-/// Deduplicates by module_target() keeping first occurrence.
+/// Deduplicates by full_target() to keep distinct symbols but avoid duplicates.
 fn parse_workspace_dependencies(
     source: &str,
     current_crate: &str,
@@ -323,10 +438,14 @@ fn parse_workspace_dependencies(
 
     for (line_idx, line) in source.lines().enumerate() {
         let line_num = line_idx + 1;
-        if let Some(dep) =
-            process_use_statement(line, line_num, current_crate, workspace_crates, source_file)
-        {
-            let target_key = dep.module_target();
+        for dep in process_use_statement_multi(
+            line,
+            line_num,
+            current_crate,
+            workspace_crates,
+            source_file,
+        ) {
+            let target_key = dep.full_target();
             if !seen_targets.contains(&target_key) {
                 seen_targets.insert(target_key);
                 deps.push(dep);
@@ -678,7 +797,7 @@ use std::collections::HashMap;
     }
 
     #[test]
-    fn test_parse_workspace_dependencies_dedup_by_module() {
+    fn test_parse_workspace_dependencies_dedup_by_full_target() {
         let source = r#"
 use crate::graph::build;
 use crate::graph::Node;
@@ -687,10 +806,53 @@ use crate::graph;
         let ws: HashSet<String> = HashSet::new();
         let deps = parse_workspace_dependencies(source, "my_crate", &ws, Path::new("src/cli.rs"));
 
-        // Should deduplicate by module_target
-        assert_eq!(deps.len(), 1, "should deduplicate by target module");
-        assert_eq!(deps[0].target_module, "graph");
-        assert_eq!(deps[0].line, 2, "should keep first occurrence");
+        // Should keep distinct symbols (dedup by full_target, not module_target)
+        assert_eq!(deps.len(), 3, "should keep distinct symbols: {:?}", deps);
+        assert!(
+            deps.iter()
+                .any(|d| d.target_item == Some("build".to_string()))
+        );
+        assert!(
+            deps.iter()
+                .any(|d| d.target_item == Some("Node".to_string()))
+        );
+        assert!(deps.iter().any(|d| d.target_item.is_none()));
+    }
+
+    #[test]
+    fn test_process_use_multi_symbol() {
+        let ws: HashSet<String> = HashSet::new();
+        let deps = process_use_statement_multi(
+            "use crate::graph::{Node, Edge};",
+            1,
+            "my_crate",
+            &ws,
+            Path::new("src/cli.rs"),
+        );
+        assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
+        assert!(
+            deps.iter()
+                .any(|d| d.target_item == Some("Node".to_string()))
+        );
+        assert!(
+            deps.iter()
+                .any(|d| d.target_item == Some("Edge".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_process_use_glob() {
+        let ws: HashSet<String> = HashSet::new();
+        let deps = process_use_statement_multi(
+            "use crate::analyze::*;",
+            1,
+            "my_crate",
+            &ws,
+            Path::new("src/cli.rs"),
+        );
+        assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
+        assert_eq!(deps[0].target_item, Some("*".to_string()));
+        assert_eq!(deps[0].target_module, "analyze");
     }
 
     #[test]

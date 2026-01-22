@@ -15,6 +15,7 @@ pub enum Node {
 pub struct SourceLocation {
     pub file: PathBuf,
     pub line: usize,
+    pub symbols: Vec<String>,
 }
 
 pub enum Edge {
@@ -75,15 +76,38 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
         }
     }
 
-    // Phase 4: Add ModuleDep edges
+    // Phase 4: Add ModuleDep edges (aggregate symbols per module target)
     for (from_path, deps) in &module_deps {
         if let Some(&from_idx) = module_map.get(from_path) {
+            // Group deps by module_target to aggregate symbols into one edge
+            let mut grouped: HashMap<String, Vec<&DependencyRef>> = HashMap::new();
             for dep in deps {
-                if let Some(&to_idx) = module_map.get(&dep.module_target()) {
-                    let locations = vec![SourceLocation {
-                        file: dep.source_file.clone(),
-                        line: dep.line,
-                    }];
+                grouped.entry(dep.module_target()).or_default().push(dep);
+            }
+
+            for (target, target_deps) in grouped {
+                if let Some(&to_idx) = module_map.get(&target) {
+                    // Collect all symbols from deps at the same location, or create one SourceLocation per line
+                    let mut locations_by_line: HashMap<(PathBuf, usize), Vec<String>> =
+                        HashMap::new();
+                    for dep in &target_deps {
+                        let key = (dep.source_file.clone(), dep.line);
+                        if let Some(item) = &dep.target_item {
+                            locations_by_line.entry(key).or_default().push(item.clone());
+                        } else {
+                            locations_by_line.entry(key).or_default();
+                        }
+                    }
+
+                    let locations: Vec<SourceLocation> = locations_by_line
+                        .into_iter()
+                        .map(|((file, line), symbols)| SourceLocation {
+                            file,
+                            line,
+                            symbols,
+                        })
+                        .collect();
+
                     graph.add_edge(from_idx, to_idx, Edge::ModuleDep(locations));
                 }
             }
@@ -134,9 +158,21 @@ mod tests {
         let loc = SourceLocation {
             file: PathBuf::from("src/cli.rs"),
             line: 42,
+            symbols: vec![],
         };
         assert_eq!(loc.file, PathBuf::from("src/cli.rs"));
         assert_eq!(loc.line, 42);
+    }
+
+    #[test]
+    fn test_source_location_with_symbols() {
+        let loc = SourceLocation {
+            file: PathBuf::from("src/cli.rs"),
+            line: 42,
+            symbols: vec!["ModuleInfo".to_string()],
+        };
+        assert_eq!(loc.symbols.len(), 1);
+        assert_eq!(loc.symbols[0], "ModuleInfo");
     }
 
     #[test]
@@ -145,10 +181,12 @@ mod tests {
             SourceLocation {
                 file: PathBuf::from("src/cli.rs"),
                 line: 5,
+                symbols: vec![],
             },
             SourceLocation {
                 file: PathBuf::from("src/cli.rs"),
                 line: 12,
+                symbols: vec![],
             },
         ]);
         if let Edge::ModuleDep(locs) = edge {

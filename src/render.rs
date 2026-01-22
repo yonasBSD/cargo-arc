@@ -1,5 +1,6 @@
 //! SVG Generation
 
+use crate::graph::SourceLocation;
 use crate::layout::{EdgeKind, ItemKind, LayoutIR, NodeId};
 use std::collections::HashSet;
 
@@ -39,6 +40,33 @@ fn calculate_max_arc_width(positioned: &[PositionedItem], ir: &LayoutIR, row_hei
             Some(ARC_BASE + hops * ARC_SCALE + ARROW_SIZE)
         })
         .fold(0.0_f32, |a, b| a.max(b))
+}
+
+/// Format a SourceLocation for display, including symbols with truncation.
+///
+/// Examples:
+/// - No symbols: "src/cli.rs:7"
+/// - Single symbol: "src/cli.rs:7 -> ModuleInfo"
+/// - Multiple symbols: "src/cli.rs:7 -> A, B, C"
+/// - Truncated (>5): "src/cli.rs:7 -> A, B, C, D, E, +2 more"
+fn format_source_location(loc: &SourceLocation) -> String {
+    let base = format!("{}:{}", loc.file.display(), loc.line);
+    if loc.symbols.is_empty() {
+        return base;
+    }
+
+    const MAX_SYMBOLS: usize = 5;
+    if loc.symbols.len() <= MAX_SYMBOLS {
+        format!("{} -> {}", base, loc.symbols.join(", "))
+    } else {
+        let shown = loc.symbols[..MAX_SYMBOLS].join(", ");
+        format!(
+            "{} -> {}, +{} more",
+            base,
+            shown,
+            loc.symbols.len() - MAX_SYMBOLS
+        )
+    }
 }
 
 /// Configuration for SVG rendering
@@ -911,7 +939,7 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
             let locations_str = edge
                 .source_locations
                 .iter()
-                .map(|loc| format!("{}:{}", loc.file.display(), loc.line))
+                .map(format_source_location)
                 .collect::<Vec<_>>()
                 .join(", ");
             let data_loc_attr = if !locations_str.is_empty() {
@@ -1459,6 +1487,7 @@ mod tests {
             vec![SourceLocation {
                 file: PathBuf::from("src/a.rs"),
                 line: 5,
+                symbols: vec![],
             }],
         );
         let svg = render(&ir, &RenderConfig::default());
@@ -1498,6 +1527,85 @@ mod tests {
         assert!(
             svg.contains("aggregatedLocations") || svg.contains("hiddenEdgeData"),
             "Script should collect locations from hidden edges for virtual arcs"
+        );
+    }
+
+    #[test]
+    fn test_format_source_location_no_symbols() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let loc = SourceLocation {
+            file: PathBuf::from("src/cli.rs"),
+            line: 7,
+            symbols: vec![],
+        };
+        assert_eq!(format_source_location(&loc), "src/cli.rs:7");
+    }
+
+    #[test]
+    fn test_format_source_location_with_symbol() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let loc = SourceLocation {
+            file: PathBuf::from("src/cli.rs"),
+            line: 7,
+            symbols: vec!["ModuleInfo".to_string()],
+        };
+        assert_eq!(format_source_location(&loc), "src/cli.rs:7 -> ModuleInfo");
+    }
+
+    #[test]
+    fn test_format_source_location_multiple_symbols() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let loc = SourceLocation {
+            file: PathBuf::from("src/cli.rs"),
+            line: 7,
+            symbols: vec!["ModuleInfo".to_string(), "analyze_module".to_string()],
+        };
+        assert_eq!(
+            format_source_location(&loc),
+            "src/cli.rs:7 -> ModuleInfo, analyze_module"
+        );
+    }
+
+    #[test]
+    fn test_format_source_location_glob() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let loc = SourceLocation {
+            file: PathBuf::from("src/cli.rs"),
+            line: 7,
+            symbols: vec!["*".to_string()],
+        };
+        assert_eq!(format_source_location(&loc), "src/cli.rs:7 -> *");
+    }
+
+    #[test]
+    fn test_format_source_location_truncation() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let loc = SourceLocation {
+            file: PathBuf::from("src/cli.rs"),
+            line: 7,
+            symbols: vec![
+                "A".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+                "E".to_string(),
+                "F".to_string(),
+                "G".to_string(),
+            ],
+        };
+        assert_eq!(
+            format_source_location(&loc),
+            "src/cli.rs:7 -> A, B, C, D, E, +2 more"
         );
     }
 }

@@ -422,10 +422,9 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
                     ..
                 },
             ) = (&graph[src], &graph[dst])
+                && src_crate != dst_crate
             {
-                if src_crate != dst_crate {
-                    crates_with_module_deps.insert((*src_crate, *dst_crate));
-                }
+                crates_with_module_deps.insert((*src_crate, *dst_crate));
             }
         }
     }
@@ -593,6 +592,7 @@ mod tests {
             source_locations: vec![SourceLocation {
                 file: PathBuf::from("src/cli.rs"),
                 line: 42,
+                symbols: vec![],
             }],
         };
         assert_eq!(edge.source_locations.len(), 1);
