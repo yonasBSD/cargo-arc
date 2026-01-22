@@ -19,6 +19,9 @@ ra_ap_project_model = "=0.0.289"
 ra_ap_vfs = "=0.0.289"
 dunce = "1.0.4"
 
+[dev-dependencies]
+tempfile = "3"
+
 # Profile for faster ra_ap_* builds (mirroring cargo-modules approach)
 [profile.dev.package."ra_ap_hir"]
 opt-level = 2

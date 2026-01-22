@@ -42,9 +42,13 @@ pub fn analyze_workspace(manifest_path: &Path) -> Result<Vec<CrateInfo>> {
 }
 
 fn package_to_crate_info(pkg: &Package, workspace_members: &HashSet<&str>) -> CrateInfo {
+    use cargo_metadata::DependencyKind;
+
     let dependencies: Vec<String> = pkg
         .dependencies
         .iter()
+        // Only normal dependencies (exclude dev and build deps to avoid false cycles)
+        .filter(|dep| dep.kind == DependencyKind::Normal)
         .filter(|dep| workspace_members.contains(dep.name.as_str()))
         .map(|dep| dep.name.clone())
         .collect();
@@ -63,7 +67,9 @@ fn package_to_crate_info(pkg: &Package, workspace_members: &HashSet<&str>) -> Cr
 #[derive(Debug, Clone)]
 pub struct ModuleInfo {
     pub name: String,
+    pub full_path: String,
     pub children: Vec<ModuleInfo>,
+    pub dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,21 +78,29 @@ pub struct ModuleTree {
 }
 
 /// Analyzes the module hierarchy of a crate using rust-analyzer's HIR.
-pub fn analyze_modules(crate_info: &CrateInfo) -> Result<ModuleTree> {
-    let manifest_path = crate_info.path.join("Cargo.toml");
-
-    // Load workspace into rust-analyzer
-    let (krate, host, _vfs) = load_crate(&manifest_path)?;
+/// The `host` and `vfs` should be obtained from `load_workspace_hir()`.
+pub fn analyze_modules(
+    crate_info: &CrateInfo,
+    host: &ide::AnalysisHost,
+    vfs: &ra_ap_vfs::Vfs,
+) -> Result<ModuleTree> {
+    // Find crate in already-loaded workspace
+    let krate = find_crate_in_workspace(crate_info, host, vfs)?;
     let db = host.raw_database();
 
     // Walk module tree starting from crate root
     let root_module = krate.root_module();
-    let root = walk_module(root_module, db);
+    let root = walk_module(root_module, db, vfs, "crate");
 
     Ok(ModuleTree { root })
 }
 
-fn walk_module(module: hir::Module, db: &ide::RootDatabase) -> ModuleInfo {
+fn walk_module(
+    module: hir::Module,
+    db: &ide::RootDatabase,
+    vfs: &ra_ap_vfs::Vfs,
+    parent_path: &str,
+) -> ModuleInfo {
     let name = if module.is_crate_root() {
         module
             .krate()
@@ -100,26 +114,93 @@ fn walk_module(module: hir::Module, db: &ide::RootDatabase) -> ModuleInfo {
             .unwrap_or_else(|| "<anonymous>".to_string())
     };
 
+    // Build full path: root is "crate", children are "crate::module_name"
+    let full_path = if module.is_crate_root() {
+        parent_path.to_string()
+    } else {
+        format!("{}::{}", parent_path, name)
+    };
+
+    // Extract module dependencies from imports/uses in this module's scope
+    let dependencies = extract_module_dependencies(module, db, vfs);
+
     let children: Vec<ModuleInfo> = module
         .declarations(db)
         .into_iter()
         .filter_map(|decl| {
             if let hir::ModuleDef::Module(child_module) = decl {
-                Some(walk_module(child_module, db))
+                Some(walk_module(child_module, db, vfs, &full_path))
             } else {
                 None
             }
         })
         .collect();
 
-    ModuleInfo { name, children }
+    ModuleInfo {
+        name,
+        full_path,
+        children,
+        dependencies,
+    }
 }
 
-fn load_crate(manifest_path: &Path) -> Result<(hir::Crate, ide::AnalysisHost, ra_ap_vfs::Vfs)> {
+/// Extract module-level dependencies by parsing use statements from source
+fn extract_module_dependencies(
+    module: hir::Module,
+    db: &ide::RootDatabase,
+    vfs: &ra_ap_vfs::Vfs,
+) -> Vec<String> {
+    let mut deps = HashSet::new();
+
+    // Get the source file for this module
+    let source = module.definition_source(db);
+    let editioned_file_id = source.file_id.original_file(db);
+    let file_id = editioned_file_id.file_id(db);
+
+    // Get file path from VFS and read from disk
+    let vfs_path = vfs.file_path(file_id);
+    let Some(abs_path) = vfs_path.as_path() else {
+        return Vec::new();
+    };
+    let source_text = match std::fs::read_to_string(abs_path.as_str()) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    // Parse "use crate::module" statements
+    // Matches: use crate::foo, use crate::foo::bar, use crate::foo::{...}
+    for line in source_text.lines() {
+        let line = line.trim();
+        if !line.starts_with("use crate::") {
+            continue;
+        }
+
+        // Extract the first module segment after "crate::"
+        // "use crate::analyze::{...}" -> "analyze"
+        // "use crate::graph::build_graph" -> "graph"
+        let after_crate = &line["use crate::".len()..];
+        if let Some(module_name) = after_crate.split("::").next() {
+            // Clean up: remove trailing ; or {
+            let module_name = module_name
+                .trim_end_matches(';')
+                .trim_end_matches('{')
+                .trim();
+            if !module_name.is_empty() {
+                deps.insert(format!("crate::{}", module_name));
+            }
+        }
+    }
+
+    deps.into_iter().collect()
+}
+
+/// Loads the entire workspace into rust-analyzer once.
+/// Returns the AnalysisHost and VFS for reuse across multiple crate analyses.
+pub fn load_workspace_hir(manifest_path: &Path) -> Result<(ide::AnalysisHost, ra_ap_vfs::Vfs)> {
     let project_path = manifest_path.canonicalize()?;
     let project_path = dunce::simplified(&project_path).to_path_buf();
 
-    // Minimal cargo config (no sysroot for speed)
+    // Minimal cargo config
     let cargo_config = project_model::CargoConfig {
         sysroot: Some(project_model::RustLibSource::Discover),
         ..Default::default()
@@ -147,27 +228,36 @@ fn load_crate(manifest_path: &Path) -> Result<(hir::Crate, ide::AnalysisHost, ra
         load_cargo::load_workspace(project_workspace, &Default::default(), &load_config)?;
 
     let host = ide::AnalysisHost::with_database(db);
+    Ok((host, vfs))
+}
 
-    // Find our crate by matching manifest path
-    let crates = hir::Crate::all(host.raw_database());
-    let parent_path = project_path.parent().unwrap_or(&project_path);
-    let parent_utf8 = paths::Utf8PathBuf::from_path_buf(parent_path.to_path_buf())
+/// Finds a specific crate in an already-loaded workspace by matching its path.
+fn find_crate_in_workspace(
+    crate_info: &CrateInfo,
+    host: &ide::AnalysisHost,
+    vfs: &ra_ap_vfs::Vfs,
+) -> Result<hir::Crate> {
+    let crate_path = crate_info.path.canonicalize()?;
+    let crate_path = dunce::simplified(&crate_path).to_path_buf();
+    let crate_utf8 = paths::Utf8PathBuf::from_path_buf(crate_path)
         .map_err(|_| anyhow::anyhow!("Invalid UTF-8 path"))?;
-    let parent_dir = paths::AbsPathBuf::assert(parent_utf8);
+    let crate_dir = paths::AbsPathBuf::assert(crate_utf8);
 
-    let krate = crates
+    let crates = hir::Crate::all(host.raw_database());
+    crates
         .into_iter()
         .find(|k| {
             let root_file = k.root_file(host.raw_database());
             let vfs_path = vfs.file_path(root_file);
             vfs_path
                 .as_path()
-                .map(|p| p.starts_with(&parent_dir))
+                .map(|p| p.starts_with(&crate_dir))
                 .unwrap_or(false)
         })
-        .context("Crate not found in loaded workspace")?;
-
-    Ok((krate, host, vfs))
+        .context(format!(
+            "Crate '{}' not found in loaded workspace",
+            crate_info.name
+        ))
 }
 
 #[cfg(test)]
@@ -204,7 +294,8 @@ mod tests {
         let crates = analyze_workspace(&manifest).expect("should analyze workspace");
         let cargo_arc = crates.iter().find(|c| c.name == "cargo-arc").unwrap();
 
-        let tree = analyze_modules(cargo_arc).expect("should analyze modules");
+        let (host, vfs) = load_workspace_hir(&manifest).expect("should load workspace");
+        let tree = analyze_modules(cargo_arc, &host, &vfs).expect("should analyze modules");
 
         // cargo-arc root module should be named "cargo_arc"
         assert_eq!(tree.root.name, "cargo_arc");
@@ -230,6 +321,90 @@ mod tests {
             child_names.contains(&"render"),
             "should contain 'render' module, found: {:?}",
             child_names
+        );
+    }
+
+    #[test]
+    fn test_module_full_path() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let crates = analyze_workspace(&manifest).expect("should analyze workspace");
+        let cargo_arc = crates.iter().find(|c| c.name == "cargo-arc").unwrap();
+
+        let (host, vfs) = load_workspace_hir(&manifest).expect("should load workspace");
+        let tree = analyze_modules(cargo_arc, &host, &vfs).expect("should analyze modules");
+
+        // Root module full_path should be "crate"
+        assert_eq!(tree.root.full_path, "crate");
+
+        // Child modules should have full paths like "crate::analyze"
+        let analyze_module = tree
+            .root
+            .children
+            .iter()
+            .find(|m| m.name == "analyze")
+            .expect("should find analyze module");
+        assert_eq!(analyze_module.full_path, "crate::analyze");
+    }
+
+    #[test]
+    fn test_module_dependencies() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let crates = analyze_workspace(&manifest).expect("should analyze workspace");
+        let cargo_arc = crates.iter().find(|c| c.name == "cargo-arc").unwrap();
+
+        let (host, vfs) = load_workspace_hir(&manifest).expect("should load workspace");
+        let tree = analyze_modules(cargo_arc, &host, &vfs).expect("should analyze modules");
+
+        // graph module depends on analyze (use crate::analyze::{...})
+        let graph_module = tree
+            .root
+            .children
+            .iter()
+            .find(|m| m.name == "graph")
+            .expect("should find graph module");
+        assert!(
+            graph_module
+                .dependencies
+                .contains(&"crate::analyze".to_string()),
+            "graph should depend on analyze, found: {:?}",
+            graph_module.dependencies
+        );
+
+        // cli module depends on analyze, graph, layout, render
+        let cli_module = tree
+            .root
+            .children
+            .iter()
+            .find(|m| m.name == "cli")
+            .expect("should find cli module");
+        assert!(
+            cli_module
+                .dependencies
+                .contains(&"crate::analyze".to_string()),
+            "cli should depend on analyze, found: {:?}",
+            cli_module.dependencies
+        );
+        assert!(
+            cli_module
+                .dependencies
+                .contains(&"crate::graph".to_string()),
+            "cli should depend on graph, found: {:?}",
+            cli_module.dependencies
+        );
+
+        // render module depends on layout
+        let render_module = tree
+            .root
+            .children
+            .iter()
+            .find(|m| m.name == "render")
+            .expect("should find render module");
+        assert!(
+            render_module
+                .dependencies
+                .contains(&"crate::layout".to_string()),
+            "render should depend on layout, found: {:?}",
+            render_module.dependencies
         );
     }
 }
