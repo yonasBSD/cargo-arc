@@ -1,6 +1,6 @@
 //! Graph Types & Builder
 
-use crate::analyze::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};
+use crate::model::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -150,7 +150,7 @@ fn add_modules_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyze::{CrateInfo, DependencyRef, ModuleTree};
+    use crate::model::{CrateInfo, DependencyRef, ModuleTree};
     use std::path::PathBuf;
 
     #[test]
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_build_graph_with_modules() {
-        use crate::analyze::ModuleInfo;
+        use crate::model::ModuleInfo;
 
         let crates = vec![CrateInfo {
             name: "my_crate".to_string(),
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_build_graph_module_deps() {
-        use crate::analyze::ModuleInfo;
+        use crate::model::ModuleInfo;
 
         let crates = vec![CrateInfo {
             name: "my_crate".to_string(),
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_build_graph_inter_crate_module_deps() {
-        use crate::analyze::ModuleInfo;
+        use crate::model::ModuleInfo;
 
         // Two crates: crate_a depends on crate_b
         let crates = vec![

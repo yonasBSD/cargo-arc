@@ -10,12 +10,7 @@ use ra_ap_project_model as project_model;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
-pub struct CrateInfo {
-    pub name: String,
-    pub path: PathBuf,
-    pub dependencies: Vec<String>,
-}
+use crate::model::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};
 
 /// Analyzes a workspace and returns all member crates.
 /// `manifest_path` should point to a Cargo.toml.
@@ -73,43 +68,6 @@ fn normalize_crate_name(name: &str) -> String {
 // ============================================================================
 // Module Hierarchy Analysis (via ra_ap_hir)
 // ============================================================================
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DependencyRef {
-    pub target_crate: String,
-    pub target_module: String,
-    pub target_item: Option<String>,
-    pub source_file: PathBuf,
-    pub line: usize,
-}
-
-impl DependencyRef {
-    /// Returns full target path: "crate::module::item" or "crate::module" if no item.
-    pub fn full_target(&self) -> String {
-        match &self.target_item {
-            Some(item) => format!("{}::{}::{}", self.target_crate, self.target_module, item),
-            None => format!("{}::{}", self.target_crate, self.target_module),
-        }
-    }
-
-    /// Returns module-level target: "crate::module" (ignores item).
-    pub fn module_target(&self) -> String {
-        format!("{}::{}", self.target_crate, self.target_module)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ModuleInfo {
-    pub name: String,
-    pub full_path: String,
-    pub children: Vec<ModuleInfo>,
-    pub dependencies: Vec<DependencyRef>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ModuleTree {
-    pub root: ModuleInfo,
-}
 
 /// Analyzes the module hierarchy of a crate using rust-analyzer's HIR.
 /// The `host` and `vfs` should be obtained from `load_workspace_hir()`.

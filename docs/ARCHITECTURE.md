@@ -5,6 +5,7 @@
 ```
 src/
 ├── analyze.rs   # Workspace & module extraction (cargo_metadata + ra_ap_hir)
+├── model.rs     # Shared data structures
 ├── graph.rs     # Dependency graph building (petgraph)
 ├── layout.rs    # Tree layout algorithm
 ├── render.rs    # SVG generation
