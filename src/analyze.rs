@@ -439,6 +439,9 @@ fn extract_module_dependencies(
         .strip_prefix(crate_root)
         .map(|p| p.to_path_buf())
         .unwrap_or(abs_path_buf);
+    // Graceful degradation: rust-analyzer already parsed this file successfully,
+    // so read errors here are rare edge cases (file deleted mid-run, permissions).
+    // Missing deps are acceptable - the module still appears, just without edges.
     let source_text = match std::fs::read_to_string(abs_path.as_str()) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
