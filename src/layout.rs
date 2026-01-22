@@ -2,8 +2,9 @@
 
 use crate::graph::{ArcGraph, Edge};
 use petgraph::algo::tarjan_scc;
-use petgraph::graph::NodeIndex;
+use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
+use std::collections::{HashMap, HashSet};
 
 /// Index into LayoutIR.items
 pub type NodeId = usize;
@@ -116,13 +117,115 @@ pub fn topo_sort(graph: &ArcGraph, cycles: &[Cycle]) -> Vec<NodeIndex> {
     result
 }
 
+/// Stable topological sort using Kahn's algorithm.
+/// Preserves alphabetical order for nodes without dependency relationships.
+fn stable_toposort(
+    sibling_deps: &DiGraph<NodeIndex, ()>,
+    children: &[NodeIndex],
+    graph: &ArcGraph,
+) -> Vec<NodeIndex> {
+    use crate::graph::Node;
+    use std::collections::BinaryHeap;
+
+    if children.is_empty() {
+        return vec![];
+    }
+
+    // Map sibling_deps node indices to original NodeIndex
+    let node_to_orig: HashMap<petgraph::graph::NodeIndex, NodeIndex> = sibling_deps
+        .node_indices()
+        .map(|n| (n, sibling_deps[n]))
+        .collect();
+
+    // Compute in-degrees
+    let mut in_degree: HashMap<petgraph::graph::NodeIndex, usize> = HashMap::new();
+    for n in sibling_deps.node_indices() {
+        in_degree.insert(n, 0);
+    }
+    for edge in sibling_deps.edge_references() {
+        *in_degree.get_mut(&edge.target()).unwrap() += 1;
+    }
+
+    // Helper to get name for sorting (reversed for max-heap to act as min-heap)
+    let get_name = |idx: NodeIndex| -> String {
+        if let Node::Module { name, .. } = &graph[idx] {
+            name.clone()
+        } else {
+            String::new()
+        }
+    };
+
+    // Use BinaryHeap with reversed comparison for alphabetical (min-first) order
+    #[derive(Eq, PartialEq)]
+    struct Item(String, petgraph::graph::NodeIndex);
+    impl Ord for Item {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            other.0.cmp(&self.0) // Reversed for min-heap behavior
+        }
+    }
+    impl PartialOrd for Item {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    // Initialize with nodes having in-degree 0
+    let mut heap: BinaryHeap<Item> = BinaryHeap::new();
+    for (&n, &deg) in &in_degree {
+        if deg == 0 {
+            let orig = node_to_orig[&n];
+            heap.push(Item(get_name(orig), n));
+        }
+    }
+
+    let mut result = Vec::new();
+    while let Some(Item(_, n)) = heap.pop() {
+        result.push(node_to_orig[&n]);
+
+        // Decrease in-degree of neighbors
+        for neighbor in sibling_deps.neighbors(n) {
+            let deg = in_degree.get_mut(&neighbor).unwrap();
+            *deg -= 1;
+            if *deg == 0 {
+                let orig = node_to_orig[&neighbor];
+                heap.push(Item(get_name(orig), neighbor));
+            }
+        }
+    }
+
+    // If not all nodes processed, there's a cycle - return empty
+    if result.len() != children.len() {
+        return vec![];
+    }
+
+    result
+}
+
+/// Collect all descendants of a node (including itself) via Contains edges.
+fn collect_subtree(node: NodeIndex, graph: &ArcGraph) -> HashSet<NodeIndex> {
+    let mut subtree = HashSet::new();
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        if subtree.insert(n) {
+            for edge in graph.edges(n) {
+                if matches!(edge.weight(), Edge::Contains) {
+                    stack.push(edge.target());
+                }
+            }
+        }
+    }
+    subtree
+}
+
 /// Hierarchically sorted modules for a parent, collecting children recursively.
-/// Children are sorted alphabetically within each level.
+/// Children are sorted topologically by ModuleDep edges, with alphabetical tie-breaker.
+/// Also considers cross-subtree dependencies: if any node in subtree(A) depends on
+/// any node in subtree(B), then A should appear before B.
 fn collect_children_recursive(
     parent_idx: NodeIndex,
     graph: &ArcGraph,
     module_indices: &[NodeIndex],
-    added: &mut std::collections::HashSet<NodeIndex>,
+    added: &mut HashSet<NodeIndex>,
 ) -> Vec<NodeIndex> {
     use crate::graph::Node;
 
@@ -140,7 +243,7 @@ fn collect_children_recursive(
         .copied()
         .collect();
 
-    // Sort children alphabetically (tie-breaker within same hierarchy level)
+    // FIRST: Sort alphabetically (provides stable base order for toposort)
     children.sort_by_key(|&idx| {
         if let Node::Module { name, .. } = &graph[idx] {
             name.clone()
@@ -148,6 +251,53 @@ fn collect_children_recursive(
             String::new()
         }
     });
+
+    // Collect subtrees for each sibling (child + all descendants)
+    let mut subtrees: HashMap<NodeIndex, HashSet<NodeIndex>> = HashMap::new();
+    for &child in &children {
+        subtrees.insert(child, collect_subtree(child, graph));
+    }
+
+    // Build mini dependency graph for siblings using subtree-aggregated dependencies
+    let mut sibling_deps: DiGraph<NodeIndex, ()> = DiGraph::new();
+    let mut idx_to_node: HashMap<NodeIndex, petgraph::graph::NodeIndex> = HashMap::new();
+
+    for &child in &children {
+        idx_to_node.insert(child, sibling_deps.add_node(child));
+    }
+
+    // Find cross-subtree dependencies: if any node in subtree(child) depends on
+    // any node in subtree(sibling), add edge child -> sibling
+    for &child in &children {
+        let child_subtree = &subtrees[&child];
+        for &node in child_subtree {
+            for edge in graph.edges(node) {
+                if matches!(edge.weight(), Edge::ModuleDep(_)) {
+                    let target = edge.target();
+                    // Find which sibling's subtree contains the target
+                    for (&sibling, sibling_subtree) in &subtrees {
+                        if sibling != child && sibling_subtree.contains(&target) {
+                            // child's subtree depends on sibling's subtree
+                            let src = idx_to_node[&child];
+                            let dst = idx_to_node[&sibling];
+                            if !sibling_deps.contains_edge(src, dst) {
+                                sibling_deps.add_edge(src, dst, ());
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // THEN: Stable topological sort using Kahn's algorithm
+    // This preserves alphabetical order for independent nodes (tie-breaker)
+    let sorted = stable_toposort(&sibling_deps, &children, graph);
+    if !sorted.is_empty() {
+        children = sorted;
+    }
+    // On cycles (empty result): keep alphabetical order
 
     // Add each child + its descendants recursively
     for child in children {
@@ -872,6 +1022,137 @@ mod tests {
         assert!(
             pos_alpha < pos_zebra,
             "alpha_child should come before zebra_child (alphabetical). Labels: {:?}",
+            labels
+        );
+    }
+
+    #[test]
+    fn test_module_dependency_ordering() {
+        use std::path::PathBuf;
+
+        // Setup: 3 siblings with dependency chain
+        // zebra -> beta -> alpha (zebra depends on beta, beta depends on alpha)
+        // Alphabetical order: alpha, beta, zebra
+        // Dependency order: zebra, beta, alpha (dependents first)
+
+        let mut graph = ArcGraph::new();
+
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test_crate".to_string(),
+            path: PathBuf::from("/test"),
+        });
+
+        // Add modules (order shouldn't matter due to sorting)
+        let alpha = graph.add_node(Node::Module {
+            name: "alpha".to_string(),
+            crate_idx,
+        });
+        let beta = graph.add_node(Node::Module {
+            name: "beta".to_string(),
+            crate_idx,
+        });
+        let zebra = graph.add_node(Node::Module {
+            name: "zebra".to_string(),
+            crate_idx,
+        });
+
+        // Hierarchy: crate contains all modules
+        graph.add_edge(crate_idx, alpha, Edge::Contains);
+        graph.add_edge(crate_idx, beta, Edge::Contains);
+        graph.add_edge(crate_idx, zebra, Edge::Contains);
+
+        // Dependencies: zebra -> beta -> alpha
+        graph.add_edge(zebra, beta, Edge::ModuleDep(vec![]));
+        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
+
+        let pos_alpha = labels.iter().position(|&l| l == "alpha").unwrap();
+        let pos_beta = labels.iter().position(|&l| l == "beta").unwrap();
+        let pos_zebra = labels.iter().position(|&l| l == "zebra").unwrap();
+
+        // Dependency order: zebra first (depends on others), then beta, then alpha
+        assert!(
+            pos_zebra < pos_beta,
+            "zebra should come before beta (zebra depends on beta). Labels: {:?}",
+            labels
+        );
+        assert!(
+            pos_beta < pos_alpha,
+            "beta should come before alpha (beta depends on alpha). Labels: {:?}",
+            labels
+        );
+    }
+
+    #[test]
+    fn test_subtree_dependency_ordering() {
+        use std::path::PathBuf;
+
+        // Setup: Two parent modules, each with a child.
+        // parent_a::child_a depends on parent_b::child_b
+        // Expected: parent_a before parent_b (subtree dependency aggregation)
+        //
+        // crate
+        // ├── parent_a         <-- should come FIRST (its subtree depends on parent_b's subtree)
+        // │   └── child_a      <-- depends on child_b
+        // └── parent_b         <-- should come SECOND (dependency target)
+        //     └── child_b      <-- used by child_a
+
+        let mut graph = ArcGraph::new();
+
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test_crate".to_string(),
+            path: PathBuf::from("/test"),
+        });
+
+        // Create parents (alphabetical: parent_a before parent_b)
+        let parent_a = graph.add_node(Node::Module {
+            name: "parent_a".to_string(),
+            crate_idx,
+        });
+        let parent_b = graph.add_node(Node::Module {
+            name: "parent_b".to_string(),
+            crate_idx,
+        });
+
+        // Create children
+        let child_a = graph.add_node(Node::Module {
+            name: "child_a".to_string(),
+            crate_idx,
+        });
+        let child_b = graph.add_node(Node::Module {
+            name: "child_b".to_string(),
+            crate_idx,
+        });
+
+        // Hierarchy: crate → parents, parents → children
+        graph.add_edge(crate_idx, parent_a, Edge::Contains);
+        graph.add_edge(crate_idx, parent_b, Edge::Contains);
+        graph.add_edge(parent_a, child_a, Edge::Contains);
+        graph.add_edge(parent_b, child_b, Edge::Contains);
+
+        // Cross-subtree dependency: child_a -> child_b
+        // This means parent_a's subtree depends on parent_b's subtree
+        graph.add_edge(child_a, child_b, Edge::ModuleDep(vec![]));
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
+
+        let pos_parent_a = labels.iter().position(|&l| l == "parent_a").unwrap();
+        let pos_parent_b = labels.iter().position(|&l| l == "parent_b").unwrap();
+
+        // parent_a should come before parent_b because parent_a's subtree
+        // depends on parent_b's subtree (child_a -> child_b)
+        assert!(
+            pos_parent_a < pos_parent_b,
+            "parent_a should come before parent_b (subtree dependency). Labels: {:?}",
             labels
         );
     }
