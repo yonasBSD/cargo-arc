@@ -193,13 +193,14 @@ fn render_script(config: &RenderConfig) -> String {
   const MARGIN = {margin};
 
   // === Highlight functionality ===
+  let pinnedHighlight = null; // {{type: 'node'|'edge', id: string}} or null
+
   function clearHighlights() {{
     document.querySelectorAll('.highlighted, .highlighted-node, .highlighted-arrow, .dimmed')
       .forEach(el => el.classList.remove('highlighted', 'highlighted-node', 'highlighted-arrow', 'dimmed'));
   }}
 
-  function highlightEdge(from, to) {{
-    clearHighlights();
+  function applyEdgeHighlight(from, to) {{
     document.getElementById('node-' + from)?.classList.add('highlighted-node');
     document.getElementById('node-' + to)?.classList.add('highlighted-node');
     document.getElementById('edge-' + from + '-' + to)?.classList.add('highlighted');
@@ -209,8 +210,7 @@ fn render_script(config: &RenderConfig) -> String {
       .forEach(el => el.classList.add('dimmed'));
   }}
 
-  function highlightNode(nodeId) {{
-    clearHighlights();
+  function applyNodeHighlight(nodeId) {{
     document.getElementById('node-' + nodeId)?.classList.add('highlighted-node');
     document.querySelectorAll('[data-from="' + nodeId + '"], [data-to="' + nodeId + '"]')
       .forEach(edge => {{
@@ -224,6 +224,33 @@ fn render_script(config: &RenderConfig) -> String {
       }});
     document.querySelectorAll('rect:not(.highlighted-node), path:not(.highlighted), polygon:not(.highlighted-arrow)')
       .forEach(el => el.classList.add('dimmed'));
+  }}
+
+  function highlightEdge(from, to, pin) {{
+    clearHighlights();
+    applyEdgeHighlight(from, to);
+    if (pin) pinnedHighlight = {{type: 'edge', id: from + '-' + to}};
+  }}
+
+  function highlightNode(nodeId, pin) {{
+    clearHighlights();
+    applyNodeHighlight(nodeId);
+    if (pin) pinnedHighlight = {{type: 'node', id: nodeId}};
+  }}
+
+  function handleMouseEnter(type, id) {{
+    if (pinnedHighlight) return; // Don't preview if something is pinned
+    clearHighlights();
+    if (type === 'node') applyNodeHighlight(id);
+    else if (type === 'edge') {{
+      const [from, to] = id.split('-');
+      applyEdgeHighlight(from, to);
+    }}
+  }}
+
+  function handleMouseLeave() {{
+    if (pinnedHighlight) return; // Keep pinned highlight
+    clearHighlights();
   }}
 
   // === Collapse functionality ===
@@ -574,16 +601,21 @@ fn render_script(config: &RenderConfig) -> String {
 
   // === Event handlers ===
   document.querySelectorAll('.crate, .module').forEach(node => {{
+    const nodeId = node.id.replace('node-', '');
+
     node.addEventListener('click', e => {{
       e.stopPropagation();
-      highlightNode(node.id.replace('node-', ''));
+      highlightNode(nodeId, true); // pin
     }});
+
+    node.addEventListener('mouseenter', () => handleMouseEnter('node', nodeId));
+    node.addEventListener('mouseleave', handleMouseLeave);
 
     // Double-click to toggle collapse (only for parents)
     if (node.dataset.hasChildren === 'true') {{
       node.addEventListener('dblclick', e => {{
         e.stopPropagation();
-        toggleCollapse(node.id.replace('node-', ''));
+        toggleCollapse(nodeId);
       }});
     }}
   }});
@@ -596,13 +628,21 @@ fn render_script(config: &RenderConfig) -> String {
   }});
 
   document.querySelectorAll('.dep-arc, .cycle-arc').forEach(arc => {{
+    const edgeId = arc.dataset.from + '-' + arc.dataset.to;
+
     arc.addEventListener('click', e => {{
       e.stopPropagation();
-      highlightEdge(arc.dataset.from, arc.dataset.to);
+      highlightEdge(arc.dataset.from, arc.dataset.to, true); // pin
     }});
+
+    arc.addEventListener('mouseenter', () => handleMouseEnter('edge', edgeId));
+    arc.addEventListener('mouseleave', handleMouseLeave);
   }});
 
-  document.querySelector('svg').addEventListener('click', clearHighlights);
+  document.querySelector('svg').addEventListener('click', () => {{
+    pinnedHighlight = null;
+    clearHighlights();
+  }});
 }})();
 ]]></script>
 "#,
@@ -1223,6 +1263,32 @@ mod tests {
         assert!(
             svg.contains("collapseState"),
             "Script should contain collapseState map"
+        );
+    }
+
+    #[test]
+    fn test_render_script_has_hover_functions() {
+        let ir = LayoutIR::new();
+        let svg = render(&ir, &RenderConfig::default());
+        assert!(
+            svg.contains("pinnedHighlight"),
+            "Script should contain pinnedHighlight state"
+        );
+        assert!(
+            svg.contains("handleMouseEnter"),
+            "Script should contain handleMouseEnter function"
+        );
+        assert!(
+            svg.contains("handleMouseLeave"),
+            "Script should contain handleMouseLeave function"
+        );
+        assert!(
+            svg.contains("mouseenter"),
+            "Script should register mouseenter events"
+        );
+        assert!(
+            svg.contains("mouseleave"),
+            "Script should register mouseleave events"
         );
     }
 }
