@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use cargo_metadata::{MetadataCommand, Package};
+use ra_ap_cfg::{CfgAtom, CfgDiff};
 use ra_ap_hir as hir;
 use ra_ap_ide as ide;
 use ra_ap_load_cargo as load_cargo;
@@ -11,6 +12,48 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::model::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};
+
+#[derive(Debug, Clone, Default)]
+pub struct FeatureConfig {
+    pub features: Vec<String>,
+    pub all_features: bool,
+    pub cfg_flags: Vec<String>,
+}
+
+/// Creates a CargoConfig with feature and cfg overrides.
+/// By default, cfg(test) is disabled.
+pub fn cargo_config_with_features(config: &FeatureConfig) -> project_model::CargoConfig {
+    let features = if config.all_features {
+        project_model::CargoFeatures::All
+    } else if config.features.is_empty() {
+        project_model::CargoFeatures::default()
+    } else {
+        project_model::CargoFeatures::Selected {
+            features: config.features.clone(),
+            no_default_features: false,
+        }
+    };
+
+    let include_test = config.cfg_flags.contains(&"test".to_string());
+    let cfg_overrides = if include_test {
+        project_model::CfgOverrides {
+            global: CfgDiff::new(vec![CfgAtom::Flag(hir::Symbol::intern("test"))], Vec::new()),
+            selective: Default::default(),
+        }
+    } else {
+        project_model::CfgOverrides {
+            global: CfgDiff::new(Vec::new(), vec![CfgAtom::Flag(hir::Symbol::intern("test"))]),
+            selective: Default::default(),
+        }
+    };
+
+    project_model::CargoConfig {
+        features,
+        cfg_overrides,
+        sysroot: Some(project_model::RustLibSource::Discover),
+        ..Default::default()
+    }
+}
 
 /// Analyzes a workspace and returns all member crates.
 /// `manifest_path` should point to a Cargo.toml.
@@ -171,7 +214,6 @@ fn walk_module(
 /// Returns None for:
 /// - `use self::*` or `use super::*` - relative imports
 /// - External crate imports (not in workspace_crates)
-#[allow(dead_code)] // Will be used by parse_workspace_dependencies
 fn process_use_statement(
     line: &str,
     line_num: usize,
@@ -453,15 +495,15 @@ fn extract_module_dependencies(
 
 /// Loads the entire workspace into rust-analyzer once.
 /// Returns the AnalysisHost and VFS for reuse across multiple crate analyses.
-pub fn load_workspace_hir(manifest_path: &Path) -> Result<(ide::AnalysisHost, ra_ap_vfs::Vfs)> {
+pub fn load_workspace_hir(
+    manifest_path: &Path,
+    feature_config: &FeatureConfig,
+) -> Result<(ide::AnalysisHost, ra_ap_vfs::Vfs)> {
     let project_path = manifest_path.canonicalize()?;
     let project_path = dunce::simplified(&project_path).to_path_buf();
 
-    // Minimal cargo config
-    let cargo_config = project_model::CargoConfig {
-        sysroot: Some(project_model::RustLibSource::Discover),
-        ..Default::default()
-    };
+    // Build cargo config with feature and cfg overrides
+    let cargo_config = cargo_config_with_features(feature_config);
 
     // Load config - minimal for faster loading
     let load_config = load_cargo::LoadCargoConfig {
@@ -521,6 +563,61 @@ fn find_crate_in_workspace(
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn test_feature_config_default() {
+        let config = FeatureConfig::default();
+        assert!(config.features.is_empty());
+        assert!(!config.all_features);
+        assert!(config.cfg_flags.is_empty());
+    }
+
+    #[test]
+    fn test_cargo_config_default_excludes_test() {
+        let config = FeatureConfig::default();
+        let cargo_config = cargo_config_with_features(&config);
+
+        // CfgDiff Display shows "disable test" when test is disabled
+        let diff_str = format!("{}", cargo_config.cfg_overrides.global);
+        assert!(
+            diff_str.contains("disable") && diff_str.contains("test"),
+            "Expected cfg(test) to be disabled, got: {}",
+            diff_str
+        );
+    }
+
+    #[test]
+    fn test_cargo_config_includes_test_when_flag_set() {
+        let config = FeatureConfig {
+            cfg_flags: vec!["test".to_string()],
+            ..Default::default()
+        };
+        let cargo_config = cargo_config_with_features(&config);
+
+        // CfgDiff Display shows "enable test" when test is enabled
+        let diff_str = format!("{}", cargo_config.cfg_overrides.global);
+        assert!(
+            diff_str.contains("enable") && diff_str.contains("test"),
+            "Expected cfg(test) to be enabled, got: {}",
+            diff_str
+        );
+    }
+
+    #[test]
+    fn test_cargo_config_selected_features() {
+        let config = FeatureConfig {
+            features: vec!["web".to_string()],
+            ..Default::default()
+        };
+        let cargo_config = cargo_config_with_features(&config);
+
+        match cargo_config.features {
+            project_model::CargoFeatures::Selected { features, .. } => {
+                assert_eq!(features, vec!["web"]);
+            }
+            _ => panic!("expected Selected"),
+        }
+    }
 
     #[test]
     fn test_dependency_ref_struct() {
@@ -847,7 +944,8 @@ use crate::graph;
         let workspace_crates: HashSet<String> = crates.iter().map(|c| c.name.clone()).collect();
         let cargo_arc = crates.iter().find(|c| c.name == "cargo-arc").unwrap();
 
-        let (host, vfs) = load_workspace_hir(&manifest).expect("should load workspace");
+        let (host, vfs) = load_workspace_hir(&manifest, &FeatureConfig::default())
+            .expect("should load workspace");
         let tree = analyze_modules(cargo_arc, &host, &vfs, &workspace_crates)
             .expect("should analyze modules");
 
@@ -886,7 +984,8 @@ use crate::graph;
         let workspace_crates: HashSet<String> = crates.iter().map(|c| c.name.clone()).collect();
         let cargo_arc = crates.iter().find(|c| c.name == "cargo-arc").unwrap();
 
-        let (host, vfs) = load_workspace_hir(&manifest).expect("should load workspace");
+        let (host, vfs) = load_workspace_hir(&manifest, &FeatureConfig::default())
+            .expect("should load workspace");
         let tree = analyze_modules(cargo_arc, &host, &vfs, &workspace_crates)
             .expect("should analyze modules");
 
@@ -911,7 +1010,8 @@ use crate::graph;
         let workspace_crates: HashSet<String> = crates.iter().map(|c| c.name.clone()).collect();
         let cargo_arc = crates.iter().find(|c| c.name == "cargo-arc").unwrap();
 
-        let (host, vfs) = load_workspace_hir(&manifest).expect("should load workspace");
+        let (host, vfs) = load_workspace_hir(&manifest, &FeatureConfig::default())
+            .expect("should load workspace");
         let tree = analyze_modules(cargo_arc, &host, &vfs, &workspace_crates)
             .expect("should analyze modules");
 

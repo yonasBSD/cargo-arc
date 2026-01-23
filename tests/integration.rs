@@ -11,6 +11,9 @@ fn test_multi_crate_fixture() {
     let args = Args {
         output: Some(temp.path().to_path_buf()),
         manifest_path: fixture_path,
+        features: vec![],
+        all_features: false,
+        cfg: vec![],
     };
 
     let result = run(args);
@@ -38,6 +41,9 @@ fn test_self_analysis() {
     let args = Args {
         output: Some(temp.path().to_path_buf()),
         manifest_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+        features: vec![],
+        all_features: false,
+        cfg: vec![],
     };
 
     let result = run(args);
@@ -55,4 +61,58 @@ fn test_self_analysis() {
     assert!(svg.contains("graph"), "should show graph module");
     assert!(svg.contains("layout"), "should show layout module");
     assert!(svg.contains("render"), "should show render module");
+}
+
+#[test]
+#[ignore] // Smoke test - requires rust-analyzer (~30s)
+fn test_cfg_test_excluded_by_default() {
+    let fixture_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi_crate/Cargo.toml");
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let args = Args {
+        output: Some(temp.path().to_path_buf()),
+        manifest_path: fixture_path,
+        features: vec![],
+        all_features: false,
+        cfg: vec![], // No --cfg test flag
+    };
+
+    let result = run(args);
+    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+
+    let svg = std::fs::read_to_string(temp.path()).unwrap();
+
+    // test_utils module should NOT be visible (cfg(test) is excluded by default)
+    assert!(
+        !svg.contains("test_utils"),
+        "test_utils should be hidden by default (cfg(test) excluded)"
+    );
+}
+
+#[test]
+#[ignore] // Smoke test - requires rust-analyzer (~30s)
+fn test_cfg_test_included_with_flag() {
+    let fixture_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi_crate/Cargo.toml");
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let args = Args {
+        output: Some(temp.path().to_path_buf()),
+        manifest_path: fixture_path,
+        features: vec![],
+        all_features: false,
+        cfg: vec!["test".to_string()], // --cfg test flag
+    };
+
+    let result = run(args);
+    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+
+    let svg = std::fs::read_to_string(temp.path()).unwrap();
+
+    // test_utils module SHOULD be visible when --cfg test is passed
+    assert!(
+        svg.contains("test_utils"),
+        "test_utils should be visible with --cfg test"
+    );
 }
