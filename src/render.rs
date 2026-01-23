@@ -372,7 +372,7 @@ fn render_toolbar(width: f32) -> String {
         cb1_x, cb_y, cb_size, cb_size
     ));
     toolbar.push_str(&format!(
-        "    <text class=\"toolbar-label\" x=\"{}\" y=\"{}\">CrateDep</text>\n",
+        "    <text class=\"toolbar-label\" x=\"{}\" y=\"{}\">Show Crate Dependencies</text>\n",
         cb1_x + cb_size + 6.0,
         cb_y + cb_size / 2.0 + 4.0
     ));

@@ -205,6 +205,11 @@ if (typeof document !== 'undefined') {
     );
   }
 
+  // Bring element to front (SVG z-order = DOM order)
+  function bringToFront(element) {
+    if (element) element.parentNode.appendChild(element);
+  }
+
   // Dim all non-highlighted elements (except toolbar and hitareas)
   function dimNonHighlighted() {
     document.querySelectorAll(
@@ -229,6 +234,11 @@ if (typeof document !== 'undefined') {
       .forEach(el => el.classList.add('highlighted-arrow'));
     document.querySelectorAll('[data-vedge="' + arcId + '"]')
       .forEach(el => el.classList.add('highlighted-arrow'));
+
+    // Bring highlighted arc to front (hit-area last = topmost)
+    bringToFront(getVisibleArc(arcId));
+    bringToFront(document.querySelector(`.arc-hitarea[data-arc-id="${arcId}"]`));
+
     dimNonHighlighted();
   }
 
@@ -258,6 +268,14 @@ if (typeof document !== 'undefined') {
         document.querySelectorAll('[data-vedge="' + from + '-' + to + '"]')
           .forEach(arr => arr.classList.add('highlighted-arrow'));
       });
+
+    // Bring all highlighted arcs to front (hit-areas last = topmost)
+    document.querySelectorAll('.arc-hitarea[data-from="' + nodeId + '"], .arc-hitarea[data-to="' + nodeId + '"]')
+      .forEach(hitarea => {
+        bringToFront(getVisibleArc(hitarea.dataset.arcId));
+        bringToFront(hitarea);
+      });
+
     dimNonHighlighted();
   }
 
