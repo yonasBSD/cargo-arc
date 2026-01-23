@@ -10,8 +10,16 @@ use crate::layout::{build_layout, detect_cycles, topo_sort};
 use crate::render::{RenderConfig, render};
 use std::collections::HashSet;
 
+/// Cargo subcommand wrapper for `cargo arc`
 #[derive(Parser)]
-#[command(name = "cargo-arc", about = "Visualize workspace dependencies")]
+#[command(name = "cargo", bin_name = "cargo")]
+pub enum Cargo {
+    /// Visualize workspace dependencies as SVG
+    #[command(name = "arc", version, author)]
+    Arc(Args),
+}
+
+#[derive(Parser)]
 pub struct Args {
     /// Output file (default: stdout)
     #[arg(short, long)]
@@ -85,28 +93,34 @@ pub fn run(args: Args) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Helper to parse Args via Cargo wrapper
+    fn parse_args(args: &[&str]) -> Args {
+        let Cargo::Arc(args) = Cargo::parse_from(args);
+        args
+    }
+
     #[test]
     fn test_cli_default_args() {
-        let args = Args::parse_from(["cargo-arc"]);
+        let args = parse_args(&["cargo", "arc"]);
         assert!(args.output.is_none());
         assert_eq!(args.manifest_path, PathBuf::from("Cargo.toml"));
     }
 
     #[test]
     fn test_cli_features_parsing() {
-        let args = Args::parse_from(["cargo-arc", "--features", "web,server"]);
+        let args = parse_args(&["cargo", "arc", "--features", "web,server"]);
         assert_eq!(args.features, vec!["web", "server"]);
     }
 
     #[test]
     fn test_cli_all_features() {
-        let args = Args::parse_from(["cargo-arc", "--all-features"]);
+        let args = parse_args(&["cargo", "arc", "--all-features"]);
         assert!(args.all_features);
     }
 
     #[test]
     fn test_cli_cfg_flag() {
-        let args = Args::parse_from(["cargo-arc", "--cfg", "test"]);
+        let args = parse_args(&["cargo", "arc", "--cfg", "test"]);
         assert_eq!(args.cfg, vec!["test"]);
     }
 

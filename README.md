@@ -13,10 +13,10 @@ cargo install --path .
 
 ```bash
 # Analyze current workspace
-cargo-arc
+cargo arc
 
 # Specific workspace, write to file
-cargo-arc -m /path/to/Cargo.toml -o deps.svg
+cargo arc -m /path/to/Cargo.toml -o deps.svg
 ```
 
 ## Development

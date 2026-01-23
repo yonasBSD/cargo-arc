@@ -5,4 +5,4 @@ pub mod layout;
 pub mod model;
 pub mod render;
 
-pub use cli::{Args, run};
+pub use cli::{Args, Cargo, run};
