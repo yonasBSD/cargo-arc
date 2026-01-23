@@ -13,6 +13,28 @@ const ArcLogic = {
   },
 
   /**
+   * Transform mouse event coordinates to SVG coordinates (scroll-aware)
+   * Uses getBoundingClientRect() instead of getScreenCTM() to handle scrollable containers.
+   * See: WebKit Bug #44083, D3.js Issue #1164
+   * @param {number} clientX - Mouse clientX from event
+   * @param {number} clientY - Mouse clientY from event
+   * @param {{left: number, top: number, width: number, height: number}} svgRect - SVG bounding rect
+   * @param {{x: number, y: number, width: number, height: number}|null} viewBox - SVG viewBox or null
+   * @returns {{x: number, y: number}} - Coordinates in SVG coordinate space
+   */
+  getSvgCoords(clientX, clientY, svgRect, viewBox) {
+    let x = clientX - svgRect.left;
+    let y = clientY - svgRect.top;
+
+    if (viewBox && viewBox.width > 0) {
+      x = x * (viewBox.width / svgRect.width) + viewBox.x;
+      y = y * (viewBox.height / svgRect.height) + viewBox.y;
+    }
+
+    return { x, y };
+  },
+
+  /**
    * Calculate SVG path for an arc between two points
    * @param {number} fromX - Start X coordinate
    * @param {number} fromY - Start Y coordinate
