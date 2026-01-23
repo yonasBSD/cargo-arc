@@ -87,6 +87,11 @@ fn format_source_locations_by_symbol(locs: &[SourceLocation]) -> String {
         }
     }
 
+    // Sort locations within each symbol alphabetically
+    for locations in by_symbol.values_mut() {
+        locations.sort();
+    }
+
     // Find max symbol length for column alignment
     let max_symbol_len = by_symbol.keys().map(|s| s.len()).max().unwrap_or(0);
 

@@ -57,6 +57,77 @@ const ArcLogic = {
       ctrlX,
       midY
     };
+  },
+
+  /**
+   * Sort and group tooltip location strings by symbol name.
+   * Re-sorts aggregated tooltip data for virtual arcs to ensure consistent display.
+   *
+   * Input format: Array of pipe-separated location strings, each containing
+   * entries like "Symbol  ← file:line" or bare "file:line"
+   *
+   * @param {string[]} locStrings - Array of tooltip location strings
+   * @returns {string} - Sorted and grouped locations joined by '|'
+   */
+  sortAndGroupLocations(locStrings) {
+    const symbolRegex = /^(\S+)\s+←\s+(.+)$/;
+    const bySymbol = {};  // symbol -> [locations]
+    const bareLocations = [];
+
+    // Parse all location entries
+    for (const str of locStrings) {
+      for (const entry of str.split('|')) {
+        const trimmed = entry.trim();
+        if (!trimmed) continue;
+
+        const match = trimmed.match(symbolRegex);
+        if (match) {
+          const symbol = match[1];
+          const location = match[2];
+          if (!bySymbol[symbol]) bySymbol[symbol] = [];
+          bySymbol[symbol].push(location);
+        } else {
+          // Bare location (no symbol prefix)
+          bareLocations.push(trimmed);
+        }
+      }
+    }
+
+    // Sort symbols alphabetically
+    const sortedSymbols = Object.keys(bySymbol).sort();
+
+    // Sort locations within each symbol
+    for (const symbol of sortedSymbols) {
+      bySymbol[symbol].sort();
+    }
+    bareLocations.sort();
+
+    // Find max symbol length for column alignment
+    const maxLen = sortedSymbols.reduce((max, s) => Math.max(max, s.length), 0);
+
+    // Build output
+    const lines = [];
+
+    // Bare locations first
+    for (const loc of bareLocations) {
+      lines.push(loc);
+    }
+
+    // Symbol-grouped locations with alignment
+    for (const symbol of sortedSymbols) {
+      const locs = bySymbol[symbol];
+      for (let i = 0; i < locs.length; i++) {
+        if (i === 0) {
+          const padding = ' '.repeat(maxLen - symbol.length + 2);
+          lines.push(`${symbol}${padding}← ${locs[i]}`);
+        } else {
+          const spaces = ' '.repeat(maxLen + 2);
+          lines.push(`${spaces}← ${locs[i]}`);
+        }
+      }
+    }
+
+    return lines.join('|');
   }
 };
 
@@ -416,7 +487,7 @@ if (typeof document !== 'undefined') {
         path.setAttribute('data-to', toId);
         // Set aggregated source locations from hidden edges
         if (data.hiddenEdgeData.length > 0) {
-          path.dataset.sourceLocations = data.hiddenEdgeData.join('|');
+          path.dataset.sourceLocations = ArcLogic.sortAndGroupLocations(data.hiddenEdgeData);
         }
         path.style.cursor = 'pointer';
         // Click handler for highlighting
@@ -430,9 +501,9 @@ if (typeof document !== 'undefined') {
           const locs = path.dataset.sourceLocations;
           if (locs) {
             const svg = document.querySelector('svg');
-            const pt = svg.createSVGPoint();
-            pt.x = e.clientX; pt.y = e.clientY;
-            const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
+            const rect = svg.getBoundingClientRect();
+            const viewBox = svg.viewBox.baseVal;
+            const svgPt = ArcLogic.getSvgCoords(e.clientX, e.clientY, rect, viewBox);
             showFloatingLabel(locs, svgPt.x + 10, svgPt.y - 20);
           }
         });
@@ -607,9 +678,9 @@ if (typeof document !== 'undefined') {
       const locs = arc.dataset.sourceLocations;
       if (locs) {
         const svg = document.querySelector('svg');
-        const pt = svg.createSVGPoint();
-        pt.x = e.clientX; pt.y = e.clientY;
-        const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
+        const rect = svg.getBoundingClientRect();
+        const viewBox = svg.viewBox.baseVal;
+        const svgPt = ArcLogic.getSvgCoords(e.clientX, e.clientY, rect, viewBox);
         showFloatingLabel(locs, svgPt.x + 10, svgPt.y - 20);
       }
     });
