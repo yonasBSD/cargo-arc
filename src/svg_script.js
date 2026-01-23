@@ -197,16 +197,25 @@ if (typeof document !== 'undefined') {
       .forEach(el => el.classList.remove('highlighted', 'highlighted-node', 'highlighted-arrow', 'dimmed'));
   }
 
+  // Helper: get visible arc element by arc-id
+  function getVisibleArc(arcId) {
+    return document.querySelector(
+      `.dep-arc[data-arc-id="${arcId}"], .cycle-arc[data-arc-id="${arcId}"]`
+    );
+  }
+
   function applyEdgeHighlight(from, to) {
+    const arcId = from + '-' + to;
     document.getElementById('node-' + from)?.classList.add('highlighted-node');
     document.getElementById('node-' + to)?.classList.add('highlighted-node');
-    // Highlight both regular edges (by id) and virtual arcs (by data attributes)
-    document.getElementById('edge-' + from + '-' + to)?.classList.add('highlighted');
+    // Highlight visible arc (not hitarea) via data-arc-id
+    getVisibleArc(arcId)?.classList.add('highlighted');
+    // Virtual arcs
     document.querySelectorAll('.virtual-arc[data-from="' + from + '"][data-to="' + to + '"]')
       .forEach(el => el.classList.add('highlighted'));
-    document.querySelectorAll('[data-edge="' + from + '-' + to + '"]')
+    document.querySelectorAll('[data-edge="' + arcId + '"]')
       .forEach(el => el.classList.add('highlighted-arrow'));
-    document.querySelectorAll('[data-vedge="' + from + '-' + to + '"]')
+    document.querySelectorAll('[data-vedge="' + arcId + '"]')
       .forEach(el => el.classList.add('highlighted-arrow'));
     document.querySelectorAll('rect:not(.highlighted-node), path:not(.highlighted), polygon:not(.highlighted-arrow)')
       .forEach(el => el.classList.add('dimmed'));
@@ -214,14 +223,28 @@ if (typeof document !== 'undefined') {
 
   function applyNodeHighlight(nodeId) {
     document.getElementById('node-' + nodeId)?.classList.add('highlighted-node');
-    document.querySelectorAll('[data-from="' + nodeId + '"], [data-to="' + nodeId + '"]')
-      .forEach(edge => {
-        edge.classList.add('highlighted');
-        const from = edge.dataset.from;
-        const to = edge.dataset.to;
+    // Select hitareas (they have data-from/data-to), then highlight corresponding visible arcs
+    document.querySelectorAll('.arc-hitarea[data-from="' + nodeId + '"], .arc-hitarea[data-to="' + nodeId + '"]')
+      .forEach(hitarea => {
+        const arcId = hitarea.dataset.arcId;
+        const visibleArc = getVisibleArc(arcId);
+        visibleArc?.classList.add('highlighted');
+        const from = hitarea.dataset.from;
+        const to = hitarea.dataset.to;
         document.getElementById('node-' + from)?.classList.add('highlighted-node');
         document.getElementById('node-' + to)?.classList.add('highlighted-node');
         document.querySelectorAll('[data-edge="' + from + '-' + to + '"]')
+          .forEach(arr => arr.classList.add('highlighted-arrow'));
+      });
+    // Also handle virtual arcs
+    document.querySelectorAll('.virtual-arc[data-from="' + nodeId + '"], .virtual-arc[data-to="' + nodeId + '"]')
+      .forEach(arc => {
+        arc.classList.add('highlighted');
+        const from = arc.dataset.from;
+        const to = arc.dataset.to;
+        document.getElementById('node-' + from)?.classList.add('highlighted-node');
+        document.getElementById('node-' + to)?.classList.add('highlighted-node');
+        document.querySelectorAll('[data-vedge="' + from + '-' + to + '"]')
           .forEach(arr => arr.classList.add('highlighted-arrow'));
       });
     document.querySelectorAll('rect:not(.highlighted-node), path:not(.highlighted), polygon:not(.highlighted-arrow)')
@@ -399,24 +422,25 @@ if (typeof document !== 'undefined') {
 
   // Recalculate and show virtual edges for collapsed nodes
   function recalculateVirtualEdges() {
-    // Remove existing virtual edges
-    document.querySelectorAll('.virtual-arc, .arc-count').forEach(el => el.remove());
+    // Remove existing virtual elements (hitareas, visible arcs, counts)
+    document.querySelectorAll('.virtual-arc, .virtual-hitarea, .arc-count').forEach(el => el.remove());
 
-    // FIRST: Reset ALL edges and arrows to visible
-    document.querySelectorAll('.dep-arc, .cycle-arc').forEach(edge => {
+    // FIRST: Reset ALL edges (hitareas + visible) and arrows to visible
+    document.querySelectorAll('.arc-hitarea, .dep-arc, .cycle-arc').forEach(edge => {
       edge.style.display = '';
     });
     document.querySelectorAll('.dep-arrow, .cycle-arrow').forEach(arrow => {
       arrow.style.display = '';
     });
 
-    // Find all original edges and update their paths / determine which need to be hidden
-    const edges = document.querySelectorAll('.dep-arc, .cycle-arc');
+    // Find all original hitareas and update paths / determine which need to be hidden
+    const hitareas = document.querySelectorAll('.arc-hitarea');
     const virtualEdges = new Map(); // "visibleFrom-visibleTo" -> { count, hiddenEdgeData }
 
-    edges.forEach(edge => {
-      const fromId = edge.dataset.from;
-      const toId = edge.dataset.to;
+    hitareas.forEach(hitarea => {
+      const arcId = hitarea.dataset.arcId;
+      const fromId = hitarea.dataset.from;
+      const toId = hitarea.dataset.to;
       const fromNode = document.getElementById('node-' + fromId);
       const toNode = document.getElementById('node-' + toId);
 
@@ -425,8 +449,10 @@ if (typeof document !== 'undefined') {
       const toHidden = toNode && toNode.classList.contains('collapsed');
 
       if (fromHidden || toHidden) {
-        // Hide original edge and its arrows
-        edge.style.display = 'none';
+        // Hide original hitarea, visible edge, and arrows
+        hitarea.style.display = 'none';
+        const visibleArc = getVisibleArc(arcId);
+        if (visibleArc) visibleArc.style.display = 'none';
         document.querySelectorAll('[data-edge="' + fromId + '-' + toId + '"]')
           .forEach(arr => arr.style.display = 'none');
 
@@ -438,15 +464,17 @@ if (typeof document !== 'undefined') {
           const key = visibleFrom + '-' + visibleTo;
           const existing = virtualEdges.get(key) || { count: 0, hiddenEdgeData: [] };
           existing.count++;
-          // Collect source locations from hidden edge
-          const locs = edge.dataset.sourceLocations;
+          // Collect source locations from hidden hitarea
+          const locs = hitarea.dataset.sourceLocations;
           if (locs) existing.hiddenEdgeData.push(locs);
           virtualEdges.set(key, existing);
         }
       } else if (fromNode && toNode) {
-        // Both endpoints visible - update arc path to current node positions
+        // Both endpoints visible - update arc paths to current node positions
         const arc = calculateArcPathFromNodes(fromNode, toNode, 3);
-        edge.setAttribute('d', arc.path);
+        hitarea.setAttribute('d', arc.path);
+        const visibleArc = getVisibleArc(arcId);
+        if (visibleArc) visibleArc.setAttribute('d', arc.path);
 
         // Update arrow position
         const arrows = document.querySelectorAll('[data-edge="' + fromId + '-' + toId + '"]');
@@ -479,26 +507,36 @@ if (typeof document !== 'undefined') {
         });
 
         const arc = ArcLogic.calculateArcPath(fromX, fromY, toX, toY, maxRight, ROW_HEIGHT);
+        const arcId = fromId + '-' + toId;
 
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('class', 'virtual-arc');
-        path.setAttribute('d', arc.path);
-        path.setAttribute('data-from', fromId);
-        path.setAttribute('data-to', toId);
+        // Two-layer virtual arc: 1. Hit-area (invisible, receives events)
+        const hitarea = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hitarea.setAttribute('class', 'virtual-hitarea arc-hitarea');
+        hitarea.setAttribute('d', arc.path);
+        hitarea.setAttribute('data-arc-id', arcId);
+        hitarea.setAttribute('data-from', fromId);
+        hitarea.setAttribute('data-to', toId);
         // Set aggregated source locations from hidden edges
         if (data.hiddenEdgeData.length > 0) {
-          path.dataset.sourceLocations = ArcLogic.sortAndGroupLocations(data.hiddenEdgeData);
+          hitarea.dataset.sourceLocations = ArcLogic.sortAndGroupLocations(data.hiddenEdgeData);
         }
-        path.style.cursor = 'pointer';
         // Click handler for highlighting
-        path.addEventListener('click', e => {
+        hitarea.addEventListener('click', e => {
           e.stopPropagation();
           highlightVirtualEdge(fromId, toId, data.count);
         });
         // Hover handlers for floating label
-        path.addEventListener('mouseenter', () => handleMouseEnter('edge', fromId + '-' + toId));
-        path.addEventListener('mousemove', (e) => {
-          const locs = path.dataset.sourceLocations;
+        hitarea.addEventListener('mouseenter', () => handleMouseEnter('edge', arcId));
+        hitarea.addEventListener('mousemove', (e) => {
+          // When pinned, only show tooltip on highlighted arcs
+          if (pinnedHighlight) {
+            const visibleArc = document.querySelector(`.virtual-arc[data-arc-id="${arcId}"]`);
+            if (!visibleArc?.classList.contains('highlighted')) {
+              hideFloatingLabel();
+              return;
+            }
+          }
+          const locs = hitarea.dataset.sourceLocations;
           if (locs) {
             const svg = document.querySelector('svg');
             const rect = svg.getBoundingClientRect();
@@ -507,10 +545,19 @@ if (typeof document !== 'undefined') {
             showFloatingLabel(locs, svgPt.x + 10, svgPt.y - 20);
           }
         });
-        path.addEventListener('mouseleave', () => {
+        hitarea.addEventListener('mouseleave', () => {
           handleMouseLeave();
           hideFloatingLabel();
         });
+        depsGroup.appendChild(hitarea);
+
+        // Two-layer virtual arc: 2. Visible path (styled, no pointer events)
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'virtual-arc');
+        path.setAttribute('d', arc.path);
+        path.setAttribute('data-arc-id', arcId);
+        path.setAttribute('data-from', fromId);
+        path.setAttribute('data-to', toId);
         depsGroup.appendChild(path);
 
         // Arrow
@@ -664,18 +711,28 @@ if (typeof document !== 'undefined') {
     });
   });
 
-  document.querySelectorAll('.dep-arc, .cycle-arc').forEach(arc => {
-    const edgeId = arc.dataset.from + '-' + arc.dataset.to;
+  // Event handlers on hit-area paths (invisible, 12px wide)
+  document.querySelectorAll('.arc-hitarea').forEach(hitarea => {
+    const edgeId = hitarea.dataset.from + '-' + hitarea.dataset.to;
 
-    arc.addEventListener('click', e => {
+    hitarea.addEventListener('click', e => {
       e.stopPropagation();
-      highlightEdge(arc.dataset.from, arc.dataset.to, true); // pin
+      highlightEdge(hitarea.dataset.from, hitarea.dataset.to, true); // pin
     });
 
-    arc.addEventListener('mouseenter', () => handleMouseEnter('edge', edgeId));
+    hitarea.addEventListener('mouseenter', () => handleMouseEnter('edge', edgeId));
 
-    arc.addEventListener('mousemove', (e) => {
-      const locs = arc.dataset.sourceLocations;
+    hitarea.addEventListener('mousemove', (e) => {
+      // When pinned, only show tooltip on highlighted arcs
+      if (pinnedHighlight) {
+        const arcId = hitarea.dataset.arcId;
+        const visibleArc = getVisibleArc(arcId);
+        if (!visibleArc?.classList.contains('highlighted')) {
+          hideFloatingLabel();
+          return;
+        }
+      }
+      const locs = hitarea.dataset.sourceLocations;
       if (locs) {
         const svg = document.querySelector('svg');
         const rect = svg.getBoundingClientRect();
@@ -685,7 +742,7 @@ if (typeof document !== 'undefined') {
       }
     });
 
-    arc.addEventListener('mouseleave', () => {
+    hitarea.addEventListener('mouseleave', () => {
       handleMouseLeave();
       hideFloatingLabel();
     });

@@ -285,10 +285,13 @@ fn render_styles() -> String {
     .module { fill: #fff3e0; stroke: #f57c00; stroke-width: 1; }
     .label { font-family: monospace; font-size: 12px; }
     .tree-line { stroke: #666; stroke-width: 1; }
+    .dep-arc, .cycle-arc { pointer-events: none; }
     .dep-arc { fill: none; stroke: #9c27b0; stroke-width: 1.5; }
     .dep-arrow { fill: #9c27b0; }
     .cycle-arc { fill: none; stroke: #f44336; stroke-width: 1.5; }
     .cycle-arrow { fill: #f44336; }
+    /* Hit-area for arc interactions */
+    .arc-hitarea { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
     /* Interactive highlighting */
     .highlighted { stroke: #ff9800 !important; stroke-width: 3 !important; }
     .highlighted-node { fill: #fff176 !important; stroke: #ff9800 !important; stroke-width: 3 !important; }
@@ -473,9 +476,16 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
             };
 
             let edge_id = format!("{}-{}", edge.from, edge.to);
+
+            // Two-layer arc system:
+            // 1. Hit-area path (invisible, 12px wide, receives pointer events)
             edges.push_str(&format!(
-                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-from=\"{}\" data-to=\"{}\" d=\"{path}\"{extra_style}{data_loc_attr}/>\n",
+                "    <path class=\"arc-hitarea\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" d=\"{path}\"{data_loc_attr}/>\n",
                 edge.from, edge.to
+            ));
+            // 2. Visible path (styled, no pointer events)
+            edges.push_str(&format!(
+                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" d=\"{path}\"{extra_style}/>\n"
             ));
 
             // Arrow head pointing to target
@@ -1155,6 +1165,79 @@ mod tests {
         assert_eq!(
             format_source_locations_by_symbol(&locs),
             "ModuleInfo      ← src/cli.rs:7|                ← src/render.rs:12|analyze_module  ← src/cli.rs:7"
+        );
+    }
+
+    #[test]
+    fn test_arc_hitarea_css_class_exists() {
+        let ir = LayoutIR::new();
+        let svg = render(&ir, &RenderConfig::default());
+        // Hit-area CSS class must exist with correct properties
+        assert!(
+            svg.contains(".arc-hitarea"),
+            "CSS should contain .arc-hitarea class"
+        );
+        assert!(
+            svg.contains("pointer-events: stroke"),
+            "arc-hitarea should have pointer-events: stroke"
+        );
+        // Visible arcs should have pointer-events: none
+        assert!(
+            svg.contains(".dep-arc, .cycle-arc { pointer-events: none; }")
+                || svg.contains(".dep-arc, .cycle-arc {") && svg.contains("pointer-events: none"),
+            "dep-arc and cycle-arc should have pointer-events: none"
+        );
+    }
+
+    #[test]
+    fn test_arc_has_hitarea_and_visible_path() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+
+        // Should have two paths for each arc: hit-area and visible
+        assert!(
+            svg.contains(r#"class="arc-hitarea""#),
+            "Should have hit-area path"
+        );
+        assert!(
+            svg.contains(r#"class="dep-arc""#),
+            "Should have visible dep-arc path"
+        );
+
+        // Both should have data-arc-id attribute linking them
+        assert!(
+            svg.contains(r#"data-arc-id="1-2""#),
+            "Both paths should have data-arc-id"
+        );
+
+        // Hit-area should have data-from, data-to, and data-source-locations
+        let hitarea_line = svg
+            .lines()
+            .find(|l| l.contains("arc-hitarea") && l.contains("data-arc-id"))
+            .expect("Should find hitarea path");
+        assert!(
+            hitarea_line.contains("data-from="),
+            "Hitarea should have data-from"
+        );
+        assert!(
+            hitarea_line.contains("data-to="),
+            "Hitarea should have data-to"
         );
     }
 }
