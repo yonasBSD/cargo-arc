@@ -504,8 +504,8 @@ fn render_nodes(positioned: &[PositionedItem], parents: &HashSet<NodeId>) -> Str
 }
 
 fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
-    let mut edges = String::new();
-    edges.push_str("  <g id=\"dependencies\">\n");
+    let mut base_arcs = String::new();
+    let mut hitareas = String::new();
 
     // Find the rightmost edge of all nodes for base arc position
     let base_x = positioned
@@ -568,31 +568,45 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
 
             let edge_id = format!("{}-{}", edge.from, edge.to);
 
-            // Two-layer arc system:
-            // 1. Hit-area path (invisible, 12px wide, receives pointer events)
-            edges.push_str(&format!(
+            // Hit-area path (invisible, 12px wide, receives pointer events) → hitareas layer
+            hitareas.push_str(&format!(
                 "    <path class=\"arc-hitarea\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" d=\"{path}\"{data_loc_attr}/>\n",
                 edge.from, edge.to
             ));
-            // 2. Visible path (styled, no pointer events)
-            edges.push_str(&format!(
+            // Visible path (styled, no pointer events) → base-arcs layer
+            base_arcs.push_str(&format!(
                 "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" d=\"{path}\"{extra_style}/>\n"
             ));
 
-            // Arrow head pointing to target
+            // Arrow head pointing to target → base-arcs layer
             let arrow = render_arrow(to_x, to_y, arrow_class, &edge_id);
-            edges.push_str(&arrow);
+            base_arcs.push_str(&arrow);
 
             // For DirectCycle, add reverse arrow
             if edge.kind == EdgeKind::DirectCycle {
                 let reverse_arrow = render_arrow(from_x, from_y, arrow_class, &edge_id);
-                edges.push_str(&reverse_arrow);
+                base_arcs.push_str(&reverse_arrow);
             }
         }
     }
 
-    edges.push_str("  </g>\n");
-    edges
+    // 5-layer architecture for Z-order guarantees:
+    // 1. base-arcs: Non-highlighted arcs + arrows (bottom)
+    // 2. base-labels: Non-highlighted labels (JS fills via virtual arcs)
+    // 3. highlight-arcs: Highlighted arcs + arrows
+    // 4. highlight-labels: Highlighted labels
+    // 5. hitareas: Transparent hit areas (always on top)
+    format!(
+        r#"  <g id="base-arcs-layer">
+{}  </g>
+  <g id="base-labels-layer"></g>
+  <g id="highlight-arcs-layer"></g>
+  <g id="highlight-labels-layer"></g>
+  <g id="hitareas-layer">
+{}  </g>
+"#,
+        base_arcs, hitareas
+    )
 }
 
 fn render_arrow(x: f32, y: f32, class: &str, edge_id: &str) -> String {
@@ -1414,6 +1428,121 @@ mod tests {
             "Canvas height {} should include toolbar height {}",
             viewbox_height,
             TOOLBAR_HEIGHT
+        );
+    }
+
+    #[test]
+    fn test_layer_structure() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+
+        // Verify all 5 layers exist
+        assert!(
+            svg.contains(r#"<g id="base-arcs-layer">"#),
+            "SVG should contain base-arcs-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="base-labels-layer">"#),
+            "SVG should contain base-labels-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="highlight-arcs-layer">"#),
+            "SVG should contain highlight-arcs-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="highlight-labels-layer">"#),
+            "SVG should contain highlight-labels-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="hitareas-layer">"#),
+            "SVG should contain hitareas-layer"
+        );
+    }
+
+    #[test]
+    fn test_arcs_in_base_arcs_layer() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+
+        // Find base-arcs-layer content
+        let base_arcs_start = svg.find(r#"<g id="base-arcs-layer">"#).unwrap();
+        let base_arcs_end = svg[base_arcs_start..].find("</g>").unwrap() + base_arcs_start;
+        let base_arcs_content = &svg[base_arcs_start..base_arcs_end];
+
+        // Verify dep-arc is inside base-arcs-layer
+        assert!(
+            base_arcs_content.contains("dep-arc"),
+            "base-arcs-layer should contain dep-arc"
+        );
+        // Verify arrows are inside base-arcs-layer
+        assert!(
+            base_arcs_content.contains("<polygon"),
+            "base-arcs-layer should contain arrow polygons"
+        );
+    }
+
+    #[test]
+    fn test_hitareas_in_hitareas_layer() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+
+        // Find hitareas-layer content
+        let hitareas_start = svg.find(r#"<g id="hitareas-layer">"#).unwrap();
+        let hitareas_end = svg[hitareas_start..].find("</g>").unwrap() + hitareas_start;
+        let hitareas_content = &svg[hitareas_start..hitareas_end];
+
+        // Verify arc-hitarea is inside hitareas-layer
+        assert!(
+            hitareas_content.contains("arc-hitarea"),
+            "hitareas-layer should contain arc-hitarea"
         );
     }
 }
