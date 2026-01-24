@@ -671,6 +671,52 @@ mod tests {
         assert_eq!(cycles[0].nodes.len(), 3, "Cycle should contain 3 nodes");
     }
 
+    #[test]
+    fn test_multiple_independent_cycles() {
+        // A <-> B (cycle 1), C <-> D (cycle 2)
+        // Two independent cycles that should both be detected
+        let mut graph = ArcGraph::new();
+        let a = graph.add_node(Node::Module {
+            name: "a".to_string(),
+            crate_idx: NodeIndex::new(0),
+        });
+        let b = graph.add_node(Node::Module {
+            name: "b".to_string(),
+            crate_idx: NodeIndex::new(0),
+        });
+        let c = graph.add_node(Node::Module {
+            name: "c".to_string(),
+            crate_idx: NodeIndex::new(0),
+        });
+        let d = graph.add_node(Node::Module {
+            name: "d".to_string(),
+            crate_idx: NodeIndex::new(0),
+        });
+
+        // Cycle 1: A <-> B
+        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
+        graph.add_edge(b, a, Edge::ModuleDep(vec![]));
+
+        // Cycle 2: C <-> D
+        graph.add_edge(c, d, Edge::ModuleDep(vec![]));
+        graph.add_edge(d, c, Edge::ModuleDep(vec![]));
+
+        let cycles = detect_cycles(&graph);
+        assert_eq!(cycles.len(), 2, "Should detect two independent cycles");
+
+        // Each cycle should have 2 nodes
+        for cycle in &cycles {
+            assert_eq!(cycle.nodes.len(), 2, "Each cycle should contain 2 nodes");
+        }
+
+        // Verify both cycles are detected (order may vary)
+        let all_nodes: Vec<_> = cycles.iter().flat_map(|c| c.nodes.iter()).collect();
+        assert!(all_nodes.contains(&&a), "Cycle 1 should contain A");
+        assert!(all_nodes.contains(&&b), "Cycle 1 should contain B");
+        assert!(all_nodes.contains(&&c), "Cycle 2 should contain C");
+        assert!(all_nodes.contains(&&d), "Cycle 2 should contain D");
+    }
+
     // === Topological Sort Tests ===
 
     #[test]
