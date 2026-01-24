@@ -290,9 +290,9 @@ fn render_styles() -> String {
     .label { font-family: monospace; font-size: 12px; }
     .tree-line { stroke: #666; stroke-width: 1; }
     .dep-arc, .cycle-arc { pointer-events: none; }
-    .dep-arc { fill: none; stroke: #9c27b0; stroke-width: 1.5; }
+    .dep-arc { fill: none; stroke: #9c27b0; stroke-width: 0.5; }
     .dep-arrow { fill: #9c27b0; }
-    .cycle-arc { fill: none; stroke: #f44336; stroke-width: 1.5; }
+    .cycle-arc { fill: none; stroke: #f44336; stroke-width: 0.5; }
     .cycle-arrow { fill: #f44336; }
     /* Hit-area for arc interactions */
     .arc-hitarea { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
@@ -306,7 +306,7 @@ fn render_styles() -> String {
     .collapse-toggle { font-family: monospace; font-size: 14px; cursor: pointer; fill: #666; }
     .collapse-toggle:hover { fill: #1976d2; }
     .collapsed { display: none; }
-    .virtual-arc { fill: none; stroke: #9c27b0; stroke-width: 2; stroke-dasharray: 4,2; }
+    .virtual-arc { fill: none; stroke: #9c27b0; stroke-width: 0.5; stroke-dasharray: 4,2; }
     .virtual-arrow { fill: #9c27b0; cursor: pointer; }
     .arc-count { font-family: monospace; font-size: 10px; fill: #9c27b0; text-anchor: middle; }
     .arc-count-bg { fill: #ffffff; rx: 2; }

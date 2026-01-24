@@ -69,6 +69,30 @@ const ArcLogic = {
    * @param {string[]} locStrings - Array of tooltip location strings
    * @returns {string} - Sorted and grouped locations joined by '|'
    */
+  /**
+   * Count the number of source locations in a pipe-separated string.
+   * Format: "Symbol  ← file:line|     ← file:line|Symbol2  ← file:line"
+   * Each pipe-separated segment represents one location.
+   * @param {string} locationsString - Pipe-separated location string
+   * @returns {number} - Number of locations
+   */
+  countLocations(locationsString) {
+    if (!locationsString) return 0;
+    return locationsString.split('|').length;
+  },
+
+  /**
+   * Calculate stroke width based on location count using logarithmic scaling.
+   * @param {number} locationCount - Number of source locations
+   * @returns {number} - Stroke width in pixels (0.5 to 2.5)
+   */
+  calculateStrokeWidth(locationCount) {
+    const MIN = 0.5, MAX = 2.5, CAP = 50;
+    if (locationCount <= 0) return MIN;
+    const count = Math.min(locationCount, CAP);
+    return MIN + (MAX - MIN) * Math.log(count) / Math.log(CAP);
+  },
+
   sortAndGroupLocations(locStrings) {
     const symbolRegex = /^(\S+)\s+←\s+(.+)$/;
     const bySymbol = {};  // symbol -> [locations]
@@ -140,6 +164,55 @@ if (typeof document !== 'undefined') {
   const ROW_HEIGHT = __ROW_HEIGHT__;
   const MARGIN = __MARGIN__;
   const TOOLBAR_HEIGHT = __TOOLBAR_HEIGHT__;
+
+  // === Arc weight scaling ===
+  // Arrow base dimensions (at scale 1.0)
+  const ARROW_LENGTH = 8;
+  const ARROW_HALF_WIDTH = 4;
+
+  /**
+   * Generate scaled arrow polygon points string.
+   * Arrow tip is at (tipX, tipY), pointing left.
+   * @param {number} tipX - X coordinate of arrow tip
+   * @param {number} tipY - Y coordinate of arrow tip
+   * @param {number} scale - Scale factor (1.0 = original size)
+   * @returns {string} - SVG polygon points string
+   */
+  function getArrowPoints(tipX, tipY, scale) {
+    const len = ARROW_LENGTH * scale;
+    const hw = ARROW_HALF_WIDTH * scale;
+    return `${tipX + len},${tipY - hw} ${tipX},${tipY} ${tipX + len},${tipY + hw}`;
+  }
+
+  /**
+   * Scale existing arrows by updating their points attribute.
+   * Parses current tip position from existing points.
+   */
+  function scaleArrow(edgeId, strokeWidth) {
+    const scale = strokeWidth / 1.5;  // 1.5 was the original base stroke-width
+    const arrows = document.querySelectorAll(`[data-edge="${edgeId}"]`);
+    arrows.forEach(arrow => {
+      // Parse tip position from existing points (format: "x1,y1 tipX,tipY x2,y2")
+      const points = arrow.getAttribute('points');
+      const parts = points.split(' ');
+      if (parts.length >= 2) {
+        const [tipX, tipY] = parts[1].split(',').map(Number);
+        arrow.setAttribute('points', getArrowPoints(tipX, tipY, scale));
+      }
+    });
+  }
+
+  function applyInitialArcWeights() {
+    document.querySelectorAll('.arc-hitarea').forEach(hitarea => {
+      const locs = hitarea.dataset.sourceLocations;
+      const count = ArcLogic.countLocations(locs);
+      const width = ArcLogic.calculateStrokeWidth(count);
+      const arcId = hitarea.dataset.arcId;
+      const visibleArc = document.querySelector(`.dep-arc[data-arc-id="${arcId}"], .cycle-arc[data-arc-id="${arcId}"]`);
+      if (visibleArc) visibleArc.style.strokeWidth = width + 'px';
+      scaleArrow(arcId, width);
+    });
+  }
 
   // === Floating label for source locations ===
   let floatingLabel = null;
@@ -524,10 +597,12 @@ if (typeof document !== 'undefined') {
         const visibleArc = getVisibleArc(arcId);
         if (visibleArc) visibleArc.setAttribute('d', arc.path);
 
-        // Update arrow position
+        // Update arrow position with correct scale
+        const strokeWidth = visibleArc ? parseFloat(visibleArc.style.strokeWidth) || 0.5 : 0.5;
+        const scale = strokeWidth / 1.5;
         const arrows = document.querySelectorAll('[data-edge="' + fromId + '-' + toId + '"]');
         arrows.forEach(arrow => {
-          arrow.setAttribute('points', `${arc.toX + 8},${arc.toY - 4} ${arc.toX},${arc.toY} ${arc.toX + 8},${arc.toY + 4}`);
+          arrow.setAttribute('points', getArrowPoints(arc.toX, arc.toY, scale));
         });
       }
     });
@@ -564,8 +639,13 @@ if (typeof document !== 'undefined') {
 
     // Pass 1: Arcs + Arrows (bottom layer)
     mergedEdges.forEach((data, key) => {
-      const { fromId, toId, arc } = data;
+      const { fromId, toId, arc, hiddenEdgeData } = data;
       const arcId = fromId + '-' + toId;
+
+      // Calculate stroke width from aggregated locations
+      const totalLocations = hiddenEdgeData.reduce((sum, locs) =>
+        sum + ArcLogic.countLocations(locs), 0);
+      const strokeWidth = ArcLogic.calculateStrokeWidth(totalLocations);
 
       // Visible path (styled, no pointer events)
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -574,15 +654,17 @@ if (typeof document !== 'undefined') {
       path.setAttribute('data-arc-id', arcId);
       path.setAttribute('data-from', fromId);
       path.setAttribute('data-to', toId);
+      path.style.strokeWidth = strokeWidth + 'px';
       depsGroup.appendChild(path);
 
-      // Arrow
+      // Arrow (scaled to match stroke width)
+      const scale = strokeWidth / 1.5;
       const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
       arrow.setAttribute('class', 'virtual-arrow');
       arrow.setAttribute('data-vedge', arcId);
       arrow.setAttribute('data-from', fromId);
       arrow.setAttribute('data-to', toId);
-      arrow.setAttribute('points', `${arc.toX + 8},${arc.toY - 4} ${arc.toX},${arc.toY} ${arc.toX + 8},${arc.toY + 4}`);
+      arrow.setAttribute('points', getArrowPoints(arc.toX, arc.toY, scale));
       arrow.addEventListener('click', e => {
         e.stopPropagation();
         highlightVirtualEdge(fromId, toId, data.count);
@@ -978,5 +1060,8 @@ if (typeof document !== 'undefined') {
     pinnedHighlight = null;
     clearHighlights();
   });
+
+  // Apply initial arc weights based on source location counts
+  applyInitialArcWeights();
 })();
 }
