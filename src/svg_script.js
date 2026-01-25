@@ -276,8 +276,8 @@ if (typeof document !== 'undefined') {
     });
 
     // Remove CSS classes
-    document.querySelectorAll('.highlighted, .highlighted-node, .highlighted-arrow, .dimmed')
-      .forEach(el => el.classList.remove('highlighted', 'highlighted-node', 'highlighted-arrow', 'dimmed'));
+    document.querySelectorAll('.selected-crate, .selected-module, .dep-edge, .dep-node, .dep-arrow, .dependent-edge, .dependent-node, .dependent-arrow, .dimmed')
+      .forEach(el => el.classList.remove('selected-crate', 'selected-module', 'dep-edge', 'dep-node', 'dep-arrow', 'dependent-edge', 'dependent-node', 'dependent-arrow', 'dimmed'));
   }
 
   // Helper: get visible arc element by arc-id
@@ -323,10 +323,10 @@ if (typeof document !== 'undefined') {
   // Dim all non-highlighted elements (except toolbar and hitareas)
   function dimNonHighlighted() {
     document.querySelectorAll(
-      'rect:not(.highlighted-node):not(.toolbar-btn):not(.toolbar-checkbox):not(.arc-count-bg), ' +
-      'path:not(.highlighted):not(.arc-hitarea):not(.virtual-hitarea), ' +
-      'polygon:not(.highlighted-arrow), ' +
-      'text.arc-count:not(.highlighted)'
+      'rect:not(.selected-crate):not(.selected-module):not(.dep-node):not(.dependent-node):not(.toolbar-btn):not(.toolbar-checkbox):not(.arc-count-bg), ' +
+      'path:not(.dep-edge):not(.dependent-edge):not(.arc-hitarea):not(.virtual-hitarea), ' +
+      'polygon:not(.dep-arrow):not(.dependent-arrow), ' +
+      'text.arc-count:not(.dep-edge):not(.dependent-edge)'
     ).forEach(el => {
       if (!el.closest('.view-options')) el.classList.add('dimmed');
     });
@@ -334,20 +334,23 @@ if (typeof document !== 'undefined') {
 
   function applyEdgeHighlight(from, to) {
     const arcId = from + '-' + to;
-    document.getElementById('node-' + from)?.classList.add('highlighted-node');
-    document.getElementById('node-' + to)?.classList.add('highlighted-node');
-    // Highlight visible arc (not hitarea) via data-arc-id
-    getVisibleArc(arcId)?.classList.add('highlighted');
+    // from-Node: dependent (orange) - source of the edge
+    document.getElementById('node-' + from)?.classList.add('dependent-node');
+    // to-Node: dep (green) - target of the edge
+    document.getElementById('node-' + to)?.classList.add('dep-node');
+    // Edge itself: dep (green)
+    getVisibleArc(arcId)?.classList.add('dep-edge');
     // Virtual arcs
     document.querySelectorAll('.virtual-arc[data-from="' + from + '"][data-to="' + to + '"]')
-      .forEach(el => el.classList.add('highlighted'));
+      .forEach(el => el.classList.add('dep-edge'));
+    // Arrows: dep (green)
     document.querySelectorAll('[data-edge="' + arcId + '"]')
-      .forEach(el => el.classList.add('highlighted-arrow'));
+      .forEach(el => el.classList.add('dep-arrow'));
     document.querySelectorAll('[data-vedge="' + arcId + '"]:not(.arc-count)')
-      .forEach(el => el.classList.add('highlighted-arrow'));
-    // Arc-count labels get 'highlighted' class (not highlighted-arrow)
+      .forEach(el => el.classList.add('dep-arrow'));
+    // Arc-count labels
     document.querySelectorAll('.arc-count[data-vedge="' + arcId + '"]')
-      .forEach(el => el.classList.add('highlighted'));
+      .forEach(el => el.classList.add('dep-edge'));
 
     // Move highlighted elements to highlight layers
     moveToHighlightLayer(getVisibleArc(arcId));
@@ -361,38 +364,70 @@ if (typeof document !== 'undefined') {
   }
 
   function applyNodeHighlight(nodeId) {
-    document.getElementById('node-' + nodeId)?.classList.add('highlighted-node');
-    // Select hitareas (they have data-from/data-to), then highlight corresponding visible arcs
+    // Selected node: saturated original color
+    const selectedNode = document.getElementById('node-' + nodeId);
+    if (selectedNode) {
+      if (selectedNode.classList.contains('crate')) {
+        selectedNode.classList.add('selected-crate');
+      } else if (selectedNode.classList.contains('module')) {
+        selectedNode.classList.add('selected-module');
+      }
+    }
+
+    // Helper to determine if edge is outgoing (dep) or incoming (dependent)
+    const isOutgoing = (from, to) => from === nodeId;
+
+    // Regular arcs via hitareas
     document.querySelectorAll('.arc-hitarea[data-from="' + nodeId + '"], .arc-hitarea[data-to="' + nodeId + '"]')
       .forEach(hitarea => {
         const arcId = hitarea.dataset.arcId;
         const visibleArc = getVisibleArc(arcId);
-        visibleArc?.classList.add('highlighted');
         const from = hitarea.dataset.from;
         const to = hitarea.dataset.to;
-        document.getElementById('node-' + from)?.classList.add('highlighted-node');
-        document.getElementById('node-' + to)?.classList.add('highlighted-node');
+        const outgoing = isOutgoing(from, to);
+
+        // Edge color: outgoing=green (dep), incoming=orange (dependent)
+        visibleArc?.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
+
+        // Connected nodes
+        const otherNodeId = outgoing ? to : from;
+        const otherNode = document.getElementById('node-' + otherNodeId);
+        otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
+
+        // Arrows
         document.querySelectorAll('[data-edge="' + from + '-' + to + '"]')
-          .forEach(arr => arr.classList.add('highlighted-arrow'));
+          .forEach(arr => arr.classList.add(outgoing ? 'dep-arrow' : 'dependent-arrow'));
+
         // Move to highlight layers
         moveToHighlightLayer(visibleArc);
         moveToHighlightLayer(document.querySelector(`.arc-count-group[data-vedge="${arcId}"]`));
         document.querySelectorAll(`[data-edge="${arcId}"]`).forEach(moveToHighlightLayer);
       });
-    // Also handle virtual arcs
+
+    // Virtual arcs
     document.querySelectorAll('.virtual-arc[data-from="' + nodeId + '"], .virtual-arc[data-to="' + nodeId + '"]')
       .forEach(arc => {
-        arc.classList.add('highlighted');
         const from = arc.dataset.from;
         const to = arc.dataset.to;
-        document.getElementById('node-' + from)?.classList.add('highlighted-node');
-        document.getElementById('node-' + to)?.classList.add('highlighted-node');
+        const outgoing = isOutgoing(from, to);
+
+        // Edge color
+        arc.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
+
+        // Connected nodes
+        const otherNodeId = outgoing ? to : from;
+        const otherNode = document.getElementById('node-' + otherNodeId);
+        otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
+
+        // Arrows
         document.querySelectorAll('[data-vedge="' + from + '-' + to + '"]:not(.arc-count)')
-          .forEach(arr => arr.classList.add('highlighted-arrow'));
-        // Arc-count labels get 'highlighted' class
+          .forEach(arr => arr.classList.add(outgoing ? 'dep-arrow' : 'dependent-arrow'));
+
+        // Arc-count labels
         document.querySelectorAll('.arc-count[data-vedge="' + from + '-' + to + '"]')
-          .forEach(el => el.classList.add('highlighted'));
-        // Move virtual arc elements to highlight layers
+          .forEach(el => el.classList.add(outgoing ? 'dep-edge' : 'dependent-edge'));
+
+        // Move to highlight layers
         moveToHighlightLayer(arc);
         moveToHighlightLayer(document.querySelector(`.arc-count-group[data-vedge="${from}-${to}"]`));
         document.querySelectorAll(`[data-vedge="${from}-${to}"]:not(.arc-count)`).forEach(moveToHighlightLayer);
@@ -788,7 +823,7 @@ if (typeof document !== 'undefined') {
         // When pinned, only show tooltip on highlighted arcs
         if (pinnedHighlight) {
           const visibleArc = document.querySelector(`.virtual-arc[data-arc-id="${arcId}"]`);
-          if (!visibleArc?.classList.contains('highlighted')) {
+          if (!visibleArc?.classList.contains('dep-edge') && !visibleArc?.classList.contains('dependent-edge')) {
             hideFloatingLabel();
             return;
           }
@@ -821,16 +856,19 @@ if (typeof document !== 'undefined') {
     }
     clearHighlights();
     pinnedHighlight = {type: 'edge', id: edgeId};
-    document.getElementById('node-' + fromId)?.classList.add('highlighted-node');
-    document.getElementById('node-' + toId)?.classList.add('highlighted-node');
-    // Highlight the virtual arc
+    // from-Node: dependent (orange)
+    document.getElementById('node-' + fromId)?.classList.add('dependent-node');
+    // to-Node: dep (green)
+    document.getElementById('node-' + toId)?.classList.add('dep-node');
+    // Virtual arc: dep (green)
     document.querySelectorAll('.virtual-arc[data-from="' + fromId + '"][data-to="' + toId + '"]')
-      .forEach(el => el.classList.add('highlighted'));
+      .forEach(el => el.classList.add('dep-edge'));
+    // Arrows: dep (green)
     document.querySelectorAll('.virtual-arrow[data-vedge="' + fromId + '-' + toId + '"]')
-      .forEach(el => el.classList.add('highlighted-arrow'));
-    // Highlight arc-count labels
+      .forEach(el => el.classList.add('dep-arrow'));
+    // Arc-count labels
     document.querySelectorAll('.arc-count[data-vedge="' + fromId + '-' + toId + '"]')
-      .forEach(el => el.classList.add('highlighted'));
+      .forEach(el => el.classList.add('dep-edge'));
     // Move virtual arc and label group to highlight layers
     moveToHighlightLayer(document.querySelector('.virtual-arc[data-arc-id="' + edgeId + '"]'));
     moveToHighlightLayer(document.querySelector('.arc-count-group[data-vedge="' + edgeId + '"]'));
@@ -1077,7 +1115,7 @@ if (typeof document !== 'undefined') {
       if (pinnedHighlight) {
         const arcId = hitarea.dataset.arcId;
         const visibleArc = getVisibleArc(arcId);
-        if (!visibleArc?.classList.contains('highlighted')) {
+        if (!visibleArc?.classList.contains('dep-edge') && !visibleArc?.classList.contains('dependent-edge')) {
           hideFloatingLabel();
           return;
         }

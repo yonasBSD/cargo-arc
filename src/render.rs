@@ -296,10 +296,17 @@ fn render_styles() -> String {
     .cycle-arrow { fill: #f44336; }
     /* Hit-area for arc interactions */
     .arc-hitarea { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
-    /* Interactive highlighting */
-    .highlighted { stroke: #ff9800 !important; stroke-width: 3 !important; }
-    .highlighted-node { fill: #fff176 !important; stroke: #ff9800 !important; stroke-width: 3 !important; }
-    .highlighted-arrow { fill: #ff9800 !important; }
+    /* Interactive highlighting - Selected (saturated original colors) */
+    .selected-crate { fill: #90caf9 !important; stroke: #1565c0 !important; stroke-width: 3 !important; }
+    .selected-module { fill: #ffcc80 !important; stroke: #ef6c00 !important; stroke-width: 3 !important; }
+    /* Dependency highlighting (green - what I point to) */
+    .dep-edge { stroke: #4caf50 !important; stroke-width: 3 !important; }
+    .dep-node { fill: #e8f5e9 !important; stroke: #4caf50 !important; stroke-width: 2 !important; }
+    .dep-arrow { fill: #4caf50 !important; }
+    /* Dependent highlighting (orange - what points to me) */
+    .dependent-edge { stroke: #ff9800 !important; stroke-width: 3 !important; }
+    .dependent-node { fill: #fff3e0 !important; stroke: #ff9800 !important; stroke-width: 2 !important; }
+    .dependent-arrow { fill: #ff9800 !important; }
     .dimmed { opacity: 0.3; pointer-events: none; }
     .crate, .module, .dep-arc, .cycle-arc { cursor: pointer; }
     /* Collapse functionality */
@@ -310,7 +317,8 @@ fn render_styles() -> String {
     .virtual-arrow { fill: #9c27b0; cursor: pointer; }
     .arc-count { font-family: monospace; font-size: 10px; fill: #9c27b0; text-anchor: middle; }
     .arc-count-bg { fill: #ffffff; rx: 2; }
-    .arc-count.highlighted { fill: #ff9800; font-size: 12px; font-weight: bold; stroke: none !important; }
+    .arc-count.dep-edge { fill: #4caf50 !important; font-size: 12px; font-weight: bold; stroke: none !important; }
+    .arc-count.dependent-edge { fill: #ff9800 !important; font-size: 12px; font-weight: bold; stroke: none !important; }
     .arc-count.dimmed { opacity: 0.3; }
     .child-count { font-size: 10px; fill: #888; }
     /* Floating label for source locations */
