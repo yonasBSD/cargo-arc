@@ -279,6 +279,33 @@ if (typeof document !== 'undefined') {
       moveToLayer(el, 'base-labels-layer');
     });
 
+    // Reset regular arrows to original size (based on arc weights)
+    document.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
+      const arcId = hitarea.dataset.arcId;
+      const locs = hitarea.dataset.sourceLocations;
+      const count = ArcLogic.countLocations(locs);
+      const strokeWidth = ArcLogic.calculateStrokeWidth(count);
+      scaleArrow(arcId, strokeWidth);
+    });
+
+    // Reset virtual arrows to original size (based on aggregated arc weights)
+    document.querySelectorAll('.virtual-hitarea').forEach(hitarea => {
+      const arcId = hitarea.dataset.arcId;
+      const locs = hitarea.dataset.sourceLocations;
+      const count = ArcLogic.countLocations(locs);
+      const strokeWidth = ArcLogic.calculateStrokeWidth(count);
+      const scale = strokeWidth / 1.5;
+
+      document.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
+        const points = arrow.getAttribute('points');
+        const parts = points.split(' ');
+        if (parts.length >= 2) {
+          const [tipX, tipY] = parts[1].split(',').map(Number);
+          arrow.setAttribute('points', getArrowPoints(tipX, tipY, scale));
+        }
+      });
+    });
+
     // Remove CSS classes
     document.querySelectorAll('.selected-crate, .selected-module, .dep-edge, .dep-node, .dep-arrow, .dependent-edge, .dependent-node, .dependent-arrow, .dimmed')
       .forEach(el => el.classList.remove('selected-crate', 'selected-module', 'dep-edge', 'dep-node', 'dep-arrow', 'dependent-edge', 'dependent-node', 'dependent-arrow', 'dimmed'));
@@ -362,6 +389,7 @@ if (typeof document !== 'undefined') {
     document.getElementById('node-' + to)?.classList.add('dep-node');
     // Edge itself: dep (green)
     arc?.classList.add('dep-edge');
+    scaleArrow(arcId, 3);
     // Virtual arcs
     document.querySelectorAll('.virtual-arc[data-from="' + from + '"][data-to="' + to + '"]')
       .forEach(el => {
@@ -372,7 +400,18 @@ if (typeof document !== 'undefined') {
     document.querySelectorAll('[data-edge="' + arcId + '"]')
       .forEach(el => el.classList.add('dep-arrow'));
     document.querySelectorAll('[data-vedge="' + arcId + '"]:not(.arc-count)')
-      .forEach(el => el.classList.add('dep-arrow'));
+      .forEach(el => {
+        el.classList.add('dep-arrow');
+        // Scale virtual arrows
+        if (el.classList.contains('virtual-arrow')) {
+          const points = el.getAttribute('points');
+          const parts = points.split(' ');
+          if (parts.length >= 2) {
+            const [tipX, tipY] = parts[1].split(',').map(Number);
+            el.setAttribute('points', getArrowPoints(tipX, tipY, 3 / 1.5));
+          }
+        }
+      });
     // Arc-count labels
     document.querySelectorAll('.arc-count[data-vedge="' + arcId + '"]')
       .forEach(el => el.classList.add('dep-edge'));
@@ -416,6 +455,7 @@ if (typeof document !== 'undefined') {
 
         // Edge color: outgoing=green (dep), incoming=purple (dependent)
         visibleArc?.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
+        scaleArrow(from + '-' + to, 3);
 
         // Connected nodes (border only)
         const otherNodeId = outgoing ? to : from;
@@ -444,6 +484,16 @@ if (typeof document !== 'undefined') {
 
         // Edge color
         arc.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
+
+        // Scale virtual arrows
+        document.querySelectorAll(`.virtual-arrow[data-vedge="${from}-${to}"]`).forEach(arrow => {
+          const points = arrow.getAttribute('points');
+          const parts = points.split(' ');
+          if (parts.length >= 2) {
+            const [tipX, tipY] = parts[1].split(',').map(Number);
+            arrow.setAttribute('points', getArrowPoints(tipX, tipY, 3 / 1.5));
+          }
+        });
 
         // Connected nodes (border only)
         const otherNodeId = outgoing ? to : from;
@@ -894,9 +944,17 @@ if (typeof document !== 'undefined') {
     // Virtual arc: dep (green)
     document.querySelectorAll('.virtual-arc[data-from="' + fromId + '"][data-to="' + toId + '"]')
       .forEach(el => el.classList.add('dep-edge'));
-    // Arrows: dep (green)
+    // Arrows: dep (green) - scale virtual arrows
     document.querySelectorAll('.virtual-arrow[data-vedge="' + fromId + '-' + toId + '"]')
-      .forEach(el => el.classList.add('dep-arrow'));
+      .forEach(el => {
+        el.classList.add('dep-arrow');
+        const points = el.getAttribute('points');
+        const parts = points.split(' ');
+        if (parts.length >= 2) {
+          const [tipX, tipY] = parts[1].split(',').map(Number);
+          el.setAttribute('points', getArrowPoints(tipX, tipY, 3 / 1.5));
+        }
+      });
     // Arc-count labels
     document.querySelectorAll('.arc-count[data-vedge="' + fromId + '-' + toId + '"]')
       .forEach(el => el.classList.add('dep-edge'));
