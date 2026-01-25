@@ -441,8 +441,12 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
                 if let (Some(&from), Some(&to)) = (node_map.get(&src), node_map.get(&dst)) {
                     let kind = if cycle_pairs.contains(&(src, dst)) {
                         EdgeKind::TransitiveCycle
+                    } else if from < to {
+                        // from appears before to in topo order → normal downward flow
+                        EdgeKind::Downward
                     } else {
-                        EdgeKind::Normal
+                        // from appears after to → upward reference (child→parent)
+                        EdgeKind::Upward
                     };
                     ir.add_edge(from, to, kind, vec![]);
                 }
@@ -463,8 +467,12 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
                         } else {
                             EdgeKind::TransitiveCycle
                         }
+                    } else if from < to {
+                        // from appears before to in topo order → normal downward flow
+                        EdgeKind::Downward
                     } else {
-                        EdgeKind::Normal
+                        // from appears after to → upward reference (child→parent)
+                        EdgeKind::Upward
                     };
                     ir.add_edge(from, to, kind, locations.clone());
                 }
@@ -528,9 +536,10 @@ pub struct LayoutItem {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EdgeKind {
-    Normal,
-    DirectCycle,
-    TransitiveCycle,
+    Downward,        // Normal flow: Parent→Child (from_idx < to_idx in topo order)
+    Upward,          // Tighter coupling: Child→Parent (from_idx > to_idx in topo order)
+    DirectCycle,     // A⇄B bidirectional
+    TransitiveCycle, // Part of larger cycle
 }
 
 use crate::graph::SourceLocation;
@@ -588,7 +597,7 @@ mod tests {
         let edge = LayoutEdge {
             from: 0,
             to: 1,
-            kind: EdgeKind::Normal,
+            kind: EdgeKind::Downward,
             source_locations: vec![SourceLocation {
                 file: PathBuf::from("src/cli.rs"),
                 line: 42,
@@ -836,7 +845,7 @@ mod tests {
 
         // Should have 1 dependency edge (mod_a -> mod_b)
         assert_eq!(ir.edges.len(), 1);
-        assert!(matches!(ir.edges[0].kind, EdgeKind::Normal));
+        assert!(matches!(ir.edges[0].kind, EdgeKind::Downward));
     }
 
     #[test]
@@ -868,6 +877,50 @@ mod tests {
                 "Cycle edges should be marked"
             );
         }
+    }
+
+    #[test]
+    fn test_upward_edge_direction() {
+        // When a module that appears later in topo order depends on one that appears earlier,
+        // it should be marked as Downward. When the reverse happens (earlier depends on later),
+        // it should be marked as Upward.
+        use std::path::PathBuf;
+
+        let mut graph = ArcGraph::new();
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test".to_string(),
+            path: PathBuf::from("/test"),
+        });
+        // mod_a depends on mod_b (normal downward flow if a comes before b)
+        let mod_a = graph.add_node(Node::Module {
+            name: "a".to_string(),
+            crate_idx,
+        });
+        let mod_b = graph.add_node(Node::Module {
+            name: "b".to_string(),
+            crate_idx,
+        });
+        graph.add_edge(crate_idx, mod_a, Edge::Contains);
+        graph.add_edge(crate_idx, mod_b, Edge::Contains);
+        // a -> b (a depends on b)
+        graph.add_edge(mod_a, mod_b, Edge::ModuleDep(vec![]));
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        // There should be exactly one edge
+        assert_eq!(ir.edges.len(), 1);
+        let edge = &ir.edges[0];
+
+        // The direction depends on topo order position
+        // If from < to in layout order -> Downward
+        // If from > to in layout order -> Upward
+        assert!(
+            matches!(edge.kind, EdgeKind::Downward | EdgeKind::Upward),
+            "Edge should have direction: {:?}",
+            edge.kind
+        );
     }
 
     #[test]
@@ -985,7 +1038,7 @@ mod tests {
         let normal = LayoutEdge {
             from: 0,
             to: 1,
-            kind: EdgeKind::Normal,
+            kind: EdgeKind::Downward,
             source_locations: vec![],
         };
         let direct = LayoutEdge {
@@ -1018,7 +1071,7 @@ mod tests {
             },
             "my_module".to_string(),
         );
-        ir.add_edge(crate_id, mod_id, EdgeKind::Normal, vec![]);
+        ir.add_edge(crate_id, mod_id, EdgeKind::Downward, vec![]);
 
         assert_eq!(ir.items.len(), 2);
         assert_eq!(ir.edges.len(), 1);

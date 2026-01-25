@@ -267,6 +267,10 @@ if (typeof document !== 'undefined') {
   let pinnedHighlight = null; // {type: 'node'|'edge', id: string} or null
 
   function clearHighlights() {
+    // Clear shadow paths
+    const shadowLayer = document.getElementById('highlight-shadows');
+    if (shadowLayer) shadowLayer.innerHTML = '';
+
     // Move highlighted elements back to base layers
     document.querySelectorAll('#highlight-arcs-layer > *').forEach(el => {
       moveToLayer(el, 'base-arcs-layer');
@@ -320,6 +324,19 @@ if (typeof document !== 'undefined') {
     }
   }
 
+  // Create shadow path for glow effect
+  function createShadowPath(arc) {
+    if (!arc) return;
+    const shadow = arc.cloneNode(false);
+    shadow.classList.add('shadow-path');
+    shadow.removeAttribute('id');
+    shadow.setAttribute('stroke-width', '8');
+    shadow.setAttribute('opacity', '0.4');
+    shadow.style.strokeLinecap = 'round';
+    const shadowLayer = document.getElementById('highlight-shadows');
+    if (shadowLayer) shadowLayer.appendChild(shadow);
+  }
+
   // Dim all non-highlighted elements (except toolbar and hitareas)
   function dimNonHighlighted() {
     document.querySelectorAll(
@@ -334,15 +351,23 @@ if (typeof document !== 'undefined') {
 
   function applyEdgeHighlight(from, to) {
     const arcId = from + '-' + to;
-    // from-Node: dependent (orange) - source of the edge
+    const arc = getVisibleArc(arcId);
+
+    // Create shadow path for glow effect
+    createShadowPath(arc);
+
+    // from-Node: dependent (purple border) - source of the edge
     document.getElementById('node-' + from)?.classList.add('dependent-node');
-    // to-Node: dep (green) - target of the edge
+    // to-Node: dep (green border) - target of the edge
     document.getElementById('node-' + to)?.classList.add('dep-node');
     // Edge itself: dep (green)
-    getVisibleArc(arcId)?.classList.add('dep-edge');
+    arc?.classList.add('dep-edge');
     // Virtual arcs
     document.querySelectorAll('.virtual-arc[data-from="' + from + '"][data-to="' + to + '"]')
-      .forEach(el => el.classList.add('dep-edge'));
+      .forEach(el => {
+        el.classList.add('dep-edge');
+        createShadowPath(el);
+      });
     // Arrows: dep (green)
     document.querySelectorAll('[data-edge="' + arcId + '"]')
       .forEach(el => el.classList.add('dep-arrow'));
@@ -353,7 +378,7 @@ if (typeof document !== 'undefined') {
       .forEach(el => el.classList.add('dep-edge'));
 
     // Move highlighted elements to highlight layers
-    moveToHighlightLayer(getVisibleArc(arcId));
+    moveToHighlightLayer(arc);
     moveToHighlightLayer(document.querySelector(`.virtual-arc[data-arc-id="${arcId}"]`));
     moveToHighlightLayer(document.querySelector(`.arc-count-group[data-vedge="${arcId}"]`));
     // Arrows
@@ -386,10 +411,13 @@ if (typeof document !== 'undefined') {
         const to = hitarea.dataset.to;
         const outgoing = isOutgoing(from, to);
 
-        // Edge color: outgoing=green (dep), incoming=orange (dependent)
+        // Create shadow path for glow effect
+        createShadowPath(visibleArc);
+
+        // Edge color: outgoing=green (dep), incoming=purple (dependent)
         visibleArc?.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
 
-        // Connected nodes
+        // Connected nodes (border only)
         const otherNodeId = outgoing ? to : from;
         const otherNode = document.getElementById('node-' + otherNodeId);
         otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
@@ -411,10 +439,13 @@ if (typeof document !== 'undefined') {
         const to = arc.dataset.to;
         const outgoing = isOutgoing(from, to);
 
+        // Create shadow path for glow effect
+        createShadowPath(arc);
+
         // Edge color
         arc.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
 
-        // Connected nodes
+        // Connected nodes (border only)
         const otherNodeId = outgoing ? to : from;
         const otherNode = document.getElementById('node-' + otherNodeId);
         otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');

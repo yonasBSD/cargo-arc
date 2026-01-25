@@ -285,42 +285,48 @@ fn render_header(width: f32, height: f32) -> String {
 
 fn render_styles() -> String {
     r#"  <style>
-    .crate { fill: #e3f2fd; stroke: #1976d2; stroke-width: 2; }
-    .module { fill: #fff3e0; stroke: #f57c00; stroke-width: 1; }
+    /* Node base styles - Tailwind fills, Catppuccin strokes */
+    .crate { fill: #dbeafe; stroke: #1e66f5; stroke-width: 1.5; }
+    .module { fill: #ffedd5; stroke: #fe640b; stroke-width: 1.5; }
     .label { font-family: monospace; font-size: 12px; }
     .tree-line { stroke: #666; stroke-width: 1; }
+    /* Arc base styles - Catppuccin Latte colors */
     .dep-arc, .cycle-arc { pointer-events: none; }
-    .dep-arc { fill: none; stroke: #9c27b0; stroke-width: 0.5; }
-    .dep-arrow { fill: #9c27b0; }
-    .cycle-arc { fill: none; stroke: #f44336; stroke-width: 0.5; }
-    .cycle-arrow { fill: #f44336; }
+    .dep-arc { fill: none; stroke-width: 0.5; }
+    .dep-arc.downward { stroke: #40a02b; }  /* Green - normal flow */
+    .dep-arc.upward { stroke: #df8e1d; }    /* Yellow - child→parent */
+    .dep-arrow { fill: #40a02b; }
+    .cycle-arc { fill: none; stroke: #d20f39; stroke-width: 0.5; }  /* Red - cycles */
+    .cycle-arrow { fill: #d20f39; }
     /* Hit-area for arc interactions */
     .arc-hitarea { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
-    /* Interactive highlighting - Selected (saturated original colors) */
-    .selected-crate { fill: #90caf9 !important; stroke: #1565c0 !important; stroke-width: 3 !important; }
-    .selected-module { fill: #ffcc80 !important; stroke: #ef6c00 !important; stroke-width: 3 !important; }
-    /* Dependency highlighting (green - what I point to) */
-    .dep-edge { stroke: #4caf50 !important; stroke-width: 3 !important; }
-    .dep-node { fill: #e8f5e9 !important; stroke: #4caf50 !important; stroke-width: 2 !important; }
-    .dep-arrow { fill: #4caf50 !important; }
-    /* Dependent highlighting (orange - what points to me) */
-    .dependent-edge { stroke: #ff9800 !important; stroke-width: 3 !important; }
-    .dependent-node { fill: #fff3e0 !important; stroke: #ff9800 !important; stroke-width: 2 !important; }
-    .dependent-arrow { fill: #ff9800 !important; }
+    /* Interactive highlighting - Selected (saturated fills, thicker border) */
+    .selected-crate { fill: #93c5fd !important; stroke-width: 3 !important; }
+    .selected-module { fill: #fdba74 !important; stroke-width: 3 !important; }
+    /* Dependency highlighting (green border - what I point to) */
+    .dep-edge { stroke: #40a02b !important; stroke-width: 3 !important; }
+    .dep-node { stroke: #40a02b !important; stroke-width: 2.5 !important; }
+    .dep-arrow { fill: #40a02b !important; }
+    /* Dependent highlighting (purple border - what points to me) */
+    .dependent-edge { stroke: #8839ef !important; stroke-width: 3 !important; }
+    .dependent-node { stroke: #8839ef !important; stroke-width: 2.5 !important; }
+    .dependent-arrow { fill: #8839ef !important; }
     .dimmed { opacity: 0.3; pointer-events: none; }
     .crate, .module, .dep-arc, .cycle-arc { cursor: pointer; }
     /* Collapse functionality */
     .collapse-toggle { font-family: monospace; font-size: 14px; cursor: pointer; fill: #666; }
-    .collapse-toggle:hover { fill: #1976d2; }
+    .collapse-toggle:hover { fill: #1e66f5; }
     .collapsed { display: none; }
-    .virtual-arc { fill: none; stroke: #9c27b0; stroke-width: 0.5; stroke-dasharray: 4,2; }
-    .virtual-arrow { fill: #9c27b0; cursor: pointer; }
-    .arc-count { font-family: monospace; font-size: 10px; fill: #9c27b0; text-anchor: middle; }
+    .virtual-arc { fill: none; stroke: #40a02b; stroke-width: 0.5; stroke-dasharray: 4,2; }
+    .virtual-arrow { fill: #40a02b; cursor: pointer; }
+    .arc-count { font-family: monospace; font-size: 10px; fill: #40a02b; text-anchor: middle; }
     .arc-count-bg { fill: #ffffff; rx: 2; }
-    .arc-count.dep-edge { fill: #4caf50 !important; font-size: 12px; font-weight: bold; stroke: none !important; }
-    .arc-count.dependent-edge { fill: #ff9800 !important; font-size: 12px; font-weight: bold; stroke: none !important; }
+    .arc-count.dep-edge { fill: #40a02b !important; font-size: 12px; font-weight: bold; stroke: none !important; }
+    .arc-count.dependent-edge { fill: #8839ef !important; font-size: 12px; font-weight: bold; stroke: none !important; }
     .arc-count.dimmed { opacity: 0.3; }
     .child-count { font-size: 10px; fill: #888; }
+    /* Shadow path for glow effect */
+    .shadow-path { pointer-events: none; stroke-linecap: round; }
     /* Floating label for source locations */
     .floating-label { pointer-events: none; }
     .floating-label rect { fill: #1a1a2e; fill-opacity: 0.95; rx: 4; }
@@ -331,7 +337,7 @@ fn render_styles() -> String {
     .toolbar-btn:hover { fill: #e0e0e0; }
     .toolbar-btn-text { font-family: sans-serif; font-size: 11px; text-anchor: middle; }
     .toolbar-checkbox { fill: #fff; stroke: #666; rx: 2; cursor: pointer; }
-    .toolbar-checkbox.checked { fill: #1976d2; }
+    .toolbar-checkbox.checked { fill: #1e66f5; }
     .toolbar-label { font-family: sans-serif; font-size: 11px; cursor: pointer; }
     .toolbar-separator { stroke: #ccc; }
     .toolbar-disabled { opacity: 0.4; pointer-events: none; }
@@ -550,12 +556,16 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
                 "M {from_x},{from_y} Q {ctrl_x},{from_y} {ctrl_x},{mid_y} Q {ctrl_x},{to_y} {to_x},{to_y}"
             );
 
-            let (base_arc_class, arrow_class, extra_style) = match edge.kind {
-                EdgeKind::Normal => ("dep-arc", "dep-arrow", ""),
-                EdgeKind::DirectCycle => ("cycle-arc", "cycle-arrow", ""),
-                EdgeKind::TransitiveCycle => {
-                    ("cycle-arc", "cycle-arrow", " stroke-dasharray=\"4,2\"")
-                }
+            let (base_arc_class, arrow_class, extra_style, direction) = match edge.kind {
+                EdgeKind::Downward => ("dep-arc downward", "dep-arrow", "", "downward"),
+                EdgeKind::Upward => ("dep-arc upward", "dep-arrow", "", "upward"),
+                EdgeKind::DirectCycle => ("cycle-arc", "cycle-arrow", "", "cycle"),
+                EdgeKind::TransitiveCycle => (
+                    "cycle-arc",
+                    "cycle-arrow",
+                    " stroke-dasharray=\"4,2\"",
+                    "cycle",
+                ),
             };
 
             // Add crate-dep-arc class for Crate-to-Crate edges
@@ -583,7 +593,7 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
             ));
             // Visible path (styled, no pointer events) → base-arcs layer
             base_arcs.push_str(&format!(
-                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" d=\"{path}\"{extra_style}/>\n"
+                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" data-direction=\"{direction}\" d=\"{path}\"{extra_style}/>\n"
             ));
 
             // Arrow head pointing to target → base-arcs layer
@@ -598,16 +608,18 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
         }
     }
 
-    // 5-layer architecture for Z-order guarantees:
+    // 6-layer architecture for Z-order guarantees:
     // 1. base-arcs: Non-highlighted arcs + arrows (bottom)
     // 2. base-labels: Non-highlighted labels (JS fills via virtual arcs)
-    // 3. highlight-arcs: Highlighted arcs + arrows
-    // 4. highlight-labels: Highlighted labels
-    // 5. hitareas: Transparent hit areas (always on top)
+    // 3. highlight-shadows: Shadow/glow paths behind highlighted arcs (JS fills)
+    // 4. highlight-arcs: Highlighted arcs + arrows
+    // 5. highlight-labels: Highlighted labels
+    // 6. hitareas: Transparent hit areas (always on top)
     format!(
         r#"  <g id="base-arcs-layer">
 {}  </g>
   <g id="base-labels-layer"></g>
+  <g id="highlight-shadows"></g>
   <g id="highlight-arcs-layer"></g>
   <g id="highlight-labels-layer"></g>
   <g id="hitareas-layer">
@@ -673,7 +685,7 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
         let svg = render(&ir, &RenderConfig::default());
         assert!(svg.contains(" Q ")); // Bezier
         assert!(svg.contains("<polygon")); // Arrow
@@ -793,7 +805,7 @@ mod tests {
             );
         }
         // Edge von erstem zu letztem Modul (9 Hops)
-        ir.add_edge(1, 10, EdgeKind::Normal, vec![]);
+        ir.add_edge(1, 10, EdgeKind::Downward, vec![]);
 
         let svg = render(&ir, &RenderConfig::default());
         // Parse viewBox width
@@ -891,7 +903,7 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
         let svg = render(&ir, &RenderConfig::default());
         assert!(svg.contains(r#"id="edge-1-2""#), "Edge should have id");
         assert!(
@@ -899,6 +911,10 @@ mod tests {
             "Edge should have data-from"
         );
         assert!(svg.contains(r#"data-to="2""#), "Edge should have data-to");
+        assert!(
+            svg.contains(r#"data-direction="downward""#),
+            "Edge should have data-direction"
+        );
     }
 
     #[test]
@@ -1133,7 +1149,7 @@ mod tests {
         ir.add_edge(
             a,
             b,
-            EdgeKind::Normal,
+            EdgeKind::Downward,
             vec![SourceLocation {
                 file: PathBuf::from("src/a.rs"),
                 line: 5,
@@ -1323,7 +1339,7 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
         let svg = render(&ir, &RenderConfig::default());
 
         // Should have two paths for each arc: hit-area and visible
@@ -1332,8 +1348,8 @@ mod tests {
             "Should have hit-area path"
         );
         assert!(
-            svg.contains(r#"class="dep-arc""#),
-            "Should have visible dep-arc path"
+            svg.contains(r#"class="dep-arc downward""#),
+            "Should have visible dep-arc path with direction"
         );
 
         // Both should have data-arc-id attribute linking them
@@ -1398,7 +1414,7 @@ mod tests {
         let mut ir = LayoutIR::new();
         let c1 = ir.add_item(ItemKind::Crate, "crate_a".into());
         let c2 = ir.add_item(ItemKind::Crate, "crate_b".into());
-        ir.add_edge(c1, c2, EdgeKind::Normal, vec![]);
+        ir.add_edge(c1, c2, EdgeKind::Downward, vec![]);
         let svg = render(&ir, &RenderConfig::default());
         // Crate-to-crate edges should have crate-dep-arc class
         assert!(
@@ -1457,10 +1473,10 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
         let svg = render(&ir, &RenderConfig::default());
 
-        // Verify all 5 layers exist
+        // Verify all 6 layers exist
         assert!(
             svg.contains(r#"<g id="base-arcs-layer">"#),
             "SVG should contain base-arcs-layer"
@@ -1468,6 +1484,10 @@ mod tests {
         assert!(
             svg.contains(r#"<g id="base-labels-layer">"#),
             "SVG should contain base-labels-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="highlight-shadows">"#),
+            "SVG should contain highlight-shadows layer"
         );
         assert!(
             svg.contains(r#"<g id="highlight-arcs-layer">"#),
@@ -1501,7 +1521,7 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
         let svg = render(&ir, &RenderConfig::default());
 
         // Find base-arcs-layer content
@@ -1539,7 +1559,7 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeKind::Normal, vec![]);
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
         let svg = render(&ir, &RenderConfig::default());
 
         // Find hitareas-layer content
