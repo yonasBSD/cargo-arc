@@ -279,16 +279,20 @@ if (typeof document !== 'undefined') {
       moveToLayer(el, 'base-labels-layer');
     });
 
-    // Reset regular arrows to original size (based on arc weights)
+    // Reset regular arcs and arrows to original size (based on arc weights)
     document.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
       const arcId = hitarea.dataset.arcId;
       const locs = hitarea.dataset.sourceLocations;
       const count = ArcLogic.countLocations(locs);
       const strokeWidth = ArcLogic.calculateStrokeWidth(count);
+      // Reset arc stroke-width
+      const visibleArc = document.querySelector(`.dep-arc[data-arc-id="${arcId}"], .cycle-arc[data-arc-id="${arcId}"]`);
+      if (visibleArc) visibleArc.style.strokeWidth = strokeWidth + 'px';
+      // Reset arrow size
       scaleArrow(arcId, strokeWidth);
     });
 
-    // Reset virtual arrows to original size (based on aggregated arc weights)
+    // Reset virtual arcs and arrows to original size (based on aggregated arc weights)
     document.querySelectorAll('.virtual-hitarea').forEach(hitarea => {
       const arcId = hitarea.dataset.arcId;
       const locs = hitarea.dataset.sourceLocations;
@@ -296,6 +300,12 @@ if (typeof document !== 'undefined') {
       const strokeWidth = ArcLogic.calculateStrokeWidth(count);
       const scale = strokeWidth / 1.5;
 
+      // Reset virtual arc stroke-width
+      document.querySelectorAll(`.virtual-arc[data-arc-id="${arcId}"]`).forEach(arc => {
+        arc.style.strokeWidth = strokeWidth + 'px';
+      });
+
+      // Reset virtual arrow size
       document.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
         const points = arrow.getAttribute('points');
         const parts = points.split(' ');
@@ -306,9 +316,9 @@ if (typeof document !== 'undefined') {
       });
     });
 
-    // Remove CSS classes
-    document.querySelectorAll('.selected-crate, .selected-module, .dep-edge, .dep-node, .dep-arrow, .dependent-edge, .dependent-node, .dependent-arrow, .dimmed')
-      .forEach(el => el.classList.remove('selected-crate', 'selected-module', 'dep-edge', 'dep-node', 'dep-arrow', 'dependent-edge', 'dependent-node', 'dependent-arrow', 'dimmed'));
+    // Remove CSS classes (including new highlight marker classes)
+    document.querySelectorAll('.selected-crate, .selected-module, .dep-node, .dependent-node, .highlighted-arc, .highlighted-arrow, .highlighted-label, .dimmed')
+      .forEach(el => el.classList.remove('selected-crate', 'selected-module', 'dep-node', 'dependent-node', 'highlighted-arc', 'highlighted-arrow', 'highlighted-label', 'dimmed'));
   }
 
   // Helper: get visible arc element by arc-id
@@ -352,14 +362,29 @@ if (typeof document !== 'undefined') {
   }
 
   // Create shadow path for glow effect
-  function createShadowPath(arc) {
+  // relationType: 'dep' (incoming) or 'reverse' (outgoing)
+  function createShadowPath(arc, relationType) {
     if (!arc) return;
     const shadow = arc.cloneNode(false);
     shadow.classList.add('shadow-path');
+    shadow.classList.add(relationType === 'dep' ? 'glow-incoming' : 'glow-outgoing');
     shadow.removeAttribute('id');
-    shadow.style.strokeWidth = '8px';
-    shadow.setAttribute('opacity', '0.4');
+
+    // Dynamic width: 4× arc width for glow effect
+    const arcWidth = parseFloat(arc.style.strokeWidth) || 0.5;
+    shadow.style.strokeWidth = (arcWidth * 4) + 'px';
+    shadow.setAttribute('opacity', '0.25');
     shadow.style.strokeLinecap = 'round';
+
+    // Shorten shadow to compensate for wider stroke
+    // Overhang per end ≈ (shadowWidth - arcWidth) / 2
+    const shadowWidth = arcWidth * 4;
+    const overhang = (shadowWidth - arcWidth) / 2;
+    const pathLength = arc.getTotalLength?.() || 100;
+    const visibleLength = Math.max(0, pathLength - overhang * 2);
+    shadow.style.strokeDasharray = visibleLength + ' ' + pathLength;
+    shadow.style.strokeDashoffset = -overhang + 'px';
+
     const shadowLayer = document.getElementById('highlight-shadows');
     if (shadowLayer) shadowLayer.appendChild(shadow);
   }
@@ -368,9 +393,9 @@ if (typeof document !== 'undefined') {
   function dimNonHighlighted() {
     document.querySelectorAll(
       'rect:not(.selected-crate):not(.selected-module):not(.dep-node):not(.dependent-node):not(.toolbar-btn):not(.toolbar-checkbox):not(.arc-count-bg), ' +
-      'path:not(.dep-edge):not(.dependent-edge):not(.arc-hitarea):not(.virtual-hitarea), ' +
-      'polygon:not(.dep-arrow):not(.dependent-arrow), ' +
-      'text.arc-count:not(.dep-edge):not(.dependent-edge)'
+      'path:not(.highlighted-arc):not(.arc-hitarea):not(.virtual-hitarea), ' +
+      'polygon:not(.highlighted-arrow), ' +
+      'text.arc-count:not(.highlighted-label)'
     ).forEach(el => {
       if (!el.closest('.view-options')) el.classList.add('dimmed');
     });
@@ -383,41 +408,50 @@ if (typeof document !== 'undefined') {
     // Skip if arc is hidden (collapsed or filtered out)
     if (arc?.style.display === 'none' || arc?.classList.contains('hidden-by-filter')) return;
 
-    // Create shadow path for glow effect
-    createShadowPath(arc);
+    // Create shadow path with relation type (edge click = viewing dependency)
+    createShadowPath(arc, 'dep');
 
     // from-Node: dependent (purple border) - source of the edge
     document.getElementById('node-' + from)?.classList.add('dependent-node');
     // to-Node: dep (green border) - target of the edge
     document.getElementById('node-' + to)?.classList.add('dep-node');
-    // Edge itself: dep (green)
-    arc?.classList.add('dep-edge');
-    scaleArrow(arcId, 3);
+
+    // Arc: marker class only (keeps direction color), dynamic stroke-width
+    arc?.classList.add('highlighted-arc');
+    const arcWidth = parseFloat(arc?.style.strokeWidth) || 0.5;
+    const highlightWidth = arcWidth * 1.3;
+    if (arc) arc.style.strokeWidth = highlightWidth + 'px';
+    scaleArrow(arcId, highlightWidth);
+
     // Virtual arcs
     document.querySelectorAll('.virtual-arc[data-from="' + from + '"][data-to="' + to + '"]')
       .forEach(el => {
-        el.classList.add('dep-edge');
-        createShadowPath(el);
+        el.classList.add('highlighted-arc');
+        createShadowPath(el, 'dep');
+        const vWidth = parseFloat(el.style.strokeWidth) || 0.5;
+        el.style.strokeWidth = (vWidth * 1.3) + 'px';
       });
-    // Arrows: dep (green)
+
+    // Arrows: marker class (keeps direction color)
     document.querySelectorAll('[data-edge="' + arcId + '"]')
-      .forEach(el => el.classList.add('dep-arrow'));
+      .forEach(el => el.classList.add('highlighted-arrow'));
     document.querySelectorAll('[data-vedge="' + arcId + '"]:not(.arc-count)')
       .forEach(el => {
-        el.classList.add('dep-arrow');
+        el.classList.add('highlighted-arrow');
         // Scale virtual arrows
         if (el.classList.contains('virtual-arrow')) {
           const points = el.getAttribute('points');
           const parts = points.split(' ');
           if (parts.length >= 2) {
             const [tipX, tipY] = parts[1].split(',').map(Number);
-            el.setAttribute('points', getArrowPoints(tipX, tipY, 3 / 1.5));
+            el.setAttribute('points', getArrowPoints(tipX, tipY, highlightWidth / 1.5));
           }
         }
       });
+
     // Arc-count labels
     document.querySelectorAll('.arc-count[data-vedge="' + arcId + '"]')
-      .forEach(el => el.classList.add('dep-edge'));
+      .forEach(el => el.classList.add('highlighted-label'));
 
     // Move highlighted elements to highlight layers
     moveToHighlightLayer(arc);
@@ -461,21 +495,24 @@ if (typeof document !== 'undefined') {
         const to = hitarea.dataset.to;
         const outgoing = isOutgoing(from, to);
 
-        // Create shadow path for glow effect
-        createShadowPath(visibleArc);
+        // Create shadow path with relation type (glow color)
+        createShadowPath(visibleArc, outgoing ? 'dep' : 'reverse');
 
-        // Edge color: outgoing=green (dep), incoming=purple (dependent)
-        visibleArc?.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
-        scaleArrow(from + '-' + to, 3);
+        // Arc: marker class only (keeps direction color), dynamic stroke-width
+        visibleArc?.classList.add('highlighted-arc');
+        const arcWidth = parseFloat(visibleArc?.style.strokeWidth) || 0.5;
+        const highlightWidth = arcWidth * 1.3;
+        if (visibleArc) visibleArc.style.strokeWidth = highlightWidth + 'px';
+        scaleArrow(from + '-' + to, highlightWidth);
 
         // Connected nodes (border only)
         const otherNodeId = outgoing ? to : from;
         const otherNode = document.getElementById('node-' + otherNodeId);
         otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
 
-        // Arrows
+        // Arrows: marker class (keeps direction color)
         document.querySelectorAll('[data-edge="' + from + '-' + to + '"]')
-          .forEach(arr => arr.classList.add(outgoing ? 'dep-arrow' : 'dependent-arrow'));
+          .forEach(arr => arr.classList.add('highlighted-arrow'));
 
         // Move to highlight layers
         moveToHighlightLayer(visibleArc);
@@ -490,11 +527,14 @@ if (typeof document !== 'undefined') {
         const to = arc.dataset.to;
         const outgoing = isOutgoing(from, to);
 
-        // Create shadow path for glow effect
-        createShadowPath(arc);
+        // Create shadow path with relation type (glow color)
+        createShadowPath(arc, outgoing ? 'dep' : 'reverse');
 
-        // Edge color
-        arc.classList.add(outgoing ? 'dep-edge' : 'dependent-edge');
+        // Arc: marker class only (keeps direction color), dynamic stroke-width
+        arc.classList.add('highlighted-arc');
+        const arcWidth = parseFloat(arc.style.strokeWidth) || 0.5;
+        const highlightWidth = arcWidth * 1.3;
+        arc.style.strokeWidth = highlightWidth + 'px';
 
         // Scale virtual arrows
         document.querySelectorAll(`.virtual-arrow[data-vedge="${from}-${to}"]`).forEach(arrow => {
@@ -502,7 +542,7 @@ if (typeof document !== 'undefined') {
           const parts = points.split(' ');
           if (parts.length >= 2) {
             const [tipX, tipY] = parts[1].split(',').map(Number);
-            arrow.setAttribute('points', getArrowPoints(tipX, tipY, 3 / 1.5));
+            arrow.setAttribute('points', getArrowPoints(tipX, tipY, highlightWidth / 1.5));
           }
         });
 
@@ -511,13 +551,13 @@ if (typeof document !== 'undefined') {
         const otherNode = document.getElementById('node-' + otherNodeId);
         otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
 
-        // Arrows
+        // Arrows: marker class (keeps direction color)
         document.querySelectorAll('[data-vedge="' + from + '-' + to + '"]:not(.arc-count)')
-          .forEach(arr => arr.classList.add(outgoing ? 'dep-arrow' : 'dependent-arrow'));
+          .forEach(arr => arr.classList.add('highlighted-arrow'));
 
         // Arc-count labels
         document.querySelectorAll('.arc-count[data-vedge="' + from + '-' + to + '"]')
-          .forEach(el => el.classList.add(outgoing ? 'dep-edge' : 'dependent-edge'));
+          .forEach(el => el.classList.add('highlighted-label'));
 
         // Move to highlight layers
         moveToHighlightLayer(arc);
@@ -954,27 +994,35 @@ if (typeof document !== 'undefined') {
     }
     clearHighlights();
     pinnedHighlight = {type: 'edge', id: edgeId};
-    // from-Node: dependent (orange)
+    // from-Node: dependent (purple border)
     document.getElementById('node-' + fromId)?.classList.add('dependent-node');
-    // to-Node: dep (green)
+    // to-Node: dep (green border)
     document.getElementById('node-' + toId)?.classList.add('dep-node');
-    // Virtual arc: dep (green)
+    // Virtual arc: marker class (keeps direction color), dynamic stroke-width
     document.querySelectorAll('.virtual-arc[data-from="' + fromId + '"][data-to="' + toId + '"]')
-      .forEach(el => el.classList.add('dep-edge'));
-    // Arrows: dep (green) - scale virtual arrows
+      .forEach(el => {
+        createShadowPath(el, 'dep');
+        el.classList.add('highlighted-arc');
+        const arcWidth = parseFloat(el.style.strokeWidth) || 0.5;
+        const highlightWidth = arcWidth * 1.3;
+        el.style.strokeWidth = highlightWidth + 'px';
+      });
+    // Arrows: marker class (keeps direction color), scale to match arc
     document.querySelectorAll('.virtual-arrow[data-vedge="' + fromId + '-' + toId + '"]')
       .forEach(el => {
-        el.classList.add('dep-arrow');
+        el.classList.add('highlighted-arrow');
+        const arc = document.querySelector('.virtual-arc[data-from="' + fromId + '"][data-to="' + toId + '"]');
+        const arcWidth = parseFloat(arc?.style.strokeWidth) || 0.5;
         const points = el.getAttribute('points');
         const parts = points.split(' ');
         if (parts.length >= 2) {
           const [tipX, tipY] = parts[1].split(',').map(Number);
-          el.setAttribute('points', getArrowPoints(tipX, tipY, 3 / 1.5));
+          el.setAttribute('points', getArrowPoints(tipX, tipY, arcWidth / 1.5));
         }
       });
     // Arc-count labels
     document.querySelectorAll('.arc-count[data-vedge="' + fromId + '-' + toId + '"]')
-      .forEach(el => el.classList.add('dep-edge'));
+      .forEach(el => el.classList.add('highlighted-label'));
     // Move virtual arc and label group to highlight layers
     moveToHighlightLayer(document.querySelector('.virtual-arc[data-arc-id="' + edgeId + '"]'));
     moveToHighlightLayer(document.querySelector('.arc-count-group[data-vedge="' + edgeId + '"]'));

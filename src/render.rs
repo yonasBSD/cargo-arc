@@ -296,6 +296,7 @@ fn render_styles() -> String {
     .dep-arc.downward { stroke: #40a02b; }  /* Green - normal flow */
     .dep-arc.upward { stroke: #df8e1d; }    /* Yellow - child→parent */
     .dep-arrow { fill: #40a02b; }
+    .upward-arrow { fill: #df8e1d; }
     .cycle-arc { fill: none; stroke: #d20f39; stroke-width: 0.5; }  /* Red - cycles */
     .cycle-arrow { fill: #d20f39; }
     /* Hit-area for arc interactions */
@@ -303,14 +304,14 @@ fn render_styles() -> String {
     /* Interactive highlighting - Selected (saturated fills, thicker border) */
     .selected-crate { fill: #93c5fd !important; stroke-width: 3 !important; }
     .selected-module { fill: #fdba74 !important; stroke-width: 3 !important; }
-    /* Dependency highlighting (green border - what I point to) */
-    .dep-edge { stroke: #40a02b !important; stroke-width: 3 !important; }
+    /* Arc highlighting: marker class only (no color/width override - arc keeps direction color) */
+    .highlighted-arc { /* marker class for highlight state */ }
+    /* Glow classes for shadow paths (relation color) */
+    .glow-incoming { stroke: #40a02b !important; }
+    .glow-outgoing { stroke: #8839ef !important; }
+    /* Node borders: relation color (green=dep, purple=dependent) */
     .dep-node { stroke: #40a02b !important; stroke-width: 2.5 !important; }
-    .dep-arrow { fill: #40a02b !important; }
-    /* Dependent highlighting (purple border - what points to me) */
-    .dependent-edge { stroke: #8839ef !important; stroke-width: 3 !important; }
     .dependent-node { stroke: #8839ef !important; stroke-width: 2.5 !important; }
-    .dependent-arrow { fill: #8839ef !important; }
     .dimmed { opacity: 0.3; pointer-events: none; }
     .crate, .module, .dep-arc, .cycle-arc { cursor: pointer; }
     /* Collapse functionality */
@@ -558,7 +559,7 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
 
             let (base_arc_class, arrow_class, extra_style, direction) = match edge.kind {
                 EdgeKind::Downward => ("dep-arc downward", "dep-arrow", "", "downward"),
-                EdgeKind::Upward => ("dep-arc upward", "dep-arrow", "", "upward"),
+                EdgeKind::Upward => ("dep-arc upward", "upward-arrow", "", "upward"),
                 EdgeKind::DirectCycle => ("cycle-arc", "cycle-arrow", "", "cycle"),
                 EdgeKind::TransitiveCycle => (
                     "cycle-arc",
