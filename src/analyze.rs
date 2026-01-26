@@ -254,17 +254,25 @@ fn collect_reachable_crates(
     reachable
 }
 
-/// Analyzes a workspace and returns all member crates.
-/// `manifest_path` should point to a Cargo.toml.
-/// `feature_config` controls which features are activated for dependency resolution.
-pub fn analyze_workspace(
+// ============================================================================
+// Workspace Analysis Helpers
+// ============================================================================
+
+/// Context built from cargo metadata for workspace analysis.
+struct WorkspaceContext<'a> {
+    pkg_id_to_name: std::collections::HashMap<&'a str, &'a str>,
+    workspace_member_ids: HashSet<&'a str>,
+    workspace_member_names: HashSet<&'a str>,
+}
+
+/// Runs cargo metadata with the given feature configuration.
+fn run_cargo_metadata(
     manifest_path: &Path,
     feature_config: &FeatureConfig,
-) -> Result<Vec<CrateInfo>> {
+) -> Result<cargo_metadata::Metadata> {
     let mut cmd = MetadataCommand::new();
     cmd.manifest_path(manifest_path);
 
-    // Configure features for cargo metadata
     if feature_config.all_features {
         cmd.features(cargo_metadata::CargoOpt::AllFeatures);
     } else if !feature_config.features.is_empty() {
@@ -276,67 +284,119 @@ pub fn analyze_workspace(
         cmd.features(cargo_metadata::CargoOpt::NoDefaultFeatures);
     }
 
-    let metadata = cmd.exec().context("Failed to run cargo metadata")?;
+    cmd.exec().context("Failed to run cargo metadata")
+}
 
-    // Get resolve section for actual dependency resolution (feature-aware)
-    let resolve = metadata
-        .resolve
-        .as_ref()
-        .context("No resolve section in cargo metadata")?;
-
-    // Build package ID -> package name mapping
-    let pkg_id_to_name: std::collections::HashMap<&str, &str> = metadata
+/// Builds workspace context from cargo metadata.
+fn build_workspace_context(metadata: &cargo_metadata::Metadata) -> WorkspaceContext<'_> {
+    let pkg_id_to_name = metadata
         .packages
         .iter()
         .map(|p| (p.id.repr.as_str(), p.name.as_str()))
         .collect();
 
-    // Collect workspace member package IDs
-    let workspace_member_ids: HashSet<&str> = metadata
+    let workspace_member_ids = metadata
         .workspace_members
         .iter()
         .map(|id| id.repr.as_str())
         .collect();
 
-    // Collect workspace member names for filtering
-    let workspace_member_names: HashSet<&str> = metadata
+    let workspace_member_names = metadata
         .workspace_packages()
         .iter()
         .map(|p| p.name.as_str())
         .collect();
 
-    // Build resolved dependencies from resolve section
-    let mut resolved_deps: std::collections::HashMap<&str, Vec<String>> =
-        std::collections::HashMap::new();
+    WorkspaceContext {
+        pkg_id_to_name,
+        workspace_member_ids,
+        workspace_member_names,
+    }
+}
 
-    debug!(workspace_members = ?workspace_member_names, "building resolved_deps");
+/// Builds resolved dependencies map from cargo metadata resolve section.
+fn build_resolved_deps<'a>(
+    resolve: &'a cargo_metadata::Resolve,
+    ctx: &WorkspaceContext<'a>,
+) -> std::collections::HashMap<&'a str, Vec<String>> {
+    let mut resolved_deps = std::collections::HashMap::new();
+
+    debug!(workspace_members = ?ctx.workspace_member_names, "building resolved_deps");
 
     for node in &resolve.nodes {
         let node_id = node.id.repr.as_str();
-        if !workspace_member_ids.contains(node_id) {
+        if !ctx.workspace_member_ids.contains(node_id) {
             continue;
         }
 
-        let pkg_name = pkg_id_to_name.get(node_id).copied().unwrap_or("?");
+        let pkg_name = ctx.pkg_id_to_name.get(node_id).copied().unwrap_or("?");
         debug!(pkg = pkg_name, "processing deps");
 
         let deps: Vec<String> = node
             .deps
             .iter()
             .filter_map(|dep| {
-                let info = DepInfo::from_node_dep(dep, &workspace_member_names);
+                let info = DepInfo::from_node_dep(dep, &ctx.workspace_member_names);
                 debug!(name = info.name, kind = ?info.kind, scope = ?info.scope);
                 info.is_included().then(|| info.name.to_string())
             })
             .collect();
 
-        if let Some(pkg_name) = pkg_id_to_name.get(node_id) {
+        if let Some(pkg_name) = ctx.pkg_id_to_name.get(node_id) {
             resolved_deps.insert(*pkg_name, deps);
         }
     }
 
-    // Find seed crates (those defining requested features) and collect reachable crates
-    let seeds = find_seed_crates(&metadata, feature_config, &workspace_member_names);
+    resolved_deps
+}
+
+/// Determines if a crate should be included based on feature config and reachability.
+fn should_include_crate(
+    pkg: &cargo_metadata::Package,
+    reachable: &HashSet<String>,
+    feature_config: &FeatureConfig,
+) -> bool {
+    let features_empty = feature_config.features.is_empty();
+    let all_features = feature_config.all_features;
+    let in_reachable = reachable.contains(pkg.name.as_str());
+    let include = features_empty || all_features || in_reachable;
+
+    debug!(
+        crate_name = %pkg.name,
+        features_empty,
+        all_features,
+        in_reachable,
+        include
+    );
+
+    include
+}
+
+/// Builds a CrateInfo from a package and its resolved dependencies.
+fn build_crate_info(
+    pkg: &cargo_metadata::Package,
+    resolved_deps: &std::collections::HashMap<&str, Vec<String>>,
+) -> CrateInfo {
+    let dependencies = resolved_deps
+        .get(pkg.name.as_str())
+        .cloned()
+        .unwrap_or_default();
+
+    CrateInfo {
+        name: pkg.name.to_string(),
+        path: pkg.manifest_path.parent().unwrap().into(),
+        dependencies,
+    }
+}
+
+/// Filters and builds CrateInfo list from workspace packages.
+fn build_filtered_crates(
+    metadata: &cargo_metadata::Metadata,
+    resolved_deps: &std::collections::HashMap<&str, Vec<String>>,
+    feature_config: &FeatureConfig,
+    workspace_member_names: &HashSet<&str>,
+) -> Vec<CrateInfo> {
+    let seeds = find_seed_crates(metadata, feature_config, workspace_member_names);
 
     if seeds.is_empty() && !feature_config.features.is_empty() {
         eprintln!(
@@ -345,7 +405,7 @@ pub fn analyze_workspace(
         );
     }
 
-    let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace_member_names);
+    let reachable = collect_reachable_crates(seeds, resolved_deps, workspace_member_names);
 
     debug!(
         features_empty = feature_config.features.is_empty(),
@@ -356,39 +416,40 @@ pub fn analyze_workspace(
     let crates: Vec<CrateInfo> = metadata
         .workspace_packages()
         .into_iter()
-        .filter(|pkg| {
-            let features_empty = feature_config.features.is_empty();
-            let all_features = feature_config.all_features;
-            let in_reachable = reachable.contains(pkg.name.as_str());
-            let include = features_empty || all_features || in_reachable;
-
-            debug!(
-                crate_name = %pkg.name,
-                features_empty,
-                all_features,
-                in_reachable,
-                include
-            );
-
-            include
-        })
-        .map(|pkg| {
-            let dependencies = resolved_deps
-                .get(pkg.name.as_str())
-                .cloned()
-                .unwrap_or_default();
-            CrateInfo {
-                name: pkg.name.to_string(),
-                path: pkg.manifest_path.parent().unwrap().into(),
-                dependencies,
-            }
-        })
+        .filter(|pkg| should_include_crate(pkg, &reachable, feature_config))
+        .map(|pkg| build_crate_info(pkg, resolved_deps))
         .collect();
 
     debug!(crate_count = crates.len(), "final result");
     for c in &crates {
         debug!(crate_name = %c.name, deps = ?c.dependencies);
     }
+
+    crates
+}
+
+/// Analyzes a workspace and returns all member crates.
+/// `manifest_path` should point to a Cargo.toml.
+/// `feature_config` controls which features are activated for dependency resolution.
+pub fn analyze_workspace(
+    manifest_path: &Path,
+    feature_config: &FeatureConfig,
+) -> Result<Vec<CrateInfo>> {
+    let metadata = run_cargo_metadata(manifest_path, feature_config)?;
+
+    let resolve = metadata
+        .resolve
+        .as_ref()
+        .context("No resolve section in cargo metadata")?;
+
+    let ctx = build_workspace_context(&metadata);
+    let resolved_deps = build_resolved_deps(resolve, &ctx);
+    let crates = build_filtered_crates(
+        &metadata,
+        &resolved_deps,
+        feature_config,
+        &ctx.workspace_member_names,
+    );
 
     Ok(crates)
 }
