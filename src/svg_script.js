@@ -796,11 +796,14 @@ if (typeof document !== 'undefined') {
 
         if (visibleFrom && visibleTo && visibleFrom !== visibleTo) {
           const key = visibleFrom + '-' + visibleTo;
-          const existing = virtualEdges.get(key) || { count: 0, hiddenEdgeData: [] };
+          const existing = virtualEdges.get(key) || { count: 0, hiddenEdgeData: [], directions: [] };
           existing.count++;
           // Collect source locations from hidden hitarea
           const locs = hitarea.dataset.sourceLocations;
           if (locs) existing.hiddenEdgeData.push(locs);
+          // Collect direction for aggregated arc color
+          const direction = hitarea.dataset.direction;
+          if (direction) existing.directions.push(direction);
           virtualEdges.set(key, existing);
         }
       } else if (fromNode && toNode) {
@@ -854,7 +857,7 @@ if (typeof document !== 'undefined') {
 
     // Pass 1: Arcs + Arrows (bottom layer)
     mergedEdges.forEach((data, key) => {
-      const { fromId, toId, arc, hiddenEdgeData } = data;
+      const { fromId, toId, arc, hiddenEdgeData, directions } = data;
       const arcId = fromId + '-' + toId;
 
       // Calculate stroke width from aggregated locations
@@ -862,9 +865,14 @@ if (typeof document !== 'undefined') {
         sum + ArcLogic.countLocations(locs), 0);
       const strokeWidth = ArcLogic.calculateStrokeWidth(totalLocations);
 
+      // Determine direction: use unanimous direction, else 'downward' as fallback
+      const direction = (directions && directions.length > 0 && directions.every(d => d === directions[0]))
+        ? directions[0]
+        : 'downward';
+
       // Visible path (styled, no pointer events)
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('class', 'virtual-arc');
+      path.setAttribute('class', `virtual-arc ${direction}`);
       path.setAttribute('d', arc.path);
       path.setAttribute('data-arc-id', arcId);
       path.setAttribute('data-from', fromId);
@@ -875,7 +883,7 @@ if (typeof document !== 'undefined') {
       // Arrow (scaled to match stroke width)
       const scale = strokeWidth / 1.5;
       const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-      arrow.setAttribute('class', 'virtual-arrow');
+      arrow.setAttribute('class', `virtual-arrow ${direction}`);
       arrow.setAttribute('data-vedge', arcId);
       arrow.setAttribute('data-from', fromId);
       arrow.setAttribute('data-to', toId);

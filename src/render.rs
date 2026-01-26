@@ -318,8 +318,12 @@ fn render_styles() -> String {
     .collapse-toggle { font-family: monospace; font-size: 14px; cursor: pointer; fill: #666; }
     .collapse-toggle:hover { fill: #1e66f5; }
     .collapsed { display: none; }
-    .virtual-arc { fill: none; stroke: #40a02b; stroke-width: 0.5; stroke-dasharray: 4,2; }
-    .virtual-arrow { fill: #40a02b; cursor: pointer; }
+    .virtual-arc { fill: none; stroke-width: 0.5; stroke-dasharray: 4,2; }
+    .virtual-arc.downward { stroke: #40a02b; }
+    .virtual-arc.upward { stroke: #df8e1d; }
+    .virtual-arrow { cursor: pointer; }
+    .virtual-arrow.downward { fill: #40a02b; }
+    .virtual-arrow.upward { fill: #df8e1d; }
     .arc-count { font-family: monospace; font-size: 10px; fill: #40a02b; text-anchor: middle; }
     .arc-count-bg { fill: #ffffff; rx: 2; }
     .arc-count.dep-edge { fill: #40a02b !important; font-size: 12px; font-weight: bold; stroke: none !important; }
@@ -589,7 +593,7 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
 
             // Hit-area path (invisible, 12px wide, receives pointer events) → hitareas layer
             hitareas.push_str(&format!(
-                "    <path class=\"arc-hitarea\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" d=\"{path}\"{data_loc_attr}/>\n",
+                "    <path class=\"arc-hitarea\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" data-direction=\"{direction}\" d=\"{path}\"{data_loc_attr}/>\n",
                 edge.from, edge.to
             ));
             // Visible path (styled, no pointer events) → base-arcs layer
