@@ -506,6 +506,81 @@ fn walk_module(
     }
 }
 
+/// Extract the use path from a line like `use crate::module;` → `crate::module`
+fn extract_use_path(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if !line.starts_with("use ") {
+        return None;
+    }
+    Some(line.strip_prefix("use ")?.trim_end_matches(';').trim())
+}
+
+/// Extract an item from path parts at given index, handling trailing `{` and empty strings.
+fn extract_item_from_parts(parts: &[&str], index: usize) -> Option<String> {
+    let part = parts
+        .get(index)?
+        .trim_end_matches('{')
+        .trim_end_matches(';')
+        .trim();
+    if part.is_empty() || part.starts_with('{') {
+        None
+    } else {
+        Some(part.to_string())
+    }
+}
+
+/// Parse crate-local imports: `use crate::module[::item]`
+fn parse_crate_local_import(
+    path: &str,
+    current_crate: &str,
+    source_file: &Path,
+    line_num: usize,
+) -> Option<DependencyRef> {
+    let after_crate = path.strip_prefix("crate::")?;
+    let parts: Vec<&str> = after_crate.split("::").collect();
+
+    let module = parts.first()?.trim_end_matches('{').trim();
+    if module.is_empty() {
+        return None;
+    }
+
+    Some(DependencyRef {
+        target_crate: normalize_crate_name(current_crate),
+        target_module: module.to_string(),
+        target_item: extract_item_from_parts(&parts, 1),
+        source_file: source_file.to_path_buf(),
+        line: line_num,
+    })
+}
+
+/// Parse workspace crate imports: `use other_crate::module[::item]`
+fn parse_workspace_import(
+    path: &str,
+    workspace_crates: &HashSet<String>,
+    source_file: &Path,
+    line_num: usize,
+) -> Option<DependencyRef> {
+    let parts: Vec<&str> = path.split("::").collect();
+    let crate_name = parts.first()?.trim();
+
+    if !is_workspace_member(crate_name, workspace_crates) || parts.len() < 2 {
+        return None;
+    }
+
+    let module = parts[1].trim_end_matches('{').trim_end_matches(';').trim();
+    if module.is_empty() {
+        return None;
+    }
+
+    Some(DependencyRef {
+        target_crate: crate_name.to_string(),
+        target_module: module.to_string(),
+        target_item: extract_item_from_parts(&parts, 2),
+        source_file: source_file.to_path_buf(),
+        line: line_num,
+    })
+}
+
 /// Process a single use statement line, returning a DependencyRef if it's a relevant import.
 ///
 /// Handles:
@@ -523,85 +598,10 @@ fn process_use_statement(
     workspace_crates: &HashSet<String>,
     source_file: &Path,
 ) -> Option<DependencyRef> {
-    let line = line.trim();
-    if !line.starts_with("use ") {
-        return None;
-    }
+    let path = extract_use_path(line)?;
 
-    // Extract the path after "use "
-    let path = line.strip_prefix("use ")?.trim_end_matches(';').trim();
-
-    // Handle crate-local imports: use crate::module[::item]
-    // Use "crate" as target_crate to match module_map keys ("crate::module")
-    if let Some(after_crate) = path.strip_prefix("crate::") {
-        let parts: Vec<&str> = after_crate.split("::").collect();
-        if parts.is_empty() {
-            return None;
-        }
-        // First part is module, rest is item (if any)
-        let module = parts[0].trim_end_matches('{').trim();
-        if module.is_empty() {
-            return None;
-        }
-        let item = if parts.len() > 1 {
-            let item_part = parts[1].trim_end_matches('{').trim();
-            if item_part.is_empty() || item_part.starts_with('{') {
-                None
-            } else {
-                Some(item_part.to_string())
-            }
-        } else {
-            None
-        };
-
-        // Use actual crate name (normalized) for consistent module_map lookup
-        return Some(DependencyRef {
-            target_crate: normalize_crate_name(current_crate),
-            target_module: module.to_string(),
-            target_item: item,
-            source_file: source_file.to_path_buf(),
-            line: line_num,
-        });
-    }
-
-    // Handle workspace crate imports: use other_crate::module[::item]
-    // The first segment is the crate name (may have underscores, Cargo.toml may have hyphens)
-    let parts: Vec<&str> = path.split("::").collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let first_segment = parts[0].trim();
-
-    // Check if this is a workspace crate (normalize both sides for comparison)
-    let is_workspace_crate = is_workspace_member(first_segment, workspace_crates);
-
-    if is_workspace_crate && parts.len() >= 2 {
-        let module = parts[1].trim_end_matches('{').trim_end_matches(';').trim();
-        if module.is_empty() {
-            return None;
-        }
-        let item = if parts.len() > 2 {
-            let item_part = parts[2].trim_end_matches('{').trim_end_matches(';').trim();
-            if item_part.is_empty() {
-                None
-            } else {
-                Some(item_part.to_string())
-            }
-        } else {
-            None
-        };
-
-        return Some(DependencyRef {
-            target_crate: first_segment.to_string(),
-            target_module: module.to_string(),
-            target_item: item,
-            source_file: source_file.to_path_buf(),
-            line: line_num,
-        });
-    }
-
-    None
+    parse_crate_local_import(path, current_crate, source_file, line_num)
+        .or_else(|| parse_workspace_import(path, workspace_crates, source_file, line_num))
 }
 
 /// Process a use statement that may contain multiple symbols (`{A, B, C}`) or glob (`*`).
