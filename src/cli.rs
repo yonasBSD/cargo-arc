@@ -3,6 +3,7 @@ use clap::Parser;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
 
 use crate::analyze::{FeatureConfig, analyze_modules, analyze_workspace, load_workspace_hir};
 use crate::graph::build_graph;
@@ -51,6 +52,17 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    // Initialize tracing if debug mode is enabled
+    if args.debug {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::from_default_env().add_directive("cargo_arc=debug".parse().unwrap()),
+            )
+            .with_target(false)
+            .with_writer(std::io::stderr)
+            .init();
+    }
+
     // 1. Build feature config from CLI args (needed for both analyze_workspace and load_workspace_hir)
     let feature_config = FeatureConfig {
         features: args.features,
@@ -69,28 +81,28 @@ pub fn run(args: Args) -> Result<()> {
     // 4. Load rust-analyzer ONCE for the entire workspace
     let (host, vfs) = load_workspace_hir(&args.manifest_path, &feature_config)?;
 
-    // 4. Analyze modules for each crate (reusing loaded workspace)
+    // 5. Analyze modules for each crate (reusing loaded workspace)
     let modules: Vec<_> = crates
         .iter()
         .filter_map(|c| analyze_modules(c, &host, &vfs, &workspace_crates).ok())
         .collect();
 
-    // 5. Build dependency graph
+    // 6. Build dependency graph
     let graph = build_graph(&crates, &modules);
 
-    // 6. Detect cycles
+    // 7. Detect cycles
     let cycles = detect_cycles(&graph);
 
-    // 7. Topological sort
+    // 8. Topological sort
     let order = topo_sort(&graph, &cycles);
 
-    // 8. Build layout (CrateDep edges skipped when ModuleDeps exist between crates)
+    // 9. Build layout (CrateDep edges skipped when ModuleDeps exist between crates)
     let layout = build_layout(&graph, &order, &cycles);
 
-    // 9. Render to SVG
+    // 10. Render to SVG
     let svg = render(&layout, &RenderConfig::default());
 
-    // 10. Output
+    // 11. Output
     match args.output {
         Some(path) => fs::write(&path, &svg)?,
         None => io::stdout().write_all(svg.as_bytes())?,

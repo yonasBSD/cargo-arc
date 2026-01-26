@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::model::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};
+use tracing::{debug, instrument};
 
 #[derive(Debug, Clone, Default)]
 pub struct FeatureConfig {
@@ -168,24 +169,16 @@ fn parse_feature(feature: &str) -> (Option<&str>, &str) {
 
 /// Finds seed crates that define the requested features.
 /// Returns all workspace members if no features specified or all_features is set.
+#[instrument(skip_all, fields(features = ?feature_config.features, all_features = feature_config.all_features))]
 fn find_seed_crates(
     metadata: &cargo_metadata::Metadata,
     feature_config: &FeatureConfig,
     workspace_members: &HashSet<&str>,
 ) -> HashSet<String> {
-    let debug = feature_config.debug;
-
-    if debug {
-        eprintln!("[DEBUG] find_seed_crates:");
-        eprintln!("  requested features: {:?}", feature_config.features);
-        eprintln!("  all_features: {}", feature_config.all_features);
-        eprintln!("  workspace_members: {:?}", workspace_members);
-    }
+    debug!(workspace_members = ?workspace_members);
 
     if feature_config.features.is_empty() || feature_config.all_features {
-        if debug {
-            eprintln!("  -> returning ALL workspace members (no feature filter)");
-        }
+        debug!("returning ALL workspace members (no feature filter)");
         return workspace_members.iter().map(|s| s.to_string()).collect();
     }
 
@@ -195,60 +188,51 @@ fn find_seed_crates(
         .filter(|pkg| {
             let pkg_name = pkg.name.as_str();
             let is_workspace = workspace_members.contains(pkg_name);
-            let pkg_features: Vec<&str> = pkg.features.keys().map(|s| s.as_str()).collect();
-
-            if debug && is_workspace {
-                eprintln!("  checking pkg '{}': features={:?}", pkg_name, pkg_features);
+            if !is_workspace {
+                return false;
             }
 
-            let matches = is_workspace && feature_config.features.iter().any(|f| {
+            let pkg_features: Vec<&str> = pkg.features.keys().map(|s| s.as_str()).collect();
+            debug!(pkg = pkg_name, features = ?pkg_features, "checking");
+
+            let matches = feature_config.features.iter().any(|f| {
                 let (crate_filter, feature_name) = parse_feature(f);
                 let crate_matches = crate_filter.map(|c| c == pkg_name).unwrap_or(true);
                 let feature_exists = pkg.features.contains_key(feature_name);
 
-                if debug && is_workspace {
-                    eprintln!(
-                        "    feature '{}': crate_filter={:?}, crate_matches={}, feature_exists={}",
-                        f, crate_filter, crate_matches, feature_exists
-                    );
-                }
+                debug!(
+                    feature = f,
+                    crate_filter = ?crate_filter,
+                    crate_matches,
+                    feature_exists,
+                );
 
                 crate_matches && feature_exists
             });
 
-            if debug && is_workspace {
-                eprintln!("    -> matches={}", matches);
-            }
-
+            debug!(pkg = pkg_name, matches);
             matches
         })
         .map(|pkg| pkg.name.to_string())
         .collect();
 
-    if debug {
-        eprintln!("  SEEDS FOUND: {:?}", seeds);
-    }
-
+    debug!(seeds = ?seeds, "found");
     seeds
 }
 
 /// Collects all crates reachable from seeds via BFS through dependencies.
 /// Only includes workspace members.
+#[instrument(skip_all, fields(seed_count = seeds.len()))]
 fn collect_reachable_crates(
     seeds: HashSet<String>,
     resolved_deps: &std::collections::HashMap<&str, Vec<String>>,
     workspace_members: &HashSet<&str>,
-    debug: bool,
 ) -> HashSet<String> {
     use std::collections::VecDeque;
 
-    if debug {
-        eprintln!("[DEBUG] collect_reachable_crates:");
-        eprintln!("  seeds: {:?}", seeds);
-        eprintln!("  resolved_deps:");
-        for (pkg, deps) in resolved_deps {
-            eprintln!("    {} -> {:?}", pkg, deps);
-        }
+    debug!(seeds = ?seeds);
+    for (pkg, deps) in resolved_deps {
+        debug!(pkg, deps = ?deps, "resolved_dep");
     }
 
     let mut reachable: HashSet<String> = seeds.clone();
@@ -258,9 +242,7 @@ fn collect_reachable_crates(
         if let Some(deps) = resolved_deps.get(crate_name.as_str()) {
             for dep in deps {
                 if workspace_members.contains(dep.as_str()) && !reachable.contains(dep) {
-                    if debug {
-                        eprintln!("  BFS: {} -> {} (adding)", crate_name, dep);
-                    }
+                    debug!(from = %crate_name, to = %dep, "BFS adding");
                     reachable.insert(dep.clone());
                     queue.push_back(dep.clone());
                 }
@@ -268,10 +250,7 @@ fn collect_reachable_crates(
         }
     }
 
-    if debug {
-        eprintln!("  REACHABLE: {:?}", reachable);
-    }
-
+    debug!(reachable = ?reachable);
     reachable
 }
 
@@ -330,11 +309,7 @@ pub fn analyze_workspace(
     let mut resolved_deps: std::collections::HashMap<&str, Vec<String>> =
         std::collections::HashMap::new();
 
-    let debug = feature_config.debug;
-    if debug {
-        eprintln!("[DEBUG] Building resolved_deps from cargo metadata:");
-        eprintln!("  workspace_member_names: {:?}", workspace_member_names);
-    }
+    debug!(workspace_members = ?workspace_member_names, "building resolved_deps");
 
     for node in &resolve.nodes {
         let node_id = node.id.repr.as_str();
@@ -342,22 +317,15 @@ pub fn analyze_workspace(
             continue;
         }
 
-        let pkg_name_for_debug = pkg_id_to_name.get(node_id).copied().unwrap_or("?");
-        if debug {
-            eprintln!("  [{}] deps:", pkg_name_for_debug);
-        }
+        let pkg_name = pkg_id_to_name.get(node_id).copied().unwrap_or("?");
+        debug!(pkg = pkg_name, "processing deps");
 
         let deps: Vec<String> = node
             .deps
             .iter()
             .filter_map(|dep| {
                 let info = DepInfo::from_node_dep(dep, &workspace_member_names);
-                if debug {
-                    eprintln!(
-                        "    {}  kind:{:?}  scope:{:?}",
-                        info.name, info.kind, info.scope
-                    );
-                }
+                debug!(name = info.name, kind = ?info.kind, scope = ?info.scope);
                 info.is_included().then(|| info.name.to_string())
             })
             .collect();
@@ -377,37 +345,30 @@ pub fn analyze_workspace(
         );
     }
 
-    let reachable = collect_reachable_crates(
-        seeds,
-        &resolved_deps,
-        &workspace_member_names,
-        feature_config.debug,
-    );
+    let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace_member_names);
 
-    if feature_config.debug {
-        eprintln!("[DEBUG] Final crate filtering:");
-        eprintln!(
-            "  features.is_empty(): {}",
-            feature_config.features.is_empty()
-        );
-        eprintln!("  all_features: {}", feature_config.all_features);
-    }
+    debug!(
+        features_empty = feature_config.features.is_empty(),
+        all_features = feature_config.all_features,
+        "final crate filtering"
+    );
 
     let crates: Vec<CrateInfo> = metadata
         .workspace_packages()
         .into_iter()
         .filter(|pkg| {
-            let dominated_by_features = feature_config.features.is_empty();
-            let dominated_by_all = feature_config.all_features;
+            let features_empty = feature_config.features.is_empty();
+            let all_features = feature_config.all_features;
             let in_reachable = reachable.contains(pkg.name.as_str());
-            let include = dominated_by_features || dominated_by_all || in_reachable;
+            let include = features_empty || all_features || in_reachable;
 
-            if feature_config.debug {
-                eprintln!(
-                    "  crate '{}': features_empty={}, all_features={}, in_reachable={} -> include={}",
-                    pkg.name, dominated_by_features, dominated_by_all, in_reachable, include
-                );
-            }
+            debug!(
+                crate_name = %pkg.name,
+                features_empty,
+                all_features,
+                in_reachable,
+                include
+            );
 
             include
         })
@@ -424,11 +385,9 @@ pub fn analyze_workspace(
         })
         .collect();
 
-    if feature_config.debug {
-        eprintln!("[DEBUG] Final result: {} crates", crates.len());
-        for c in &crates {
-            eprintln!("  - {} (deps: {:?})", c.name, c.dependencies);
-        }
+    debug!(crate_count = crates.len(), "final result");
+    for c in &crates {
+        debug!(crate_name = %c.name, deps = ?c.dependencies);
     }
 
     Ok(crates)
@@ -1634,7 +1593,7 @@ use crate::graph;
         resolved_deps.insert("B", vec!["C".to_string()]);
         let workspace: HashSet<&str> = ["A", "B", "C"].into_iter().collect();
 
-        let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace, false);
+        let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace);
 
         assert!(reachable.contains("A"));
         assert!(reachable.contains("B"));
@@ -1652,7 +1611,7 @@ use crate::graph;
         resolved_deps.insert("B", vec!["external".to_string()]);
         let workspace: HashSet<&str> = ["A", "B"].into_iter().collect();
 
-        let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace, false);
+        let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace);
 
         assert!(reachable.contains("A"));
         assert!(reachable.contains("B"));
@@ -1670,7 +1629,7 @@ use crate::graph;
         resolved_deps.insert("B", vec!["A".to_string()]);
         let workspace: HashSet<&str> = ["A", "B"].into_iter().collect();
 
-        let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace, false);
+        let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace);
 
         assert!(reachable.contains("A"));
         assert!(reachable.contains("B"));

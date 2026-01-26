@@ -34,6 +34,9 @@ cargo arc --features web --no-default-features -o web-deps.svg
 
 # Debug filtering decisions
 cargo arc --features web --no-default-features --debug 2>debug.log -o web-deps.svg
+
+# Alternative: use RUST_LOG for fine-grained control
+RUST_LOG=cargo_arc=debug cargo arc -o deps.svg 2>debug.log
 ```
 
 ## Development
