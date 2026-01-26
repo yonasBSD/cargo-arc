@@ -969,7 +969,7 @@ if (typeof document !== 'undefined') {
         // When pinned, only show tooltip on highlighted arcs
         if (pinnedHighlight) {
           const visibleArc = document.querySelector(`.virtual-arc[data-arc-id="${arcId}"]`);
-          if (!visibleArc?.classList.contains('dep-edge') && !visibleArc?.classList.contains('dependent-edge')) {
+          if (!visibleArc?.classList.contains('highlighted-arc')) {
             hideFloatingLabel();
             return;
           }
@@ -1299,7 +1299,7 @@ if (typeof document !== 'undefined') {
       if (pinnedHighlight) {
         const arcId = hitarea.dataset.arcId;
         const visibleArc = getVisibleArc(arcId);
-        if (!visibleArc?.classList.contains('dep-edge') && !visibleArc?.classList.contains('dependent-edge')) {
+        if (!visibleArc?.classList.contains('highlighted-arc')) {
           hideFloatingLabel();
           return;
         }
