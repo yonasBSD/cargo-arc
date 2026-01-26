@@ -631,6 +631,7 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
   <g id="highlight-labels-layer"></g>
   <g id="hitareas-layer">
 {}  </g>
+  <g id="highlight-hitareas-layer"></g>
 "#,
         base_arcs, hitareas
     )

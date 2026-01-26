@@ -278,6 +278,9 @@ if (typeof document !== 'undefined') {
     document.querySelectorAll('#highlight-labels-layer > *').forEach(el => {
       moveToLayer(el, 'base-labels-layer');
     });
+    document.querySelectorAll('#highlight-hitareas-layer > *').forEach(el => {
+      moveToLayer(el, 'hitareas-layer');
+    });
 
     // Reset regular arcs and arrows to original size (based on arc weights)
     document.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
@@ -461,6 +464,11 @@ if (typeof document !== 'undefined') {
     document.querySelectorAll(`[data-edge="${arcId}"]`).forEach(moveToHighlightLayer);
     document.querySelectorAll(`[data-vedge="${arcId}"]:not(.arc-count)`).forEach(moveToHighlightLayer);
 
+    // Move hitarea to highlight layer (higher z-order) so it receives events over dimmed hitareas
+    const highlightHitareasLayer = document.getElementById('highlight-hitareas-layer');
+    const hitarea = document.querySelector(`.arc-hitarea[data-arc-id="${arcId}"]`);
+    if (hitarea && highlightHitareasLayer) highlightHitareasLayer.appendChild(hitarea);
+
     dimNonHighlighted();
   }
 
@@ -564,6 +572,13 @@ if (typeof document !== 'undefined') {
         moveToHighlightLayer(document.querySelector(`.arc-count-group[data-vedge="${from}-${to}"]`));
         document.querySelectorAll(`[data-vedge="${from}-${to}"]:not(.arc-count)`).forEach(moveToHighlightLayer);
       });
+
+    // Move connected hitareas to highlight layer (higher z-order)
+    const highlightHitareasLayer = document.getElementById('highlight-hitareas-layer');
+    if (highlightHitareasLayer) {
+      document.querySelectorAll(`.arc-hitarea[data-from="${nodeId}"], .arc-hitarea[data-to="${nodeId}"]`)
+        .forEach(h => highlightHitareasLayer.appendChild(h));
+    }
 
     dimNonHighlighted();
   }
@@ -968,8 +983,10 @@ if (typeof document !== 'undefined') {
       hitarea.addEventListener('mousemove', (e) => {
         // When pinned, only show tooltip on highlighted arcs
         if (pinnedHighlight) {
-          const visibleArc = document.querySelector(`.virtual-arc[data-arc-id="${arcId}"]`);
-          if (!visibleArc?.classList.contains('highlighted-arc')) {
+          const isHighlighted = pinnedHighlight.type === 'edge'
+            ? pinnedHighlight.id === arcId
+            : (fromId === pinnedHighlight.id || toId === pinnedHighlight.id);
+          if (!isHighlighted) {
             hideFloatingLabel();
             return;
           }
@@ -1295,8 +1312,10 @@ if (typeof document !== 'undefined') {
       // When pinned, only show tooltip on highlighted arcs
       if (pinnedHighlight) {
         const arcId = hitarea.dataset.arcId;
-        const visibleArc = getVisibleArc(arcId);
-        if (!visibleArc?.classList.contains('highlighted-arc')) {
+        const isHighlighted = pinnedHighlight.type === 'edge'
+          ? pinnedHighlight.id === arcId
+          : (hitarea.dataset.from === pinnedHighlight.id || hitarea.dataset.to === pinnedHighlight.id);
+        if (!isHighlighted) {
           hideFloatingLabel();
           return;
         }
