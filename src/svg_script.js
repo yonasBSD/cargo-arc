@@ -166,38 +166,19 @@ if (typeof document !== 'undefined') {
   const TOOLBAR_HEIGHT = __TOOLBAR_HEIGHT__;
 
   // === Arc weight scaling ===
-  // Arrow base dimensions (at scale 1.0)
-  const ARROW_LENGTH = 8;
-  const ARROW_HALF_WIDTH = 4;
-
-  /**
-   * Generate scaled arrow polygon points string.
-   * Arrow tip is at (tipX, tipY), pointing left.
-   * @param {number} tipX - X coordinate of arrow tip
-   * @param {number} tipY - Y coordinate of arrow tip
-   * @param {number} scale - Scale factor (1.0 = original size)
-   * @returns {string} - SVG polygon points string
-   */
-  function getArrowPoints(tipX, tipY, scale) {
-    const len = ARROW_LENGTH * scale;
-    const hw = ARROW_HALF_WIDTH * scale;
-    return `${tipX + len},${tipY - hw} ${tipX},${tipY} ${tipX + len},${tipY + hw}`;
-  }
 
   /**
    * Scale existing arrows by updating their points attribute.
    * Parses current tip position from existing points.
    */
   function scaleArrow(edgeId, strokeWidth) {
-    const scale = strokeWidth / 1.5;  // 1.5 was the original base stroke-width
+    const scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
     const arrows = document.querySelectorAll(`[data-edge="${edgeId}"]`);
     arrows.forEach(arrow => {
-      // Parse tip position from existing points (format: "x1,y1 tipX,tipY x2,y2")
       const points = arrow.getAttribute('points');
-      const parts = points.split(' ');
-      if (parts.length >= 2) {
-        const [tipX, tipY] = parts[1].split(',').map(Number);
-        arrow.setAttribute('points', getArrowPoints(tipX, tipY, scale));
+      const tip = ArrowLogic.parseTipFromPoints(points);
+      if (tip) {
+        arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, scale));
       }
     });
   }
@@ -310,11 +291,9 @@ if (typeof document !== 'undefined') {
 
       // Reset virtual arrow size
       document.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
-        const points = arrow.getAttribute('points');
-        const parts = points.split(' ');
-        if (parts.length >= 2) {
-          const [tipX, tipY] = parts[1].split(',').map(Number);
-          arrow.setAttribute('points', getArrowPoints(tipX, tipY, scale));
+        const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+        if (tip) {
+          arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, scale));
         }
       });
     });
@@ -443,11 +422,9 @@ if (typeof document !== 'undefined') {
         el.classList.add('highlighted-arrow');
         // Scale virtual arrows
         if (el.classList.contains('virtual-arrow')) {
-          const points = el.getAttribute('points');
-          const parts = points.split(' ');
-          if (parts.length >= 2) {
-            const [tipX, tipY] = parts[1].split(',').map(Number);
-            el.setAttribute('points', getArrowPoints(tipX, tipY, highlightWidth / 1.5));
+          const tip = ArrowLogic.parseTipFromPoints(el.getAttribute('points'));
+          if (tip) {
+            el.setAttribute('points', ArrowLogic.getArrowPoints(tip, highlightWidth / 1.5));
           }
         }
       });
@@ -546,11 +523,9 @@ if (typeof document !== 'undefined') {
 
         // Scale virtual arrows
         document.querySelectorAll(`.virtual-arrow[data-vedge="${from}-${to}"]`).forEach(arrow => {
-          const points = arrow.getAttribute('points');
-          const parts = points.split(' ');
-          if (parts.length >= 2) {
-            const [tipX, tipY] = parts[1].split(',').map(Number);
-            arrow.setAttribute('points', getArrowPoints(tipX, tipY, highlightWidth / 1.5));
+          const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+          if (tip) {
+            arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, highlightWidth / 1.5));
           }
         });
 
@@ -840,7 +815,7 @@ if (typeof document !== 'undefined') {
         const strokeWidth = visibleArc ? parseFloat(visibleArc.style.strokeWidth) || 0.5 : 0.5;
         const scale = strokeWidth / 1.5;
         document.querySelectorAll('[data-edge="' + fromId + '-' + toId + '"]').forEach(arrow => {
-          arrow.setAttribute('points', getArrowPoints(arc.toX, arc.toY, scale));
+          arrow.setAttribute('points', ArrowLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
         });
       }
     });
@@ -898,7 +873,7 @@ if (typeof document !== 'undefined') {
       arrow.setAttribute('data-vedge', arcId);
       arrow.setAttribute('data-from', fromId);
       arrow.setAttribute('data-to', toId);
-      arrow.setAttribute('points', getArrowPoints(arc.toX, arc.toY, scale));
+      arrow.setAttribute('points', ArrowLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
       arrow.addEventListener('click', e => {
         e.stopPropagation();
         highlightVirtualEdge(fromId, toId, data.count);
@@ -1034,11 +1009,9 @@ if (typeof document !== 'undefined') {
         el.classList.add('highlighted-arrow');
         const arc = document.querySelector('.virtual-arc[data-from="' + fromId + '"][data-to="' + toId + '"]');
         const arcWidth = parseFloat(arc?.style.strokeWidth) || 0.5;
-        const points = el.getAttribute('points');
-        const parts = points.split(' ');
-        if (parts.length >= 2) {
-          const [tipX, tipY] = parts[1].split(',').map(Number);
-          el.setAttribute('points', getArrowPoints(tipX, tipY, arcWidth / 1.5));
+        const tip = ArrowLogic.parseTipFromPoints(el.getAttribute('points'));
+        if (tip) {
+          el.setAttribute('points', ArrowLogic.getArrowPoints(tip, arcWidth / 1.5));
         }
       });
     // Arc-count labels
