@@ -1,3 +1,9 @@
+// In Browser/SVG context, Selectors is already global (loaded before this file)
+// In Node/Bun context, require it. Use different name to avoid redeclaration.
+const _Selectors = (typeof require !== "undefined")
+  ? require("./selectors.js").Selectors
+  : Selectors;
+
 function createFakeElement(tagName) {
   const attrs = new Map();
   const classes = new Set();
@@ -28,17 +34,27 @@ function createFakeElement(tagName) {
 function createMockDomAdapter() {
   const calls = new Map();
   const elements = new Map();
+  const selectorResults = new Map();
   function track(method, args) {
     if (!calls.has(method)) calls.set(method, []);
     calls.get(method).push([...args]);
   }
   return {
     getElementById(id) { track("getElementById", [id]); return elements.get(id) ?? null; },
-    querySelector(sel) { track("querySelector", [sel]); return null; },
-    querySelectorAll(sel) { track("querySelectorAll", [sel]); return []; },
+    querySelector(sel) { track("querySelector", [sel]); return selectorResults.get(sel) ?? null; },
+    querySelectorAll(sel) { track("querySelectorAll", [sel]); return selectorResults.get(sel) ?? []; },
     createSvgElement(tag) { track("createSvgElement", [tag]); return createFakeElement(tag); },
+    // Convenience methods (use _Selectors)
+    getNode(nodeId) { return this.getElementById(_Selectors.nodeId(nodeId)); },
+    getVisibleArc(arcId) { return this.querySelector(_Selectors.visibleArc(arcId)); },
+    getHitarea(arcId) { return this.querySelector(_Selectors.hitarea(arcId)); },
+    getArrows(arcId) { return this.querySelectorAll(_Selectors.arrows(arcId)); },
+    getVirtualArrows(arcId) { return this.querySelectorAll(_Selectors.virtualArrows(arcId)); },
+    getConnectedHitareas(nodeId) { return this.querySelectorAll(_Selectors.connectedHitareas(nodeId)); },
+    getLabelGroup(arcId) { return this.querySelector(_Selectors.labelGroup(arcId)); },
     _getCalls(method) { return calls.get(method) ?? []; },
     _registerElement(id, el) { elements.set(id, el); },
+    _registerSelector(sel, result) { selectorResults.set(sel, result); },
   };
 }
 
@@ -49,6 +65,14 @@ const DomAdapter = {
   querySelector(sel) { return document.querySelector(sel); },
   querySelectorAll(sel) { return document.querySelectorAll(sel); },
   createSvgElement(tag) { return document.createElementNS(SVG_NS, tag); },
+  // Convenience methods (use _Selectors)
+  getNode(nodeId) { return this.getElementById(_Selectors.nodeId(nodeId)); },
+  getVisibleArc(arcId) { return this.querySelector(_Selectors.visibleArc(arcId)); },
+  getHitarea(arcId) { return this.querySelector(_Selectors.hitarea(arcId)); },
+  getArrows(arcId) { return this.querySelectorAll(_Selectors.arrows(arcId)); },
+  getVirtualArrows(arcId) { return this.querySelectorAll(_Selectors.virtualArrows(arcId)); },
+  getConnectedHitareas(nodeId) { return this.querySelectorAll(_Selectors.connectedHitareas(nodeId)); },
+  getLabelGroup(arcId) { return this.querySelector(_Selectors.labelGroup(arcId)); },
 };
 
 // Export for Browser
@@ -58,5 +82,5 @@ if (typeof window !== "undefined") {
 
 // Export for Bun/Node
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { DomAdapter, createMockDomAdapter, createFakeElement };
+  module.exports = { DomAdapter, createMockDomAdapter, createFakeElement, Selectors: _Selectors };
 }

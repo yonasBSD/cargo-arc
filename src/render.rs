@@ -419,6 +419,11 @@ fn render_toolbar(width: f32) -> String {
 
 fn render_script(config: &RenderConfig) -> String {
     // Module dependencies must be loaded before svg_script.js
+    // Order matters: selectors first (no deps), then dom_adapter (uses selectors),
+    // then others that may use dom_adapter
+    let selectors = include_str!("selectors.js");
+    let dom_adapter = include_str!("dom_adapter.js");
+    let layer_manager = include_str!("layer_manager.js");
     let arrow_logic = include_str!("arrow_logic.js");
     let tree_logic = include_str!("tree_logic.js");
     let highlight_state = include_str!("highlight_state.js");
@@ -430,8 +435,15 @@ fn render_script(config: &RenderConfig) -> String {
         .replace("__TOOLBAR_HEIGHT__", &TOOLBAR_HEIGHT.to_string());
 
     format!(
-        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
-        arrow_logic, tree_logic, highlight_state, virtual_edge_logic, svg_script
+        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
+        selectors,
+        dom_adapter,
+        layer_manager,
+        arrow_logic,
+        tree_logic,
+        highlight_state,
+        virtual_edge_logic,
+        svg_script
     )
 }
 

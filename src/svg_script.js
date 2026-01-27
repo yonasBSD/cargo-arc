@@ -173,8 +173,7 @@ if (typeof document !== 'undefined') {
    */
   function scaleArrow(edgeId, strokeWidth) {
     const scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
-    const arrows = document.querySelectorAll(`[data-edge="${edgeId}"]`);
-    arrows.forEach(arrow => {
+    DomAdapter.getArrows(edgeId).forEach(arrow => {
       const points = arrow.getAttribute('points');
       const tip = ArrowLogic.parseTipFromPoints(points);
       if (tip) {
@@ -189,14 +188,13 @@ if (typeof document !== 'undefined') {
       const count = ArcLogic.countLocations(locs);
       const width = ArcLogic.calculateStrokeWidth(count);
       const arcId = hitarea.dataset.arcId;
-      const visibleArc = document.querySelector(`.dep-arc[data-arc-id="${arcId}"], .cycle-arc[data-arc-id="${arcId}"]`);
+      const visibleArc = DomAdapter.getVisibleArc(arcId);
       if (visibleArc) visibleArc.style.strokeWidth = width + 'px';
       scaleArrow(arcId, width);
 
       // Store original values for reset (fixes arrow-head growth bug)
       const scale = ArrowLogic.scaleFromStrokeWidth(width);
-      const arrows = document.querySelectorAll(`[data-edge="${arcId}"]`);
-      arrows.forEach(arrow => {
+      DomAdapter.getArrows(arcId).forEach(arrow => {
         const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
         if (tip) {
           HighlightState.storeOriginal(highlightState, arcId, {
@@ -265,32 +263,30 @@ if (typeof document !== 'undefined') {
 
   function clearHighlights() {
     // Clear shadow paths
-    const shadowLayer = document.getElementById('highlight-shadows');
-    if (shadowLayer) shadowLayer.innerHTML = '';
+    LayerManager.clearLayer(LayerManager.LAYERS.SHADOWS, DomAdapter);
 
     // Move highlighted elements back to base layers
-    document.querySelectorAll('#highlight-arcs-layer > *').forEach(el => {
-      moveToLayer(el, 'base-arcs-layer');
+    DomAdapter.querySelectorAll(Selectors.highlightedArcs()).forEach(el => {
+      LayerManager.moveToBaseLayer(el, DomAdapter);
     });
-    document.querySelectorAll('#highlight-labels-layer > *').forEach(el => {
-      moveToLayer(el, 'base-labels-layer');
+    DomAdapter.querySelectorAll(Selectors.highlightedLabels()).forEach(el => {
+      LayerManager.moveToBaseLayer(el, DomAdapter);
     });
-    document.querySelectorAll('#highlight-hitareas-layer > *').forEach(el => {
-      moveToLayer(el, 'hitareas-layer');
+    DomAdapter.querySelectorAll(Selectors.highlightedHitareas()).forEach(el => {
+      LayerManager.moveToBaseLayer(el, DomAdapter);
     });
 
     // Reset regular arcs and arrows to original size (using stored values)
-    document.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
+    DomAdapter.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
       const arcId = hitarea.dataset.arcId;
       const original = HighlightState.getOriginal(highlightState, arcId);
 
       if (original) {
         // Use stored original values (fixes arrow-head growth bug)
-        const visibleArc = document.querySelector(`.dep-arc[data-arc-id="${arcId}"], .cycle-arc[data-arc-id="${arcId}"]`);
+        const visibleArc = DomAdapter.getVisibleArc(arcId);
         if (visibleArc) visibleArc.style.strokeWidth = original.strokeWidth + 'px';
         // Reset arrow using stored tip position and scale
-        const arrows = document.querySelectorAll(`[data-edge="${arcId}"]`);
-        arrows.forEach(arrow => {
+        DomAdapter.getArrows(arcId).forEach(arrow => {
           arrow.setAttribute('points', ArrowLogic.getArrowPoints(
             { x: original.tipX, y: original.tipY },
             original.scale
@@ -301,7 +297,7 @@ if (typeof document !== 'undefined') {
         const locs = hitarea.dataset.sourceLocations;
         const count = ArcLogic.countLocations(locs);
         const strokeWidth = ArcLogic.calculateStrokeWidth(count);
-        const visibleArc = document.querySelector(`.dep-arc[data-arc-id="${arcId}"], .cycle-arc[data-arc-id="${arcId}"]`);
+        const visibleArc = DomAdapter.getVisibleArc(arcId);
         if (visibleArc) visibleArc.style.strokeWidth = strokeWidth + 'px';
         scaleArrow(arcId, strokeWidth);
       }
@@ -311,7 +307,7 @@ if (typeof document !== 'undefined') {
     // Note: Virtual arcs don't use stored originals because they are destroyed and
     // recreated on each recalculateVirtualEdges() call. Recalculating from
     // sourceLocations is correct here - no accumulation bug possible.
-    document.querySelectorAll('.virtual-hitarea').forEach(hitarea => {
+    DomAdapter.querySelectorAll('.virtual-hitarea').forEach(hitarea => {
       const arcId = hitarea.dataset.arcId;
       const locs = hitarea.dataset.sourceLocations;
       const count = ArcLogic.countLocations(locs);
@@ -319,12 +315,12 @@ if (typeof document !== 'undefined') {
       const scale = strokeWidth / 1.5;
 
       // Reset virtual arc stroke-width
-      document.querySelectorAll(`.virtual-arc[data-arc-id="${arcId}"]`).forEach(arc => {
+      DomAdapter.querySelectorAll(`.virtual-arc[data-arc-id="${arcId}"]`).forEach(arc => {
         arc.style.strokeWidth = strokeWidth + 'px';
       });
 
       // Reset virtual arrow size
-      document.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
+      DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
         const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
         if (tip) {
           arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, scale));
@@ -333,48 +329,8 @@ if (typeof document !== 'undefined') {
     });
 
     // Remove CSS classes (including new highlight marker classes)
-    document.querySelectorAll('.selected-crate, .selected-module, .dep-node, .dependent-node, .highlighted-arc, .highlighted-arrow, .highlighted-label, .dimmed')
+    DomAdapter.querySelectorAll('.selected-crate, .selected-module, .dep-node, .dependent-node, .highlighted-arc, .highlighted-arrow, .highlighted-label, .dimmed')
       .forEach(el => el.classList.remove('selected-crate', 'selected-module', 'dep-node', 'dependent-node', 'highlighted-arc', 'highlighted-arrow', 'highlighted-label', 'dimmed'));
-  }
-
-  // Helper: get visible arc element by arc-id
-  function getVisibleArc(arcId) {
-    return document.querySelector(
-      `.dep-arc[data-arc-id="${arcId}"], .cycle-arc[data-arc-id="${arcId}"]`
-    );
-  }
-
-  // Move element to a specific layer
-  function moveToLayer(element, layerId) {
-    if (element) {
-      document.getElementById(layerId)?.appendChild(element);
-    }
-  }
-
-  // Move element to appropriate highlight layer based on type
-  function moveToHighlightLayer(element) {
-    if (!element) return;
-    if (element.classList.contains('dep-arc') ||
-        element.classList.contains('cycle-arc') ||
-        element.classList.contains('virtual-arc') ||
-        element.tagName === 'polygon') {
-      moveToLayer(element, 'highlight-arcs-layer');
-    } else if (element.classList.contains('arc-count-group')) {
-      moveToLayer(element, 'highlight-labels-layer');
-    }
-  }
-
-  // Move element back to appropriate base layer
-  function moveToBaseLayer(element) {
-    if (!element) return;
-    if (element.classList.contains('dep-arc') ||
-        element.classList.contains('cycle-arc') ||
-        element.classList.contains('virtual-arc') ||
-        element.tagName === 'polygon') {
-      moveToLayer(element, 'base-arcs-layer');
-    } else if (element.classList.contains('arc-count-group')) {
-      moveToLayer(element, 'base-labels-layer');
-    }
   }
 
   // Create shadow path for glow effect
@@ -401,13 +357,13 @@ if (typeof document !== 'undefined') {
     shadow.style.strokeDasharray = visibleLength + ' ' + pathLength;
     shadow.style.strokeDashoffset = -overhang + 'px';
 
-    const shadowLayer = document.getElementById('highlight-shadows');
+    const shadowLayer = DomAdapter.getElementById(LayerManager.LAYERS.SHADOWS);
     if (shadowLayer) shadowLayer.appendChild(shadow);
   }
 
   // Dim all non-highlighted elements (except toolbar and hitareas)
   function dimNonHighlighted() {
-    document.querySelectorAll(
+    DomAdapter.querySelectorAll(
       'rect:not(.selected-crate):not(.selected-module):not(.dep-node):not(.dependent-node):not(.toolbar-btn):not(.toolbar-checkbox):not(.arc-count-bg), ' +
       'path:not(.highlighted-arc):not(.arc-hitarea):not(.virtual-hitarea), ' +
       'polygon:not(.highlighted-arrow), ' +
@@ -419,7 +375,7 @@ if (typeof document !== 'undefined') {
 
   function applyEdgeHighlight(from, to) {
     const arcId = from + '-' + to;
-    const arc = getVisibleArc(arcId);
+    const arc = DomAdapter.getVisibleArc(arcId);
 
     // Skip if arc is hidden (collapsed or filtered out)
     if (arc?.style.display === 'none' || arc?.classList.contains('hidden-by-filter')) return;
@@ -428,9 +384,9 @@ if (typeof document !== 'undefined') {
     createShadowPath(arc, 'dep');
 
     // from-Node: dependent (purple border) - source of the edge
-    document.getElementById('node-' + from)?.classList.add('dependent-node');
+    DomAdapter.getNode(from)?.classList.add('dependent-node');
     // to-Node: dep (green border) - target of the edge
-    document.getElementById('node-' + to)?.classList.add('dep-node');
+    DomAdapter.getNode(to)?.classList.add('dep-node');
 
     // Arc: marker class only (keeps direction color), dynamic stroke-width
     arc?.classList.add('highlighted-arc');
@@ -440,7 +396,7 @@ if (typeof document !== 'undefined') {
     scaleArrow(arcId, highlightWidth);
 
     // Virtual arcs
-    document.querySelectorAll('.virtual-arc[data-from="' + from + '"][data-to="' + to + '"]')
+    DomAdapter.querySelectorAll(Selectors.virtualArc(from, to))
       .forEach(el => {
         el.classList.add('highlighted-arc');
         createShadowPath(el, 'dep');
@@ -449,9 +405,9 @@ if (typeof document !== 'undefined') {
       });
 
     // Arrows: marker class (keeps direction color)
-    document.querySelectorAll('[data-edge="' + arcId + '"]')
+    DomAdapter.getArrows(arcId)
       .forEach(el => el.classList.add('highlighted-arrow'));
-    document.querySelectorAll('[data-vedge="' + arcId + '"]:not(.arc-count)')
+    DomAdapter.getVirtualArrows(arcId)
       .forEach(el => {
         el.classList.add('highlighted-arrow');
         // Scale virtual arrows
@@ -464,28 +420,27 @@ if (typeof document !== 'undefined') {
       });
 
     // Arc-count labels
-    document.querySelectorAll('.arc-count[data-vedge="' + arcId + '"]')
+    DomAdapter.querySelectorAll('.arc-count[data-vedge="' + arcId + '"]')
       .forEach(el => el.classList.add('highlighted-label'));
 
     // Move highlighted elements to highlight layers
-    moveToHighlightLayer(arc);
-    moveToHighlightLayer(document.querySelector(`.virtual-arc[data-arc-id="${arcId}"]`));
-    moveToHighlightLayer(document.querySelector(`.arc-count-group[data-vedge="${arcId}"]`));
+    LayerManager.moveToHighlightLayer(arc, DomAdapter);
+    LayerManager.moveToHighlightLayer(DomAdapter.querySelector(`.virtual-arc[data-arc-id="${arcId}"]`), DomAdapter);
+    LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
     // Arrows
-    document.querySelectorAll(`[data-edge="${arcId}"]`).forEach(moveToHighlightLayer);
-    document.querySelectorAll(`[data-vedge="${arcId}"]:not(.arc-count)`).forEach(moveToHighlightLayer);
+    DomAdapter.getArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
+    DomAdapter.getVirtualArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
 
     // Move hitarea to highlight layer (higher z-order) so it receives events over dimmed hitareas
-    const highlightHitareasLayer = document.getElementById('highlight-hitareas-layer');
-    const hitarea = document.querySelector(`.arc-hitarea[data-arc-id="${arcId}"]`);
-    if (hitarea && highlightHitareasLayer) highlightHitareasLayer.appendChild(hitarea);
+    const hitarea = DomAdapter.getHitarea(arcId);
+    LayerManager.moveToLayer(hitarea, LayerManager.LAYERS.HIGHLIGHT_HITAREAS, DomAdapter);
 
     dimNonHighlighted();
   }
 
   function applyNodeHighlight(nodeId) {
     // Selected node: saturated original color
-    const selectedNode = document.getElementById('node-' + nodeId);
+    const selectedNode = DomAdapter.getNode(nodeId);
     if (selectedNode) {
       if (selectedNode.classList.contains('crate')) {
         selectedNode.classList.add('selected-crate');
@@ -498,14 +453,14 @@ if (typeof document !== 'undefined') {
     const isOutgoing = (from, to) => from === nodeId;
 
     // Regular arcs via hitareas
-    document.querySelectorAll('.arc-hitarea[data-from="' + nodeId + '"], .arc-hitarea[data-to="' + nodeId + '"]')
+    DomAdapter.getConnectedHitareas(nodeId)
       .forEach(hitarea => {
         // Skip hitareas filtered out by user (e.g., CrateDeps checkbox)
         // Note: We check visibleArc for display:none (collapsed), not hitarea
         if (hitarea.classList.contains('hidden-by-filter')) return;
 
         const arcId = hitarea.dataset.arcId;
-        const visibleArc = getVisibleArc(arcId);
+        const visibleArc = DomAdapter.getVisibleArc(arcId);
 
         // Skip if arc is hidden (endpoints are collapsed)
         if (visibleArc?.style.display === 'none') return;
@@ -526,21 +481,20 @@ if (typeof document !== 'undefined') {
 
         // Connected nodes (border only)
         const otherNodeId = outgoing ? to : from;
-        const otherNode = document.getElementById('node-' + otherNodeId);
-        otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
+        DomAdapter.getNode(otherNodeId)?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
 
         // Arrows: marker class (keeps direction color)
-        document.querySelectorAll('[data-edge="' + from + '-' + to + '"]')
+        DomAdapter.getArrows(from + '-' + to)
           .forEach(arr => arr.classList.add('highlighted-arrow'));
 
         // Move to highlight layers
-        moveToHighlightLayer(visibleArc);
-        moveToHighlightLayer(document.querySelector(`.arc-count-group[data-vedge="${arcId}"]`));
-        document.querySelectorAll(`[data-edge="${arcId}"]`).forEach(moveToHighlightLayer);
+        LayerManager.moveToHighlightLayer(visibleArc, DomAdapter);
+        LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
+        DomAdapter.getArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
       });
 
     // Virtual arcs
-    document.querySelectorAll('.virtual-arc[data-from="' + nodeId + '"], .virtual-arc[data-to="' + nodeId + '"]')
+    DomAdapter.querySelectorAll('.virtual-arc[data-from="' + nodeId + '"], .virtual-arc[data-to="' + nodeId + '"]')
       .forEach(arc => {
         const from = arc.dataset.from;
         const to = arc.dataset.to;
@@ -556,7 +510,7 @@ if (typeof document !== 'undefined') {
         arc.style.strokeWidth = highlightWidth + 'px';
 
         // Scale virtual arrows
-        document.querySelectorAll(`.virtual-arrow[data-vedge="${from}-${to}"]`).forEach(arrow => {
+        DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${from}-${to}"]`).forEach(arrow => {
           const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
           if (tip) {
             arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, highlightWidth / 1.5));
@@ -565,29 +519,25 @@ if (typeof document !== 'undefined') {
 
         // Connected nodes (border only)
         const otherNodeId = outgoing ? to : from;
-        const otherNode = document.getElementById('node-' + otherNodeId);
-        otherNode?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
+        DomAdapter.getNode(otherNodeId)?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
 
         // Arrows: marker class (keeps direction color)
-        document.querySelectorAll('[data-vedge="' + from + '-' + to + '"]:not(.arc-count)')
+        DomAdapter.getVirtualArrows(from + '-' + to)
           .forEach(arr => arr.classList.add('highlighted-arrow'));
 
         // Arc-count labels
-        document.querySelectorAll('.arc-count[data-vedge="' + from + '-' + to + '"]')
+        DomAdapter.querySelectorAll('.arc-count[data-vedge="' + from + '-' + to + '"]')
           .forEach(el => el.classList.add('highlighted-label'));
 
         // Move to highlight layers
-        moveToHighlightLayer(arc);
-        moveToHighlightLayer(document.querySelector(`.arc-count-group[data-vedge="${from}-${to}"]`));
-        document.querySelectorAll(`[data-vedge="${from}-${to}"]:not(.arc-count)`).forEach(moveToHighlightLayer);
+        LayerManager.moveToHighlightLayer(arc, DomAdapter);
+        LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(from + '-' + to), DomAdapter);
+        DomAdapter.getVirtualArrows(from + '-' + to).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
       });
 
     // Move connected hitareas to highlight layer (higher z-order)
-    const highlightHitareasLayer = document.getElementById('highlight-hitareas-layer');
-    if (highlightHitareasLayer) {
-      document.querySelectorAll(`.arc-hitarea[data-from="${nodeId}"], .arc-hitarea[data-to="${nodeId}"]`)
-        .forEach(h => highlightHitareasLayer.appendChild(h));
-    }
+    DomAdapter.getConnectedHitareas(nodeId)
+      .forEach(h => LayerManager.moveToLayer(h, LayerManager.LAYERS.HIGHLIGHT_HITAREAS, DomAdapter));
 
     dimNonHighlighted();
   }
@@ -769,8 +719,8 @@ if (typeof document !== 'undefined') {
     hitareas.forEach(hitarea => {
       const fromId = hitarea.dataset.from;
       const toId = hitarea.dataset.to;
-      const fromNode = document.getElementById('node-' + fromId);
-      const toNode = document.getElementById('node-' + toId);
+      const fromNode = DomAdapter.getNode(fromId);
+      const toNode = DomAdapter.getNode(toId);
 
       // A node is hidden if its visible ancestor is NOT itself
       // (i.e., an ancestor is collapsed, hiding this node)
@@ -797,7 +747,7 @@ if (typeof document !== 'undefined') {
   function extractNodePositions(nodeIds) {
     const positions = new Map();
     for (const nodeId of nodeIds) {
-      const node = document.getElementById('node-' + nodeId);
+      const node = DomAdapter.getNode(nodeId);
       if (node) {
         positions.set(nodeId, {
           x: parseFloat(node.getAttribute('x')),
@@ -836,20 +786,20 @@ if (typeof document !== 'undefined') {
       if (fromHidden || toHidden) {
         // Hide original elements
         hitarea.style.display = 'none';
-        const visibleArc = getVisibleArc(arcId);
+        const visibleArc = DomAdapter.getVisibleArc(arcId);
         if (visibleArc) visibleArc.style.display = 'none';
-        document.querySelectorAll('[data-edge="' + fromId + '-' + toId + '"]')
+        DomAdapter.getArrows(fromId + '-' + toId)
           .forEach(arr => arr.style.display = 'none');
       } else if (fromNode && toNode) {
         // Update visible arc paths
         const arc = calculateArcPathFromNodes(fromNode, toNode, 3);
         hitarea.setAttribute('d', arc.path);
-        const visibleArc = getVisibleArc(arcId);
+        const visibleArc = DomAdapter.getVisibleArc(arcId);
         if (visibleArc) visibleArc.setAttribute('d', arc.path);
 
         const strokeWidth = visibleArc ? parseFloat(visibleArc.style.strokeWidth) || 0.5 : 0.5;
         const scale = strokeWidth / 1.5;
-        document.querySelectorAll('[data-edge="' + fromId + '-' + toId + '"]').forEach(arrow => {
+        DomAdapter.getArrows(fromId + '-' + toId).forEach(arrow => {
           arrow.setAttribute('points', ArrowLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
         });
       }
@@ -1023,11 +973,11 @@ if (typeof document !== 'undefined') {
     clearHighlights();
     if (!wasPinned) return; // Was unpinned, done
     // from-Node: dependent (purple border)
-    document.getElementById('node-' + fromId)?.classList.add('dependent-node');
+    DomAdapter.getNode(fromId)?.classList.add('dependent-node');
     // to-Node: dep (green border)
-    document.getElementById('node-' + toId)?.classList.add('dep-node');
+    DomAdapter.getNode(toId)?.classList.add('dep-node');
     // Virtual arc: marker class (keeps direction color), dynamic stroke-width
-    document.querySelectorAll('.virtual-arc[data-from="' + fromId + '"][data-to="' + toId + '"]')
+    DomAdapter.querySelectorAll(Selectors.virtualArc(fromId, toId))
       .forEach(el => {
         createShadowPath(el, 'dep');
         el.classList.add('highlighted-arc');
@@ -1036,10 +986,10 @@ if (typeof document !== 'undefined') {
         el.style.strokeWidth = highlightWidth + 'px';
       });
     // Arrows: marker class (keeps direction color), scale to match arc
-    document.querySelectorAll('.virtual-arrow[data-vedge="' + fromId + '-' + toId + '"]')
+    DomAdapter.querySelectorAll('.virtual-arrow[data-vedge="' + edgeId + '"]')
       .forEach(el => {
         el.classList.add('highlighted-arrow');
-        const arc = document.querySelector('.virtual-arc[data-from="' + fromId + '"][data-to="' + toId + '"]');
+        const arc = DomAdapter.querySelector(Selectors.virtualArc(fromId, toId));
         const arcWidth = parseFloat(arc?.style.strokeWidth) || 0.5;
         const tip = ArrowLogic.parseTipFromPoints(el.getAttribute('points'));
         if (tip) {
@@ -1047,12 +997,12 @@ if (typeof document !== 'undefined') {
         }
       });
     // Arc-count labels
-    document.querySelectorAll('.arc-count[data-vedge="' + fromId + '-' + toId + '"]')
+    DomAdapter.querySelectorAll('.arc-count[data-vedge="' + edgeId + '"]')
       .forEach(el => el.classList.add('highlighted-label'));
     // Move virtual arc and label group to highlight layers
-    moveToHighlightLayer(document.querySelector('.virtual-arc[data-arc-id="' + edgeId + '"]'));
-    moveToHighlightLayer(document.querySelector('.arc-count-group[data-vedge="' + edgeId + '"]'));
-    document.querySelectorAll('.virtual-arrow[data-vedge="' + edgeId + '"]').forEach(moveToHighlightLayer);
+    LayerManager.moveToHighlightLayer(DomAdapter.querySelector('.virtual-arc[data-arc-id="' + edgeId + '"]'), DomAdapter);
+    LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(edgeId), DomAdapter);
+    DomAdapter.querySelectorAll('.virtual-arrow[data-vedge="' + edgeId + '"]').forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
     // Dim everything else
     dimNonHighlighted();
   }
@@ -1061,7 +1011,7 @@ if (typeof document !== 'undefined') {
   function isAncestorOf(nodeId, targetId) {
     let checkId = targetId;
     while (true) {
-      const checkNode = document.getElementById('node-' + checkId);
+      const checkNode = DomAdapter.getNode(checkId);
       const parentId = checkNode?.dataset.parent;
       if (!parentId) return false;
       if (parentId === nodeId) return true;
@@ -1084,7 +1034,7 @@ if (typeof document !== 'undefined') {
 
     // Toggle visibility of descendants
     descendants.forEach(descId => {
-      const node = document.getElementById('node-' + descId);
+      const node = DomAdapter.getNode(descId);
       const label = node?.nextElementSibling;
       const toggle = document.querySelector('.collapse-toggle[data-target="' + descId + '"]');
 
@@ -1097,7 +1047,7 @@ if (typeof document !== 'undefined') {
         let ancestorCollapsed = false;
         let checkId = descId;
         while (true) {
-          const checkNode = document.getElementById('node-' + checkId);
+          const checkNode = DomAdapter.getNode(checkId);
           const parentId = checkNode?.dataset.parent;
           if (!parentId) break;
           if (CollapseState.isCollapsed(collapseState, parentId) && parentId !== nodeId) {
@@ -1117,7 +1067,7 @@ if (typeof document !== 'undefined') {
       document.querySelectorAll('line[data-child="' + descId + '"]').forEach(line => {
         if (collapsed) {
           line.classList.add('collapsed');
-        } else if (!document.getElementById('node-' + descId)?.classList.contains('collapsed')) {
+        } else if (!DomAdapter.getNode(descId)?.classList.contains('collapsed')) {
           line.classList.remove('collapsed');
         }
       });
@@ -1154,7 +1104,7 @@ if (typeof document !== 'undefined') {
         // Collapse all
         CollapseState.setCollapsed(collapseState, nodeId, true);
         getDescendants(nodeId).forEach(descId => {
-          const descNode = document.getElementById('node-' + descId);
+          const descNode = DomAdapter.getNode(descId);
           const label = descNode?.nextElementSibling;
           const toggle = document.querySelector('.collapse-toggle[data-target="' + descId + '"]');
           descNode?.classList.add('collapsed');
@@ -1174,7 +1124,7 @@ if (typeof document !== 'undefined') {
         // Expand all
         CollapseState.setCollapsed(collapseState, nodeId, false);
         getDescendants(nodeId).forEach(descId => {
-          const descNode = document.getElementById('node-' + descId);
+          const descNode = DomAdapter.getNode(descId);
           const label = descNode?.nextElementSibling;
           const toggle = document.querySelector('.collapse-toggle[data-target="' + descId + '"]');
           descNode?.classList.remove('collapsed');
@@ -1226,7 +1176,7 @@ if (typeof document !== 'undefined') {
           hitarea.classList.add('hidden-by-filter');
         }
         // Also handle arrows
-        document.querySelectorAll(`[data-edge="${arcId}"]`).forEach(arrow => {
+        DomAdapter.getArrows(arcId).forEach(arrow => {
           if (isChecked) {
             arrow.classList.remove('hidden-by-filter');
           } else {
