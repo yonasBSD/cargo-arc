@@ -1,8 +1,16 @@
 //! HIR-based module analysis using rust-analyzer.
 
-use super::FeatureConfig;
 use super::use_parser::{normalize_crate_name, parse_workspace_dependencies};
 use crate::model::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};
+
+#[derive(Debug, Clone, Default)]
+pub struct FeatureConfig {
+    pub features: Vec<String>,
+    pub all_features: bool,
+    pub no_default_features: bool,
+    pub cfg_flags: Vec<String>,
+    pub debug: bool,
+}
 
 use anyhow::{Context, Result};
 use ra_ap_cfg::{CfgAtom, CfgDiff};
@@ -256,4 +264,113 @@ fn extract_module_dependencies(
 
     // Use the new workspace-aware parsing function
     parse_workspace_dependencies(&source_text, crate_name, workspace_crates, &source_file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ra_ap_project_model as project_model;
+
+    #[test]
+    fn test_feature_config_default() {
+        let config = FeatureConfig::default();
+        assert!(config.features.is_empty());
+        assert!(!config.all_features);
+        assert!(config.cfg_flags.is_empty());
+        assert!(!config.no_default_features);
+    }
+
+    #[test]
+    fn test_feature_config_no_default_features() {
+        let config = FeatureConfig {
+            no_default_features: true,
+            ..Default::default()
+        };
+        assert!(config.no_default_features);
+    }
+
+    #[test]
+    fn test_cfg_overrides_include_features() {
+        let config = FeatureConfig {
+            features: vec!["server".to_string()],
+            ..Default::default()
+        };
+        let cargo_config = cargo_config_with_features(&config);
+
+        // CfgDiff Display should show the feature being enabled
+        let diff_str = format!("{}", cargo_config.cfg_overrides.global);
+        assert!(
+            diff_str.contains("feature") && diff_str.contains("server"),
+            "Expected feature = \"server\" in cfg_overrides, got: {}",
+            diff_str
+        );
+    }
+
+    #[test]
+    fn test_cargo_config_default_excludes_test() {
+        let config = FeatureConfig::default();
+        let cargo_config = cargo_config_with_features(&config);
+
+        // CfgDiff Display shows "disable test" when test is disabled
+        let diff_str = format!("{}", cargo_config.cfg_overrides.global);
+        assert!(
+            diff_str.contains("disable") && diff_str.contains("test"),
+            "Expected cfg(test) to be disabled, got: {}",
+            diff_str
+        );
+    }
+
+    #[test]
+    fn test_cargo_config_includes_test_when_flag_set() {
+        let config = FeatureConfig {
+            cfg_flags: vec!["test".to_string()],
+            ..Default::default()
+        };
+        let cargo_config = cargo_config_with_features(&config);
+
+        // CfgDiff Display shows "enable test" when test is enabled
+        let diff_str = format!("{}", cargo_config.cfg_overrides.global);
+        assert!(
+            diff_str.contains("enable") && diff_str.contains("test"),
+            "Expected cfg(test) to be enabled, got: {}",
+            diff_str
+        );
+    }
+
+    #[test]
+    fn test_cargo_config_selected_features() {
+        let config = FeatureConfig {
+            features: vec!["web".to_string()],
+            ..Default::default()
+        };
+        let cargo_config = cargo_config_with_features(&config);
+
+        match cargo_config.features {
+            project_model::CargoFeatures::Selected { features, .. } => {
+                assert_eq!(features, vec!["web"]);
+            }
+            _ => panic!("expected Selected"),
+        }
+    }
+
+    #[test]
+    fn test_cargo_features_no_default() {
+        let config = FeatureConfig {
+            features: vec!["x".to_string()],
+            no_default_features: true,
+            ..Default::default()
+        };
+        let cargo_config = cargo_config_with_features(&config);
+
+        match cargo_config.features {
+            project_model::CargoFeatures::Selected {
+                features,
+                no_default_features,
+            } => {
+                assert_eq!(features, vec!["x"]);
+                assert!(no_default_features, "no_default_features should be true");
+            }
+            _ => panic!("expected Selected"),
+        }
+    }
 }
