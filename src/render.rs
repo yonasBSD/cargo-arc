@@ -427,6 +427,7 @@ fn render_script(config: &RenderConfig) -> String {
     let arrow_logic = include_str!("arrow_logic.js");
     let tree_logic = include_str!("tree_logic.js");
     let highlight_state = include_str!("highlight_state.js");
+    let highlight_logic = include_str!("highlight_logic.js");
     let virtual_edge_logic = include_str!("virtual_edge_logic.js");
 
     let svg_script = include_str!("svg_script.js")
@@ -435,13 +436,14 @@ fn render_script(config: &RenderConfig) -> String {
         .replace("__TOOLBAR_HEIGHT__", &TOOLBAR_HEIGHT.to_string());
 
     format!(
-        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
+        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
         selectors,
         dom_adapter,
         layer_manager,
         arrow_logic,
         tree_logic,
         highlight_state,
+        highlight_logic,
         virtual_edge_logic,
         svg_script
     )

@@ -335,27 +335,24 @@ if (typeof document !== 'undefined') {
 
   // Create shadow path for glow effect
   // relationType: 'dep' (incoming) or 'reverse' (outgoing)
-  function createShadowPath(arc, relationType) {
+  // arcId: used to look up original width
+  // originalArcWidth: un-highlighted arc width (before calculateHighlightWidth)
+  function createShadowPath(arc, relationType, arcId, originalArcWidth) {
     if (!arc) return;
     const shadow = arc.cloneNode(false);
     shadow.classList.add('shadow-path');
     shadow.classList.add(relationType === 'dep' ? 'glow-incoming' : 'glow-outgoing');
     shadow.removeAttribute('id');
 
-    // Dynamic width: 4× arc width for glow effect
-    const arcWidth = parseFloat(arc.style.strokeWidth) || 0.5;
-    shadow.style.strokeWidth = (arcWidth * 4) + 'px';
+    // Use provided original width (prevents shadow growth on repeated hover)
+    const pathLength = arc.getTotalLength?.() || 100;
+    const shadowData = HighlightLogic.calculateShadowData(originalArcWidth, pathLength);
+
+    shadow.style.strokeWidth = shadowData.shadowWidth + 'px';
     shadow.setAttribute('opacity', '0.25');
     shadow.style.strokeLinecap = 'round';
-
-    // Shorten shadow to compensate for wider stroke
-    // Overhang per end ≈ (shadowWidth - arcWidth) / 2
-    const shadowWidth = arcWidth * 4;
-    const overhang = (shadowWidth - arcWidth) / 2;
-    const pathLength = arc.getTotalLength?.() || 100;
-    const visibleLength = Math.max(0, pathLength - overhang * 2);
-    shadow.style.strokeDasharray = visibleLength + ' ' + pathLength;
-    shadow.style.strokeDashoffset = -overhang + 'px';
+    shadow.style.strokeDasharray = shadowData.visibleLength + ' ' + pathLength;
+    shadow.style.strokeDashoffset = shadowData.dashOffset + 'px';
 
     const shadowLayer = DomAdapter.getElementById(LayerManager.LAYERS.SHADOWS);
     if (shadowLayer) shadowLayer.appendChild(shadow);
@@ -377,46 +374,53 @@ if (typeof document !== 'undefined') {
     const arcId = from + '-' + to;
     const arc = DomAdapter.getVisibleArc(arcId);
 
-    // Skip if arc is hidden (collapsed or filtered out)
-    if (arc?.style.display === 'none' || arc?.classList.contains('hidden-by-filter')) return;
+    // Check if arc is filtered out (user checkbox) - skip completely
+    if (arc?.classList.contains('hidden-by-filter')) return;
 
-    // Create shadow path with relation type (edge click = viewing dependency)
-    createShadowPath(arc, 'dep');
-
-    // from-Node: dependent (purple border) - source of the edge
+    // Node borders (always apply)
     DomAdapter.getNode(from)?.classList.add('dependent-node');
-    // to-Node: dep (green border) - target of the edge
     DomAdapter.getNode(to)?.classList.add('dep-node');
 
-    // Arc: marker class only (keeps direction color), dynamic stroke-width
-    arc?.classList.add('highlighted-arc');
-    const arcWidth = parseFloat(arc?.style.strokeWidth) || 0.5;
-    const highlightWidth = arcWidth * 1.3;
-    if (arc) arc.style.strokeWidth = highlightWidth + 'px';
-    scaleArrow(arcId, highlightWidth);
+    // Regular arc highlighting (skip if collapsed)
+    const isCollapsed = arc?.style.display === 'none';
+    if (!isCollapsed && arc) {
+      // Read ORIGINAL width BEFORE adding CSS class (prevents CSS-induced changes)
+      const arcWidth = parseFloat(arc.style.strokeWidth) || 0.5;
+      const highlightWidth = HighlightLogic.calculateHighlightWidth(arcWidth);
 
-    // Virtual arcs
+      arc.classList.add('highlighted-arc');
+      arc.style.strokeWidth = highlightWidth + 'px';
+
+      // Create shadow using ORIGINAL width (before highlighting)
+      createShadowPath(arc, 'dep', arcId, arcWidth);
+      scaleArrow(arcId, highlightWidth);
+
+      // Regular arrows
+      DomAdapter.getArrows(arcId)
+        .forEach(el => el.classList.add('highlighted-arrow'));
+    }
+
+    // Virtual arcs (exist when regular arc is collapsed)
     DomAdapter.querySelectorAll(Selectors.virtualArc(from, to))
       .forEach(el => {
-        el.classList.add('highlighted-arc');
-        createShadowPath(el, 'dep');
+        // Read ORIGINAL width BEFORE adding CSS class (prevents CSS-induced changes)
         const vWidth = parseFloat(el.style.strokeWidth) || 0.5;
-        el.style.strokeWidth = (vWidth * 1.3) + 'px';
-      });
+        const vHighlightWidth = HighlightLogic.calculateHighlightWidth(vWidth);
 
-    // Arrows: marker class (keeps direction color)
-    DomAdapter.getArrows(arcId)
-      .forEach(el => el.classList.add('highlighted-arrow'));
-    DomAdapter.getVirtualArrows(arcId)
-      .forEach(el => {
-        el.classList.add('highlighted-arrow');
-        // Scale virtual arrows
-        if (el.classList.contains('virtual-arrow')) {
-          const tip = ArrowLogic.parseTipFromPoints(el.getAttribute('points'));
+        el.classList.add('highlighted-arc');
+        el.style.strokeWidth = vHighlightWidth + 'px';
+
+        // Create shadow using ORIGINAL width (before highlighting)
+        createShadowPath(el, 'dep', arcId, vWidth);
+
+        // Scale virtual arrows (use virtual arc width, not regular arc width)
+        DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
+          arrow.classList.add('highlighted-arrow');
+          const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
           if (tip) {
-            el.setAttribute('points', ArrowLogic.getArrowPoints(tip, highlightWidth / 1.5));
+            arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(vHighlightWidth)));
           }
-        }
+        });
       });
 
     // Arc-count labels
@@ -449,9 +453,6 @@ if (typeof document !== 'undefined') {
       }
     }
 
-    // Helper to determine if edge is outgoing (dep) or incoming (dependent)
-    const isOutgoing = (from, to) => from === nodeId;
-
     // Regular arcs via hitareas
     DomAdapter.getConnectedHitareas(nodeId)
       .forEach(hitarea => {
@@ -467,21 +468,23 @@ if (typeof document !== 'undefined') {
 
         const from = hitarea.dataset.from;
         const to = hitarea.dataset.to;
-        const outgoing = isOutgoing(from, to);
+        const relationType = HighlightLogic.determineRelationType(from, to, nodeId);
 
-        // Create shadow path with relation type (glow color)
-        createShadowPath(visibleArc, outgoing ? 'dep' : 'reverse');
+        // Read ORIGINAL width BEFORE adding CSS class (prevents CSS-induced changes)
+        const arcWidth = parseFloat(visibleArc?.style.strokeWidth) || 0.5;
+        const highlightWidth = HighlightLogic.calculateHighlightWidth(arcWidth);
 
         // Arc: marker class only (keeps direction color), dynamic stroke-width
         visibleArc?.classList.add('highlighted-arc');
-        const arcWidth = parseFloat(visibleArc?.style.strokeWidth) || 0.5;
-        const highlightWidth = arcWidth * 1.3;
         if (visibleArc) visibleArc.style.strokeWidth = highlightWidth + 'px';
+
+        // Create shadow using ORIGINAL width (before highlighting)
+        createShadowPath(visibleArc, relationType, arcId, arcWidth);
         scaleArrow(from + '-' + to, highlightWidth);
 
         // Connected nodes (border only)
-        const otherNodeId = outgoing ? to : from;
-        DomAdapter.getNode(otherNodeId)?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
+        const otherNodeId = relationType === 'dep' ? to : from;
+        DomAdapter.getNode(otherNodeId)?.classList.add(relationType === 'dep' ? 'dep-node' : 'dependent-node');
 
         // Arrows: marker class (keeps direction color)
         DomAdapter.getArrows(from + '-' + to)
@@ -498,41 +501,44 @@ if (typeof document !== 'undefined') {
       .forEach(arc => {
         const from = arc.dataset.from;
         const to = arc.dataset.to;
-        const outgoing = isOutgoing(from, to);
+        const arcId = from + '-' + to;
+        const relationType = HighlightLogic.determineRelationType(from, to, nodeId);
 
-        // Create shadow path with relation type (glow color)
-        createShadowPath(arc, outgoing ? 'dep' : 'reverse');
+        // Read ORIGINAL width BEFORE adding CSS class (prevents CSS-induced changes)
+        const arcWidth = parseFloat(arc.style.strokeWidth) || 0.5;
+        const highlightWidth = HighlightLogic.calculateHighlightWidth(arcWidth);
 
         // Arc: marker class only (keeps direction color), dynamic stroke-width
         arc.classList.add('highlighted-arc');
-        const arcWidth = parseFloat(arc.style.strokeWidth) || 0.5;
-        const highlightWidth = arcWidth * 1.3;
         arc.style.strokeWidth = highlightWidth + 'px';
 
+        // Create shadow using ORIGINAL width (before highlighting)
+        createShadowPath(arc, relationType, arcId, arcWidth);
+
         // Scale virtual arrows
-        DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${from}-${to}"]`).forEach(arrow => {
+        DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
           const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
           if (tip) {
-            arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, highlightWidth / 1.5));
+            arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
           }
         });
 
         // Connected nodes (border only)
-        const otherNodeId = outgoing ? to : from;
-        DomAdapter.getNode(otherNodeId)?.classList.add(outgoing ? 'dep-node' : 'dependent-node');
+        const otherNodeId = relationType === 'dep' ? to : from;
+        DomAdapter.getNode(otherNodeId)?.classList.add(relationType === 'dep' ? 'dep-node' : 'dependent-node');
 
         // Arrows: marker class (keeps direction color)
-        DomAdapter.getVirtualArrows(from + '-' + to)
+        DomAdapter.getVirtualArrows(arcId)
           .forEach(arr => arr.classList.add('highlighted-arrow'));
 
         // Arc-count labels
-        DomAdapter.querySelectorAll('.arc-count[data-vedge="' + from + '-' + to + '"]')
+        DomAdapter.querySelectorAll('.arc-count[data-vedge="' + arcId + '"]')
           .forEach(el => el.classList.add('highlighted-label'));
 
         // Move to highlight layers
         LayerManager.moveToHighlightLayer(arc, DomAdapter);
-        LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(from + '-' + to), DomAdapter);
-        DomAdapter.getVirtualArrows(from + '-' + to).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
+        LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
+        DomAdapter.getVirtualArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
       });
 
     // Move connected hitareas to highlight layer (higher z-order)
@@ -979,11 +985,15 @@ if (typeof document !== 'undefined') {
     // Virtual arc: marker class (keeps direction color), dynamic stroke-width
     DomAdapter.querySelectorAll(Selectors.virtualArc(fromId, toId))
       .forEach(el => {
-        createShadowPath(el, 'dep');
-        el.classList.add('highlighted-arc');
+        // Read ORIGINAL width BEFORE adding CSS class (prevents CSS-induced changes)
         const arcWidth = parseFloat(el.style.strokeWidth) || 0.5;
-        const highlightWidth = arcWidth * 1.3;
+        const highlightWidth = HighlightLogic.calculateHighlightWidth(arcWidth);
+
+        el.classList.add('highlighted-arc');
         el.style.strokeWidth = highlightWidth + 'px';
+
+        // Create shadow using ORIGINAL width (before highlighting)
+        createShadowPath(el, 'dep', edgeId, arcWidth);
       });
     // Arrows: marker class (keeps direction color), scale to match arc
     DomAdapter.querySelectorAll('.virtual-arrow[data-vedge="' + edgeId + '"]')
@@ -993,7 +1003,7 @@ if (typeof document !== 'undefined') {
         const arcWidth = parseFloat(arc?.style.strokeWidth) || 0.5;
         const tip = ArrowLogic.parseTipFromPoints(el.getAttribute('points'));
         if (tip) {
-          el.setAttribute('points', ArrowLogic.getArrowPoints(tip, arcWidth / 1.5));
+          el.setAttribute('points', ArrowLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(arcWidth)));
         }
       });
     // Arc-count labels
