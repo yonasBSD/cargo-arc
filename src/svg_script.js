@@ -676,7 +676,8 @@ if (typeof document !== 'undefined') {
         const labelGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         labelGroup.setAttribute('class', 'arc-count-group');
         labelGroup.setAttribute('data-vedge', fromId + '-' + toId);
-
+        labelGroup.setAttribute('data-from', fromId);
+        labelGroup.setAttribute('data-to', toId);
         const text = '(' + count + ')';
         const x = arc.ctrlX + 5;
         const y = arc.midY + 3;
@@ -702,8 +703,6 @@ if (typeof document !== 'undefined') {
 
         labelGroup.appendChild(bg);
         labelGroup.appendChild(countLabel);
-
-        // Event handlers on group
         labelGroup.style.cursor = 'pointer';
         labelGroup.addEventListener('click', e => {
           e.stopPropagation();
@@ -731,15 +730,12 @@ if (typeof document !== 'undefined') {
       if (hiddenEdgeData.length > 0) {
         hitarea.dataset.sourceLocations = ArcLogic.sortAndGroupLocations(hiddenEdgeData);
       }
-      // Click handler for highlighting
       hitarea.addEventListener('click', e => {
         e.stopPropagation();
         highlightVirtualEdge(fromId, toId, count);
       });
-      // Hover handlers for floating label
       hitarea.addEventListener('mouseenter', () => handleMouseEnter('edge', arcId));
       hitarea.addEventListener('mousemove', (e) => {
-        // When pinned, only show tooltip on highlighted arcs
         const pinned = AppState.getPinned(appState);
         if (pinned) {
           const isHighlighted = pinned.type === 'edge'
@@ -1027,8 +1023,8 @@ if (typeof document !== 'undefined') {
     toggleCrateDepVisibility();
   });
 
-  // Event handlers on hit-area paths (invisible, 12px wide)
-  document.querySelectorAll('.arc-hitarea').forEach(hitarea => {
+  // Event handlers on hit-area paths (invisible, 12px wide) — regular arcs only
+  document.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
     const edgeId = hitarea.dataset.from + '-' + hitarea.dataset.to;
 
     hitarea.addEventListener('click', e => {
