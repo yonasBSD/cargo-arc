@@ -183,7 +183,7 @@ pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
     svg.push_str(&render_nodes(&positioned, &parents));
     svg.push_str(&render_edges(&positioned, ir));
     svg.push_str(&render_toolbar(width));
-    svg.push_str(&render_script(config));
+    svg.push_str(&render_script(config, ir, &positioned, &parents));
     svg.push_str("</svg>\n");
     svg
 }
@@ -417,7 +417,86 @@ fn render_toolbar(width: f32) -> String {
     toolbar
 }
 
-fn render_script(config: &RenderConfig) -> String {
+/// Generate STATIC_DATA JavaScript constant from layout data
+fn generate_static_data(
+    ir: &LayoutIR,
+    positioned: &[PositionedItem],
+    parents: &HashSet<NodeId>,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push("const STATIC_DATA = {".to_string());
+
+    // Generate nodes object
+    lines.push("  nodes: {".to_string());
+    for (i, pos) in positioned.iter().enumerate() {
+        let item = &ir.items[pos.id];
+        let node_type = match &item.kind {
+            ItemKind::Crate => "crate",
+            ItemKind::Module { .. } => "module",
+        };
+        let parent_str = match &item.kind {
+            ItemKind::Crate => "null".to_string(),
+            ItemKind::Module { parent, .. } => format!("\"{}\"", parent),
+        };
+        let has_children = parents.contains(&pos.id);
+        let comma = if i < positioned.len() - 1 { "," } else { "" };
+
+        lines.push(format!(
+            "    \"{}\": {{ type: \"{}\", parent: {}, x: {}, y: {}, hasChildren: {} }}{}",
+            pos.id, node_type, parent_str, pos.x, pos.y, has_children, comma
+        ));
+    }
+    lines.push("  },".to_string());
+
+    // Generate arcs object
+    lines.push("  arcs: {".to_string());
+    for (i, edge) in ir.edges.iter().enumerate() {
+        let arc_id = format!("{}-{}", edge.from, edge.to);
+
+        // Format usages from source_locations
+        let usages: Vec<String> = if edge.source_locations.is_empty() {
+            vec![]
+        } else {
+            let formatted = format_source_locations_by_symbol(&edge.source_locations);
+            formatted
+                .split(TOOLTIP_LINE_SEP)
+                .map(escape_js_string)
+                .collect()
+        };
+
+        let usages_str = if usages.is_empty() {
+            "[]".to_string()
+        } else {
+            format!("[\"{}\"]", usages.join("\", \""))
+        };
+
+        let comma = if i < ir.edges.len() - 1 { "," } else { "" };
+
+        lines.push(format!(
+            "    \"{}\": {{ from: \"{}\", to: \"{}\", usages: {} }}{}",
+            arc_id, edge.from, edge.to, usages_str, comma
+        ));
+    }
+    lines.push("  }".to_string());
+
+    lines.push("};".to_string());
+    lines.join("\n")
+}
+
+/// Escape string for JavaScript (handles quotes and backslashes)
+fn escape_js_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn render_script(
+    config: &RenderConfig,
+    ir: &LayoutIR,
+    positioned: &[PositionedItem],
+    parents: &HashSet<NodeId>,
+) -> String {
+    // Generate STATIC_DATA first (global scope, before IIFE)
+    let static_data = generate_static_data(ir, positioned, parents);
+
     // Module dependencies must be loaded before svg_script.js
     // Order matters: selectors first (no deps), then dom_adapter (uses selectors),
     // then others that may use dom_adapter
@@ -436,7 +515,8 @@ fn render_script(config: &RenderConfig) -> String {
         .replace("__TOOLBAR_HEIGHT__", &TOOLBAR_HEIGHT.to_string());
 
     format!(
-        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
+        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
+        static_data,
         selectors,
         dom_adapter,
         layer_manager,
@@ -1610,7 +1690,8 @@ mod tests {
     fn test_all_js_modules_embedded() {
         // Ensures all JS modules referenced in svg_script.js are embedded in render_script()
         let config = RenderConfig::default();
-        let script = render_script(&config);
+        let ir = LayoutIR::new();
+        let script = render_script(&config, &ir, &[], &HashSet::new());
 
         // Known external modules that svg_script.js depends on
         let required_modules = ["VirtualEdgeLogic"];
@@ -1625,5 +1706,288 @@ mod tests {
                 module
             );
         }
+    }
+
+    // === STATIC_DATA Tests ===
+
+    #[test]
+    fn test_static_data_basic_structure() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "test_crate".into());
+        ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "test_mod".into(),
+        );
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // STATIC_DATA must exist
+        assert!(
+            script.contains("const STATIC_DATA = {"),
+            "Script should contain STATIC_DATA declaration"
+        );
+        // Must have nodes and arcs objects
+        assert!(
+            script.contains("nodes: {"),
+            "STATIC_DATA should have nodes object"
+        );
+        assert!(
+            script.contains("arcs: {"),
+            "STATIC_DATA should have arcs object"
+        );
+    }
+
+    #[test]
+    fn test_static_data_node_properties() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "test_crate".into());
+        ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "test_mod".into(),
+        );
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // Node 0 (crate) should have type "crate", parent null, hasChildren true
+        assert!(script.contains(r#""0": {"#), "Should have node 0");
+        assert!(
+            script.contains(r#"type: "crate""#),
+            "Crate node should have type 'crate'"
+        );
+        assert!(
+            script.contains("parent: null"),
+            "Crate node should have parent null"
+        );
+        assert!(
+            script.contains("hasChildren: true"),
+            "Parent node should have hasChildren: true"
+        );
+
+        // Node 1 (module) should have type "module", parent "0", hasChildren false
+        assert!(script.contains(r#""1": {"#), "Should have node 1");
+        assert!(
+            script.contains(r#"type: "module""#),
+            "Module node should have type 'module'"
+        );
+        assert!(
+            script.contains(r#"parent: "0""#),
+            "Module node should have parent '0'"
+        );
+        assert!(
+            script.contains("hasChildren: false"),
+            "Leaf node should have hasChildren: false"
+        );
+    }
+
+    #[test]
+    fn test_static_data_node_positions() {
+        let mut ir = LayoutIR::new();
+        ir.add_item(ItemKind::Crate, "test_crate".into());
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::new();
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // Node should have x and y coordinates
+        assert!(script.contains("x: "), "Node should have x coordinate");
+        assert!(script.contains("y: "), "Node should have y coordinate");
+    }
+
+    #[test]
+    fn test_static_data_arc_properties() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(
+            a,
+            b,
+            EdgeKind::Downward,
+            vec![SourceLocation {
+                file: PathBuf::from("src/a.rs"),
+                line: 5,
+                symbols: vec!["MyStruct".to_string()],
+            }],
+        );
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // Arc should have from, to, usages
+        assert!(script.contains(r#""1-2": {"#), "Should have arc 1-2");
+        assert!(script.contains(r#"from: "1""#), "Arc should have from");
+        assert!(script.contains(r#"to: "2""#), "Arc should have to");
+        assert!(script.contains("usages: ["), "Arc should have usages array");
+        assert!(script.contains("MyStruct"), "Usages should contain symbol");
+        assert!(
+            script.contains("src/a.rs:5"),
+            "Usages should contain location"
+        );
+    }
+
+    #[test]
+    fn test_static_data_arc_empty_usages() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // Arc without source locations should have empty usages array
+        assert!(
+            script.contains("usages: []"),
+            "Arc without locations should have empty usages array"
+        );
+    }
+
+    #[test]
+    fn test_static_data_valid_js_syntax() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "test".into());
+        ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "mod".into(),
+        );
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // STATIC_DATA should be first (before IIFE) and end with semicolon
+        let static_data_pos = script.find("const STATIC_DATA").unwrap();
+        let iife_pos = script.find("(function()").unwrap_or(usize::MAX);
+
+        assert!(
+            static_data_pos < iife_pos,
+            "STATIC_DATA should appear before IIFE"
+        );
+
+        // Should end with }};
+        assert!(
+            script.contains("};"),
+            "STATIC_DATA should end with semicolon"
+        );
+    }
+
+    #[test]
+    fn test_static_data_empty_ir() {
+        let ir = LayoutIR::new();
+        let config = RenderConfig::default();
+        let positioned: Vec<PositionedItem> = vec![];
+        let parents: HashSet<NodeId> = HashSet::new();
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // Empty IR should produce empty nodes and arcs (multiline format)
+        assert!(
+            script.contains("nodes: {\n  },"),
+            "Empty IR should have empty nodes object"
+        );
+        assert!(
+            script.contains("arcs: {\n  }"),
+            "Empty IR should have empty arcs object"
+        );
+    }
+
+    #[test]
+    fn test_static_data_escapes_quotes() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(
+            a,
+            b,
+            EdgeKind::Downward,
+            vec![SourceLocation {
+                file: PathBuf::from("src/a.rs"),
+                line: 5,
+                symbols: vec!["Test\"Quote".to_string()],
+            }],
+        );
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // Quotes in symbols should be escaped
+        assert!(
+            script.contains(r#"Test\"Quote"#),
+            "Quotes in symbols should be escaped"
+        );
     }
 }
