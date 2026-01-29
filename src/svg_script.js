@@ -816,10 +816,76 @@ if (typeof document !== 'undefined') {
     }
   }
 
+  // --- Collapse helpers ---
+
+  function updateDescendantVisibility(descId, collapsed) {
+    const node = DomAdapter.getNode(descId);
+    const label = node?.nextElementSibling;
+    const toggle = document.querySelector('.collapse-toggle[data-target="' + descId + '"]');
+    if (collapsed) {
+      node?.classList.add('collapsed');
+      label?.classList.add('collapsed');
+      toggle?.classList.add('collapsed');
+    } else {
+      node?.classList.remove('collapsed');
+      label?.classList.remove('collapsed');
+      toggle?.classList.remove('collapsed');
+    }
+    document.querySelectorAll('line[data-child="' + descId + '"]').forEach(line => {
+      if (collapsed) {
+        line.classList.add('collapsed');
+      } else if (!node?.classList.contains('collapsed')) {
+        line.classList.remove('collapsed');
+      }
+    });
+  }
+
+  function hasCollapsedAncestor(descId, excludeNodeId) {
+    let checkId = descId;
+    while (true) {
+      const checkNode = DomAdapter.getNode(checkId);
+      const parentId = checkNode?.dataset.parent;
+      if (!parentId) return false;
+      if (AppState.isCollapsed(appState, parentId) && parentId !== excludeNodeId) {
+        return true;
+      }
+      checkId = parentId;
+    }
+  }
+
+  function updateParentNodeUI(nodeId, collapsed) {
+    const toggleIcon = document.querySelector('.collapse-toggle[data-target="' + nodeId + '"]');
+    if (toggleIcon) {
+      toggleIcon.textContent = collapsed ? '+' : '−';
+    }
+    const countLabel = document.getElementById('count-' + nodeId);
+    if (!countLabel) return;
+    const nodeRect = DomAdapter.getNode(nodeId);
+    if (!nodeRect) return;
+    if (!nodeRect.hasAttribute('data-original-width')) {
+      nodeRect.setAttribute('data-original-width', nodeRect.getAttribute('width'));
+    }
+    if (collapsed) {
+      countLabel.textContent = ' (+' + countDescendants(nodeId) + ')';
+      const labelText = countLabel.parentElement;
+      if (labelText) {
+        const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
+        const padding = 20;
+        const neededWidth = textWidth + padding;
+        const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
+        nodeRect.setAttribute('width', Math.max(originalWidth, neededWidth));
+      }
+    } else {
+      countLabel.textContent = '';
+      const originalWidth = nodeRect.getAttribute('data-original-width');
+      if (originalWidth) {
+        nodeRect.setAttribute('width', originalWidth);
+      }
+    }
+  }
+
   // Toggle collapse state
   function toggleCollapse(nodeId) {
-    // Always clear selection on collapse/expand - shadows would need recalculation
-    // and the visual context changes significantly
     if (AppState.getPinned(appState)) {
       AppState.clearPinned(appState);
       clearHighlights();
@@ -827,172 +893,37 @@ if (typeof document !== 'undefined') {
 
     const collapsed = AppState.toggleCollapsed(appState, nodeId);
 
-    const descendants = getDescendants(nodeId);
-
-    // Toggle visibility of descendants
-    descendants.forEach(descId => {
-      const node = DomAdapter.getNode(descId);
-      const label = node?.nextElementSibling;
-      const toggle = document.querySelector('.collapse-toggle[data-target="' + descId + '"]');
-
-      if (collapsed) {
-        node?.classList.add('collapsed');
-        label?.classList.add('collapsed');
-        toggle?.classList.add('collapsed');
-      } else {
-        // Only show if no ancestor is collapsed
-        let ancestorCollapsed = false;
-        let checkId = descId;
-        while (true) {
-          const checkNode = DomAdapter.getNode(checkId);
-          const parentId = checkNode?.dataset.parent;
-          if (!parentId) break;
-          if (AppState.isCollapsed(appState, parentId) && parentId !== nodeId) {
-            ancestorCollapsed = true;
-            break;
-          }
-          checkId = parentId;
-        }
-        if (!ancestorCollapsed) {
-          node?.classList.remove('collapsed');
-          label?.classList.remove('collapsed');
-          toggle?.classList.remove('collapsed');
-        }
+    getDescendants(nodeId).forEach(descId => {
+      if (collapsed || !hasCollapsedAncestor(descId, nodeId)) {
+        updateDescendantVisibility(descId, collapsed);
       }
-
-      // Hide/show tree lines for descendants
-      document.querySelectorAll('line[data-child="' + descId + '"]').forEach(line => {
-        if (collapsed) {
-          line.classList.add('collapsed');
-        } else if (!DomAdapter.getNode(descId)?.classList.contains('collapsed')) {
-          line.classList.remove('collapsed');
-        }
-      });
     });
 
-    // Update toggle icon
-    const toggleIcon = document.querySelector('.collapse-toggle[data-target="' + nodeId + '"]');
-    if (toggleIcon) {
-      toggleIcon.textContent = collapsed ? '+' : '−';
-    }
-
-    // Update child count label and adjust node width
-    const countLabel = document.getElementById('count-' + nodeId);
-    if (countLabel) {
-      const nodeRect = DomAdapter.getNode(nodeId);
-      if (nodeRect) {
-        // Store original width on first collapse
-        if (!nodeRect.hasAttribute('data-original-width')) {
-          nodeRect.setAttribute('data-original-width', nodeRect.getAttribute('width'));
-        }
-
-        if (collapsed) {
-          const count = countDescendants(nodeId);
-          countLabel.textContent = ' (+' + count + ')';
-
-          // Expand width if needed to fit count text (use TextMetrics, no DOM read)
-          const labelText = countLabel.parentElement;
-          if (labelText) {
-            const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
-            const padding = 20;
-            const neededWidth = textWidth + padding;
-            const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
-            // Use max of original width and needed width
-            nodeRect.setAttribute('width', Math.max(originalWidth, neededWidth));
-          }
-        } else {
-          countLabel.textContent = '';
-          // Restore original width
-          const originalWidth = nodeRect.getAttribute('data-original-width');
-          if (originalWidth) {
-            nodeRect.setAttribute('width', originalWidth);
-          }
-        }
-      }
-    }
-
+    updateParentNodeUI(nodeId, collapsed);
     relayout();
   }
 
   // Toggle collapse/expand all parent nodes
   function toggleCollapseAll() {
-    // Get parent node IDs from StaticData instead of DOM query
+    if (AppState.getPinned(appState)) {
+      AppState.clearPinned(appState);
+      clearHighlights();
+    }
+
     const parentNodeIds = StaticData.getAllNodeIds().filter(id => StaticData.hasChildren(id));
     const allExpanded = parentNodeIds.every(id => !AppState.isCollapsed(appState, id));
+    const collapsed = allExpanded;
 
     parentNodeIds.forEach(nodeId => {
-      if (allExpanded) {
-        // Collapse all
-        AppState.setCollapsed(appState, nodeId, true);
-        getDescendants(nodeId).forEach(descId => {
-          const descNode = DomAdapter.getNode(descId);
-          const label = descNode?.nextElementSibling;
-          const toggle = document.querySelector('.collapse-toggle[data-target="' + descId + '"]');
-          descNode?.classList.add('collapsed');
-          label?.classList.add('collapsed');
-          toggle?.classList.add('collapsed');
-          document.querySelectorAll('line[data-child="' + descId + '"]').forEach(line => {
-            line.classList.add('collapsed');
-          });
-        });
-        // Update toggle icon
-        const toggleIcon = document.querySelector('.collapse-toggle[data-target="' + nodeId + '"]');
-        if (toggleIcon) toggleIcon.textContent = '+';
-        // Update child count and adjust node width
-        const countLabel = document.getElementById('count-' + nodeId);
-        if (countLabel) {
-          const nodeRect = DomAdapter.getNode(nodeId);
-          if (nodeRect) {
-            if (!nodeRect.hasAttribute('data-original-width')) {
-              nodeRect.setAttribute('data-original-width', nodeRect.getAttribute('width'));
-            }
-            countLabel.textContent = ' (+' + countDescendants(nodeId) + ')';
-            // Expand width if needed (use TextMetrics, no DOM read)
-            const labelText = countLabel.parentElement;
-            if (labelText) {
-              const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
-              const padding = 20;
-              const neededWidth = textWidth + padding;
-              const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
-              nodeRect.setAttribute('width', Math.max(originalWidth, neededWidth));
-            }
-          }
-        }
-      } else {
-        // Expand all
-        AppState.setCollapsed(appState, nodeId, false);
-        getDescendants(nodeId).forEach(descId => {
-          const descNode = DomAdapter.getNode(descId);
-          const label = descNode?.nextElementSibling;
-          const toggle = document.querySelector('.collapse-toggle[data-target="' + descId + '"]');
-          descNode?.classList.remove('collapsed');
-          label?.classList.remove('collapsed');
-          toggle?.classList.remove('collapsed');
-          document.querySelectorAll('line[data-child="' + descId + '"]').forEach(line => {
-            line.classList.remove('collapsed');
-          });
-        });
-        // Update toggle icon
-        const toggleIcon = document.querySelector('.collapse-toggle[data-target="' + nodeId + '"]');
-        if (toggleIcon) toggleIcon.textContent = '−';
-        // Clear child count and restore original width
-        const countLabel = document.getElementById('count-' + nodeId);
-        if (countLabel) {
-          countLabel.textContent = '';
-          const nodeRect = DomAdapter.getNode(nodeId);
-          if (nodeRect) {
-            const originalWidth = nodeRect.getAttribute('data-original-width');
-            if (originalWidth) {
-              nodeRect.setAttribute('width', originalWidth);
-            }
-          }
-        }
-      }
+      AppState.setCollapsed(appState, nodeId, collapsed);
+      getDescendants(nodeId).forEach(descId => {
+        updateDescendantVisibility(descId, collapsed);
+      });
+      updateParentNodeUI(nodeId, collapsed);
     });
 
-    // Update button label
     const label = document.getElementById('collapse-toggle-label');
-    if (label) label.textContent = allExpanded ? 'Expand All' : 'Collapse All';
+    if (label) label.textContent = collapsed ? 'Expand All' : 'Collapse All';
 
     relayout();
   }
