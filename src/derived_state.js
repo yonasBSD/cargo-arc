@@ -115,6 +115,56 @@ const DerivedState = {
       current = parentMap.get(current);
     }
     return 'downward';
+  },
+
+  /**
+   * Compute current positions for all visible nodes based on collapse state.
+   * Replaces extractNodePositions() - no DOM reads needed.
+   * @param {Set<string>} collapsed - Set of collapsed node IDs
+   * @param {Object} staticData - StaticData accessor
+   * @param {number} margin - Top/left margin
+   * @param {number} toolbarHeight - Height of toolbar
+   * @param {number} rowHeight - Height per row
+   * @returns {Map<string, {x: number, y: number, width: number, height: number}>}
+   */
+  computeCurrentPositions(collapsed, staticData, margin, toolbarHeight, rowHeight) {
+    const visibleNodes = this.deriveNodeVisibility(collapsed, staticData);
+    const positions = new Map();
+
+    // Sort visible nodes by original Y position
+    const sortedIds = [...visibleNodes].sort((a, b) => {
+      const posA = staticData.getOriginalPosition(a);
+      const posB = staticData.getOriginalPosition(b);
+      return posA.y - posB.y;
+    });
+
+    // Compute new Y positions based on visible order
+    let currentY = margin + toolbarHeight;
+    for (const nodeId of sortedIds) {
+      const orig = staticData.getOriginalPosition(nodeId);
+      positions.set(nodeId, {
+        x: orig.x,
+        y: currentY,
+        width: orig.width,
+        height: orig.height
+      });
+      currentY += rowHeight;
+    }
+
+    return positions;
+  },
+
+  /**
+   * Compute the rightmost X coordinate from positions.
+   * @param {Map<string, {x: number, width: number}>} positions
+   * @returns {number}
+   */
+  computeMaxRight(positions) {
+    let maxRight = 0;
+    for (const pos of positions.values()) {
+      maxRight = Math.max(maxRight, pos.x + pos.width);
+    }
+    return maxRight;
   }
 };
 

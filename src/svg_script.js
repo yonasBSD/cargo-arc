@@ -93,6 +93,27 @@ const ArcLogic = {
     return MIN + (MAX - MIN) * Math.log(count) / Math.log(CAP);
   },
 
+  /**
+   * Estimate path length from SVG path string (no DOM read).
+   * Parses S-curve path format: M fromX,fromY Q ctrlX,fromY ctrlX,midY Q ctrlX,toY toX,toY
+   * @param {string} pathD - SVG path 'd' attribute value
+   * @returns {number} - Estimated path length in pixels
+   */
+  estimatePathLength(pathD) {
+    if (!pathD) return 100;
+
+    // Parse: M x,y Q cx,cy cx,my Q cx,ty tx,ty
+    const coords = pathD.match(/-?\d+\.?\d*/g);
+    if (!coords || coords.length < 10) return 100;
+
+    const fromY = parseFloat(coords[1]);
+    const toY = parseFloat(coords[9]);
+
+    // S-Bezier approximation: vertical distance + horizontal curve component
+    const height = Math.abs(toY - fromY) || 100;
+    return height + 50; // Base for horizontal curve extension
+  },
+
   sortAndGroupLocations(locStrings) {
     const symbolRegex = /^(\S+)\s+←\s+(.+)$/;
     const bySymbol = {};  // symbol -> [locations]
@@ -233,12 +254,9 @@ if (typeof document !== 'undefined') {
       textEl.appendChild(tspan);
     });
 
-    // Measure width
-    svg.appendChild(textEl);
-    const bbox = textEl.getBBox();
-    svg.removeChild(textEl);
-
-    const labelWidth = bbox.width + padding * 2;
+    // Estimate width using TextMetrics (no DOM read needed)
+    const textWidth = TextMetrics.estimateMultilineWidth(text, 11);
+    const labelWidth = textWidth + padding * 2;
     const labelHeight = lines.length * lineHeight + padding;
 
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -345,7 +363,8 @@ if (typeof document !== 'undefined') {
     shadow.removeAttribute('id');
 
     // Use provided original width (prevents shadow growth on repeated hover)
-    const pathLength = arc.getTotalLength?.() || 100;
+    // Estimate path length from path data (no DOM read)
+    const pathLength = ArcLogic.estimatePathLength(arc.getAttribute('d'));
     const shadowData = HighlightLogic.calculateShadowData(originalArcWidth, pathLength);
 
     shadow.style.strokeWidth = shadowData.shadowWidth + 'px';
@@ -627,22 +646,22 @@ if (typeof document !== 'undefined') {
   function relayout() {
     let currentY = MARGIN + TOOLBAR_HEIGHT;
 
-    // Get all nodes sorted by original Y position
-    const items = [...document.querySelectorAll('.crate, .module')]
+    // Get all node IDs sorted by original Y position (no DOM query for list)
+    const sortedIds = StaticData.getAllNodeIds()
       .sort((a, b) => {
-        const aId = a.id.replace('node-', '');
-        const bId = b.id.replace('node-', '');
-        const posA = StaticData.getOriginalPosition(aId);
-        const posB = StaticData.getOriginalPosition(bId);
+        const posA = StaticData.getOriginalPosition(a);
+        const posB = StaticData.getOriginalPosition(b);
         return posA.y - posB.y;
       });
 
-    items.forEach(node => {
+    sortedIds.forEach(nodeId => {
+      const node = DomAdapter.getNode(nodeId);
+      if (!node) return;
       if (node.classList.contains('collapsed')) return;
       if (node.classList.contains('hidden-by-filter')) return;
 
-      const nodeId = node.id.replace('node-', '');
-      const height = parseFloat(node.getAttribute('height'));
+      // Get height from StaticData (no DOM read)
+      const height = StaticData.getOriginalPosition(nodeId).height;
 
       // Update rect position
       node.setAttribute('y', currentY);
@@ -701,22 +720,12 @@ if (typeof document !== 'undefined') {
     }
   }
 
-  // Helper: Calculate arc path between two DOM nodes (uses ArcLogic)
-  function calculateArcPathFromNodes(fromNode, toNode, yOffset) {
-    const fromX = parseFloat(fromNode.getAttribute('x')) + parseFloat(fromNode.getAttribute('width'));
-    const fromY = parseFloat(fromNode.getAttribute('y')) + parseFloat(fromNode.getAttribute('height')) / 2 + yOffset;
-    const toX = parseFloat(toNode.getAttribute('x')) + parseFloat(toNode.getAttribute('width'));
-    const toY = parseFloat(toNode.getAttribute('y')) + parseFloat(toNode.getAttribute('height')) / 2 - yOffset;
-
-    // Find rightmost visible node for arc positioning
-    let maxRight = 0;
-    document.querySelectorAll('.crate, .module').forEach(n => {
-      if (!n.classList.contains('collapsed')) {
-        const right = parseFloat(n.getAttribute('x')) + parseFloat(n.getAttribute('width'));
-        if (right > maxRight) maxRight = right;
-      }
-    });
-
+  // Helper: Calculate arc path from position objects (no DOM read)
+  function calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight) {
+    const fromX = fromPos.x + fromPos.width;
+    const fromY = fromPos.y + fromPos.height / 2 + yOffset;
+    const toX = toPos.x + toPos.width;
+    const toY = toPos.y + toPos.height / 2 - yOffset;
     return ArcLogic.calculateArcPath(fromX, fromY, toX, toY, maxRight, ROW_HEIGHT);
   }
 
@@ -735,37 +744,22 @@ if (typeof document !== 'undefined') {
       const fromIsHidden = !visibleNodes.has(fromId);
       const toIsHidden = !visibleNodes.has(toId);
 
+      const arcId = hitarea.dataset.arcId;
       edges.push({
         hitarea,
-        arcId: hitarea.dataset.arcId,
+        arcId,
         fromId,
         toId,
         fromNode,
         toNode,
         fromHidden: fromIsHidden,
         toHidden: toIsHidden,
-        sourceLocations: hitarea.dataset.sourceLocations,
-        direction: hitarea.dataset.direction
+        sourceLocations: StaticData.getFormattedUsages(arcId),
+        // Compute direction from hierarchy (no DOM read)
+        direction: DerivedState._determineDirection(fromId, toId, parentMap)
       });
     });
     return edges;
-  }
-
-  // Helper: Extract node positions from DOM to Map
-  function extractNodePositions(nodeIds) {
-    const positions = new Map();
-    for (const nodeId of nodeIds) {
-      const node = DomAdapter.getNode(nodeId);
-      if (node) {
-        positions.set(nodeId, {
-          x: parseFloat(node.getAttribute('x')),
-          y: parseFloat(node.getAttribute('y')),
-          width: parseFloat(node.getAttribute('width')),
-          height: parseFloat(node.getAttribute('height'))
-        });
-      }
-    }
-    return positions;
   }
 
   // Recalculate and show virtual edges for collapsed nodes
@@ -779,8 +773,12 @@ if (typeof document !== 'undefined') {
       arrow.style.display = '';
     });
 
-    // === Derive visibility from state (via DerivedState) ===
+    // === Derive visibility and positions from state (no DOM read for positions) ===
     const visibleNodes = DerivedState.deriveNodeVisibility(appState.collapsed, StaticData);
+    const currentPositions = DerivedState.computeCurrentPositions(
+      appState.collapsed, StaticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT
+    );
+    const maxRight = DerivedState.computeMaxRight(currentPositions);
 
     // === Extract edge data from DOM ===
     const hitareas = document.querySelectorAll('.arc-hitarea');
@@ -788,7 +786,7 @@ if (typeof document !== 'undefined') {
 
     // === Process edges: hide original elements, update visible paths ===
     edgeData.forEach(edge => {
-      const { hitarea, arcId, fromId, toId, fromNode, toNode, fromHidden, toHidden } = edge;
+      const { hitarea, arcId, fromId, toId, fromHidden, toHidden } = edge;
 
       if (window.DEBUG_ARCS) {
         console.log(`Arc ${arcId}: from=${fromId}(${fromHidden ? 'hidden' : 'visible'}), to=${toId}(${toHidden ? 'hidden' : 'visible'})`);
@@ -801,42 +799,31 @@ if (typeof document !== 'undefined') {
         if (visibleArc) visibleArc.style.display = 'none';
         DomAdapter.getArrows(fromId + '-' + toId)
           .forEach(arr => arr.style.display = 'none');
-      } else if (fromNode && toNode) {
-        // Update visible arc paths
-        const arc = calculateArcPathFromNodes(fromNode, toNode, 3);
-        hitarea.setAttribute('d', arc.path);
-        const visibleArc = DomAdapter.getVisibleArc(arcId);
-        if (visibleArc) visibleArc.setAttribute('d', arc.path);
+      } else {
+        // Update visible arc paths using computed positions (no DOM read)
+        const fromPos = currentPositions.get(fromId);
+        const toPos = currentPositions.get(toId);
+        if (fromPos && toPos) {
+          const arc = calculateArcPathFromPositions(fromPos, toPos, 3, maxRight);
+          hitarea.setAttribute('d', arc.path);
+          const visibleArc = DomAdapter.getVisibleArc(arcId);
+          if (visibleArc) visibleArc.setAttribute('d', arc.path);
 
-        const strokeWidth = visibleArc ? parseFloat(visibleArc.style.strokeWidth) || 0.5 : 0.5;
-        const scale = strokeWidth / 1.5;
-        // Update ALL arrow positions (even hidden ones) so they have correct position when shown
-        DomAdapter.getArrows(fromId + '-' + toId).forEach(arrow => {
-          arrow.setAttribute('points', ArrowLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
-        });
+          const strokeWidth = visibleArc ? parseFloat(visibleArc.style.strokeWidth) || 0.5 : 0.5;
+          const scale = strokeWidth / 1.5;
+          // Update ALL arrow positions (even hidden ones) so they have correct position when shown
+          DomAdapter.getArrows(fromId + '-' + toId).forEach(arrow => {
+            arrow.setAttribute('points', ArrowLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
+          });
+        }
       }
     });
 
     // === Pure logic: aggregate hidden edges ===
     const virtualEdges = VirtualEdgeLogic.aggregateHiddenEdges(edgeData, getVisibleAncestor);
 
-    // === Extract node positions for virtual edge endpoints ===
-    const nodeIds = new Set();
-    virtualEdges.forEach((_, key) => {
-      const [fromId, toId] = key.split('-');
-      nodeIds.add(fromId);
-      nodeIds.add(toId);
-    });
-    const nodePositions = extractNodePositions(nodeIds);
-
-    // === Find maxRight for arc positioning ===
-    let maxRight = 0;
-    document.querySelectorAll('.crate, .module').forEach(n => {
-      if (!n.classList.contains('collapsed')) {
-        const right = parseFloat(n.getAttribute('x')) + parseFloat(n.getAttribute('width'));
-        if (right > maxRight) maxRight = right;
-      }
-    });
+    // === Use computed positions for virtual edge endpoints (no DOM read) ===
+    const nodePositions = currentPositions;
 
     // === Pure logic: prepare render data ===
     const mergedEdges = VirtualEdgeLogic.prepareVirtualEdgeData(
@@ -1100,12 +1087,12 @@ if (typeof document !== 'undefined') {
           const count = countDescendants(nodeId);
           countLabel.textContent = ' (+' + count + ')';
 
-          // Expand width if needed to fit count text
+          // Expand width if needed to fit count text (use TextMetrics, no DOM read)
           const labelText = countLabel.parentElement;
           if (labelText) {
-            const textBBox = labelText.getBBox();
+            const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
             const padding = 20;
-            const neededWidth = textBBox.width + padding;
+            const neededWidth = textWidth + padding;
             const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
             // Use max of original width and needed width
             nodeRect.setAttribute('width', Math.max(originalWidth, neededWidth));
@@ -1157,11 +1144,12 @@ if (typeof document !== 'undefined') {
               nodeRect.setAttribute('data-original-width', nodeRect.getAttribute('width'));
             }
             countLabel.textContent = ' (+' + countDescendants(nodeId) + ')';
+            // Expand width if needed (use TextMetrics, no DOM read)
             const labelText = countLabel.parentElement;
             if (labelText) {
-              const textBBox = labelText.getBBox();
+              const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
               const padding = 20;
-              const neededWidth = textBBox.width + padding;
+              const neededWidth = textWidth + padding;
               const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
               nodeRect.setAttribute('width', Math.max(originalWidth, neededWidth));
             }
@@ -1257,8 +1245,10 @@ if (typeof document !== 'undefined') {
   window.addEventListener('scroll', updateToolbarPosition);
 
   // === Event handlers ===
-  document.querySelectorAll('.crate, .module').forEach(node => {
-    const nodeId = node.id.replace('node-', '');
+  // Iterate via StaticData instead of DOM query
+  StaticData.getAllNodeIds().forEach(nodeId => {
+    const node = DomAdapter.getNode(nodeId);
+    if (!node) return;
 
     node.addEventListener('click', e => {
       e.stopPropagation();
@@ -1269,7 +1259,7 @@ if (typeof document !== 'undefined') {
     node.addEventListener('mouseleave', handleMouseLeave);
 
     // Double-click to toggle collapse (only for parents)
-    if (node.dataset.hasChildren === 'true') {
+    if (StaticData.hasChildren(nodeId)) {
       node.addEventListener('dblclick', e => {
         e.stopPropagation();
         toggleCollapse(nodeId);
@@ -1317,8 +1307,8 @@ if (typeof document !== 'undefined') {
     hitarea.addEventListener('mousemove', (e) => {
       // When pinned, only show tooltip on highlighted arcs
       const pinned = AppState.getPinned(appState);
+      const arcId = hitarea.dataset.arcId;
       if (pinned) {
-        const arcId = hitarea.dataset.arcId;
         const isHighlighted = pinned.type === 'edge'
           ? pinned.id === arcId
           : (hitarea.dataset.from === pinned.id || hitarea.dataset.to === pinned.id);
@@ -1327,7 +1317,8 @@ if (typeof document !== 'undefined') {
           return;
         }
       }
-      const locs = hitarea.dataset.sourceLocations;
+      // Use StaticData for regular arc tooltips (no DOM read)
+      const locs = StaticData.getFormattedUsages(arcId);
       if (locs) {
         const svg = document.querySelector('svg');
         const rect = svg.getBoundingClientRect();

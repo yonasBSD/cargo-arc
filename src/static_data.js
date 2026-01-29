@@ -31,13 +31,13 @@ const StaticData = {
   },
 
   /**
-   * Get original position for node (from initial layout)
+   * Get original position and dimensions for node (from initial layout)
    * @param {string} nodeId
-   * @returns {{ x: number, y: number }|null}
+   * @returns {{ x: number, y: number, width: number, height: number }|null}
    */
   getOriginalPosition(nodeId) {
     const node = STATIC_DATA.nodes[nodeId];
-    return node ? { x: node.x, y: node.y } : null;
+    return node ? { x: node.x, y: node.y, width: node.width, height: node.height } : null;
   },
 
   /**
@@ -47,6 +47,24 @@ const StaticData = {
    */
   getArcWeight(arcId) {
     return STATIC_DATA.arcs[arcId]?.usages.length ?? 0;
+  },
+
+  /**
+   * Get arc usages (source locations array)
+   * @param {string} arcId
+   * @returns {string[]}
+   */
+  getArcUsages(arcId) {
+    return STATIC_DATA.arcs[arcId]?.usages ?? [];
+  },
+
+  /**
+   * Get formatted usages as pipe-separated string (for tooltips)
+   * @param {string} arcId
+   * @returns {string}
+   */
+  getFormattedUsages(arcId) {
+    return this.getArcUsages(arcId).join('|');
   },
 
   /**

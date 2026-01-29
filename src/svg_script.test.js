@@ -111,6 +111,38 @@ describe("ArcLogic", () => {
     });
   });
 
+  describe("estimatePathLength", () => {
+    test("returns 100 for empty/null path", () => {
+      expect(ArcLogic.estimatePathLength("")).toBe(100);
+      expect(ArcLogic.estimatePathLength(null)).toBe(100);
+      expect(ArcLogic.estimatePathLength(undefined)).toBe(100);
+    });
+
+    test("returns 100 for invalid path with insufficient coordinates", () => {
+      expect(ArcLogic.estimatePathLength("M 0,0")).toBe(100);
+      expect(ArcLogic.estimatePathLength("invalid")).toBe(100);
+    });
+
+    test("estimates length from valid S-curve path", () => {
+      // Path: M fromX,fromY Q ctrlX,fromY ctrlX,midY Q ctrlX,toY toX,toY
+      // fromY=50, toY=150 -> height=100, result=100+50=150
+      const path = "M 100,50 Q 300,50 300,100 Q 300,150 100,150";
+      expect(ArcLogic.estimatePathLength(path)).toBe(150);
+    });
+
+    test("handles large vertical distance", () => {
+      // fromY=0, toY=500 -> height=500, result=500+50=550
+      const path = "M 100,0 Q 400,0 400,250 Q 400,500 100,500";
+      expect(ArcLogic.estimatePathLength(path)).toBe(550);
+    });
+
+    test("handles negative coordinates", () => {
+      // fromY=-50, toY=50 -> height=100, result=100+50=150
+      const path = "M 100,-50 Q 300,-50 300,0 Q 300,50 100,50";
+      expect(ArcLogic.estimatePathLength(path)).toBe(150);
+    });
+  });
+
   describe("sortAndGroupLocations", () => {
     test("returns empty string for empty input", () => {
       expect(ArcLogic.sortAndGroupLocations([])).toBe("");

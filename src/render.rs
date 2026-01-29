@@ -442,8 +442,8 @@ fn generate_static_data(
         let comma = if i < positioned.len() - 1 { "," } else { "" };
 
         lines.push(format!(
-            "    \"{}\": {{ type: \"{}\", parent: {}, x: {}, y: {}, hasChildren: {} }}{}",
-            pos.id, node_type, parent_str, pos.x, pos.y, has_children, comma
+            "    \"{}\": {{ type: \"{}\", parent: {}, x: {}, y: {}, width: {}, height: {}, hasChildren: {} }}{}",
+            pos.id, node_type, parent_str, pos.x, pos.y, pos.width, pos.height, has_children, comma
         ));
     }
     lines.push("  },".to_string());
@@ -513,6 +513,7 @@ fn render_script(
     let tree_logic = include_str!("tree_logic.js");
     let highlight_logic = include_str!("highlight_logic.js");
     let virtual_edge_logic = include_str!("virtual_edge_logic.js");
+    let text_metrics = include_str!("text_metrics.js");
 
     let svg_script = include_str!("svg_script.js")
         .replace("__ROW_HEIGHT__", &config.row_height.to_string())
@@ -520,7 +521,7 @@ fn render_script(
         .replace("__TOOLBAR_HEIGHT__", &TOOLBAR_HEIGHT.to_string());
 
     format!(
-        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
+        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
         static_data,
         static_data_js,
         app_state,
@@ -531,6 +532,7 @@ fn render_script(
         tree_logic,
         highlight_logic,
         virtual_edge_logic,
+        text_metrics,
         svg_script
     )
 }

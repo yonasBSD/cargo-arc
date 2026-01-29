@@ -18,12 +18,12 @@ import { TreeLogic } from "./tree_logic.js";
 
 const TEST_STATIC_DATA = {
   nodes: {
-    crate: { type: "crate", parent: null, x: 0, y: 0, hasChildren: true },
-    mod_a: { type: "module", parent: "crate", x: 20, y: 50, hasChildren: true },
-    mod_b: { type: "module", parent: "crate", x: 20, y: 150, hasChildren: true },
-    fn_1: { type: "function", parent: "mod_a", x: 40, y: 60, hasChildren: false },
-    fn_2: { type: "function", parent: "mod_a", x: 40, y: 80, hasChildren: false },
-    fn_3: { type: "function", parent: "mod_b", x: 40, y: 160, hasChildren: false }
+    crate: { type: "crate", parent: null, x: 0, y: 0, width: 100, height: 24, hasChildren: true },
+    mod_a: { type: "module", parent: "crate", x: 20, y: 50, width: 100, height: 20, hasChildren: true },
+    mod_b: { type: "module", parent: "crate", x: 20, y: 150, width: 100, height: 20, hasChildren: true },
+    fn_1: { type: "function", parent: "mod_a", x: 40, y: 60, width: 100, height: 20, hasChildren: false },
+    fn_2: { type: "function", parent: "mod_a", x: 40, y: 80, width: 100, height: 20, hasChildren: false },
+    fn_3: { type: "function", parent: "mod_b", x: 40, y: 160, width: 100, height: 20, hasChildren: false }
   },
   arcs: {
     "fn_1-fn_2": { from: "fn_1", to: "fn_2", usages: ["mod_a.rs:10"] },
@@ -38,6 +38,10 @@ function createMockStaticData(data = TEST_STATIC_DATA) {
     getNode: (id) => data.nodes[id],
     getArc: (id) => data.arcs[id],
     getParent: (nodeId) => data.nodes[nodeId]?.parent ?? null,
+    getOriginalPosition: (nodeId) => {
+      const node = data.nodes[nodeId];
+      return node ? { x: node.x, y: node.y, width: node.width, height: node.height } : null;
+    },
     getAllNodeIds: () => Object.keys(data.nodes),
     getAllArcIds: () => Object.keys(data.arcs),
     buildParentMap: () => {
@@ -234,6 +238,86 @@ describe("DerivedState", () => {
       const result = DerivedState.deriveArcVisibility(visibleNodes, staticData);
 
       expect(result.size).toBe(0);
+    });
+  });
+
+  describe("computeCurrentPositions", () => {
+    const MARGIN = 20;
+    const TOOLBAR_HEIGHT = 40;
+    const ROW_HEIGHT = 30;
+
+    test("returns positions for all visible nodes", () => {
+      const collapsed = new Set();
+      const result = DerivedState.computeCurrentPositions(
+        collapsed, staticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT
+      );
+
+      expect(result.size).toBe(6); // All nodes visible
+      expect(result.has("crate")).toBe(true);
+      expect(result.has("fn_1")).toBe(true);
+    });
+
+    test("positions start at margin + toolbar height", () => {
+      const collapsed = new Set();
+      const result = DerivedState.computeCurrentPositions(
+        collapsed, staticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT
+      );
+
+      // First node should be at y = 20 + 40 = 60
+      const firstY = Math.min(...[...result.values()].map(p => p.y));
+      expect(firstY).toBe(60);
+    });
+
+    test("positions are spaced by row height", () => {
+      const collapsed = new Set();
+      const result = DerivedState.computeCurrentPositions(
+        collapsed, staticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT
+      );
+
+      const yValues = [...result.values()].map(p => p.y).sort((a, b) => a - b);
+      // Check spacing between consecutive nodes
+      for (let i = 1; i < yValues.length; i++) {
+        expect(yValues[i] - yValues[i - 1]).toBe(ROW_HEIGHT);
+      }
+    });
+
+    test("collapsed children are not included", () => {
+      const collapsed = new Set(["mod_a"]);
+      const result = DerivedState.computeCurrentPositions(
+        collapsed, staticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT
+      );
+
+      expect(result.has("mod_a")).toBe(true); // Parent visible
+      expect(result.has("fn_1")).toBe(false); // Child hidden
+      expect(result.has("fn_2")).toBe(false); // Child hidden
+    });
+
+    test("preserves original x coordinate and dimensions", () => {
+      const collapsed = new Set();
+      const result = DerivedState.computeCurrentPositions(
+        collapsed, staticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT
+      );
+
+      const modA = result.get("mod_a");
+      expect(modA.x).toBe(20); // Original x
+      expect(modA.width).toBe(100);
+      expect(modA.height).toBe(20);
+    });
+  });
+
+  describe("computeMaxRight", () => {
+    test("returns max x + width", () => {
+      const positions = new Map([
+        ["a", { x: 10, width: 50 }],
+        ["b", { x: 30, width: 80 }],
+        ["c", { x: 5, width: 20 }]
+      ]);
+
+      expect(DerivedState.computeMaxRight(positions)).toBe(110); // 30 + 80
+    });
+
+    test("returns 0 for empty positions", () => {
+      expect(DerivedState.computeMaxRight(new Map())).toBe(0);
     });
   });
 });

@@ -4,10 +4,10 @@ import { ArcLogic } from "./svg_script.js";
 // Mock STATIC_DATA for tests
 const TEST_STATIC_DATA = {
   nodes: {
-    crate: { type: "crate", parent: null, x: 0, y: 0, hasChildren: true },
-    mod_a: { type: "module", parent: "crate", x: 20, y: 50, hasChildren: true },
-    fn_1: { type: "function", parent: "mod_a", x: 40, y: 60, hasChildren: false },
-    fn_2: { type: "function", parent: "mod_a", x: 40, y: 80, hasChildren: false }
+    crate: { type: "crate", parent: null, x: 0, y: 0, width: 100, height: 24, hasChildren: true },
+    mod_a: { type: "module", parent: "crate", x: 20, y: 50, width: 100, height: 20, hasChildren: true },
+    fn_1: { type: "function", parent: "mod_a", x: 40, y: 60, width: 100, height: 20, hasChildren: false },
+    fn_2: { type: "function", parent: "mod_a", x: 40, y: 80, width: 100, height: 20, hasChildren: false }
   },
   arcs: {
     "fn_1-fn_2": { from: "fn_1", to: "fn_2", usages: ["mod_a.rs:10"] },
@@ -76,6 +76,55 @@ describe("StaticData", () => {
       const ids = StaticData.getAllArcIds();
       expect(ids).toContain("fn_1-fn_2");
       expect(ids).toContain("mod_a-crate");
+    });
+  });
+
+  describe("getOriginalPosition", () => {
+    test("returns position with x, y, width, height", () => {
+      const pos = StaticData.getOriginalPosition("crate");
+      expect(pos).toEqual({ x: 0, y: 0, width: 100, height: 24 });
+    });
+
+    test("returns null for non-existent node", () => {
+      expect(StaticData.getOriginalPosition("nonexistent")).toBeNull();
+    });
+
+    test("returns correct dimensions for module", () => {
+      const pos = StaticData.getOriginalPosition("mod_a");
+      expect(pos.width).toBe(100);
+      expect(pos.height).toBe(20);
+    });
+  });
+
+  describe("getArcUsages", () => {
+    test("returns usages array for arc with 1 usage", () => {
+      const usages = StaticData.getArcUsages("fn_1-fn_2");
+      expect(usages).toEqual(["mod_a.rs:10"]);
+    });
+
+    test("returns usages array for arc with multiple usages", () => {
+      const usages = StaticData.getArcUsages("mod_a-crate");
+      expect(usages).toHaveLength(3);
+      expect(usages).toContain("lib.rs:5");
+    });
+
+    test("returns empty array for non-existent arc", () => {
+      expect(StaticData.getArcUsages("nonexistent")).toEqual([]);
+    });
+  });
+
+  describe("getFormattedUsages", () => {
+    test("returns pipe-separated string for single usage", () => {
+      expect(StaticData.getFormattedUsages("fn_1-fn_2")).toBe("mod_a.rs:10");
+    });
+
+    test("returns pipe-separated string for multiple usages", () => {
+      const result = StaticData.getFormattedUsages("mod_a-crate");
+      expect(result).toBe("lib.rs:5|lib.rs:10|lib.rs:15");
+    });
+
+    test("returns empty string for non-existent arc", () => {
+      expect(StaticData.getFormattedUsages("nonexistent")).toBe("");
     });
   });
 });
