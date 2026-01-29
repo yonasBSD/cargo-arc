@@ -183,11 +183,9 @@ if (typeof document !== 'undefined') {
   }
 
   function applyInitialArcWeights() {
-    document.querySelectorAll('.arc-hitarea').forEach(hitarea => {
-      const locs = hitarea.dataset.sourceLocations;
-      const count = ArcLogic.countLocations(locs);
-      const width = ArcLogic.calculateStrokeWidth(count);
-      const arcId = hitarea.dataset.arcId;
+    // Iterate over StaticData instead of DOM queries
+    for (const arcId of StaticData.getAllArcIds()) {
+      const width = StaticData.getArcStrokeWidth(arcId);
       const visibleArc = DomAdapter.getVisibleArc(arcId);
       if (visibleArc) visibleArc.style.strokeWidth = width + 'px';
       scaleArrow(arcId, width);
@@ -206,7 +204,7 @@ if (typeof document !== 'undefined') {
           });
         }
       });
-    });
+    }
   }
 
   // === Floating label for source locations ===
@@ -297,10 +295,8 @@ if (typeof document !== 'undefined') {
           }
         });
       } else {
-        // Fallback: calculate from source locations (for arcs without stored values)
-        const locs = hitarea.dataset.sourceLocations;
-        const count = ArcLogic.countLocations(locs);
-        const strokeWidth = ArcLogic.calculateStrokeWidth(count);
+        // Fallback: use StaticData (for arcs without stored values)
+        const strokeWidth = StaticData.getArcStrokeWidth(arcId);
         const visibleArc = DomAdapter.getVisibleArc(arcId);
         if (visibleArc) visibleArc.style.strokeWidth = strokeWidth + 'px';
         scaleArrow(arcId, strokeWidth);
@@ -673,27 +669,24 @@ if (typeof document !== 'undefined') {
 
     // Update stored arrow positions after relayout (fixes stale positions after collapse/expand)
     // Must FORCE update, not use storeOriginal() which skips if values already exist
-    document.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
-      const arcId = hitarea.dataset.arcId;
-      const arcEl = document.querySelector(Selectors.visibleArc(arcId)); // raw query, includes hidden arcs
-      if (arcEl) {
-        const strokeWidth = parseFloat(arcEl.style.strokeWidth) || 0.5;
-        const scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
-        // Get ALL arrows (even hidden ones) because they have updated positions from recalculateVirtualEdges
-        DomAdapter.getArrows(arcId).forEach(arrow => {
-          const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
-          if (tip) {
-            // Force update - directly set instead of storeOriginal which skips if exists
-            appState.originalValues.set(arcId, {
-              strokeWidth,
-              scale,
-              tipX: tip.x,
-              tipY: tip.y
-            });
-          }
-        });
-      }
-    });
+    // Iterate over StaticData instead of DOM queries for arc IDs
+    for (const arcId of StaticData.getAllArcIds()) {
+      const strokeWidth = StaticData.getArcStrokeWidth(arcId);
+      const scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
+      // Get ALL arrows (even hidden ones) because they have updated positions from recalculateVirtualEdges
+      DomAdapter.getArrows(arcId).forEach(arrow => {
+        const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+        if (tip) {
+          // Force update - directly set instead of storeOriginal which skips if exists
+          appState.originalValues.set(arcId, {
+            strokeWidth,
+            scale,
+            tipX: tip.x,
+            tipY: tip.y
+          });
+        }
+      });
+    }
 
     // Re-apply pinned highlight after edges were recreated
     const pinned = AppState.getPinned(appState);
@@ -728,7 +721,8 @@ if (typeof document !== 'undefined') {
   }
 
   // Helper: Extract edge data from DOM hitareas to pure objects
-  function extractEdgeData(hitareas) {
+  // Uses DerivedState for visibility instead of per-edge getVisibleAncestor calls
+  function extractEdgeData(hitareas, visibleNodes) {
     const edges = [];
     hitareas.forEach(hitarea => {
       const fromId = hitarea.dataset.from;
@@ -736,10 +730,10 @@ if (typeof document !== 'undefined') {
       const fromNode = DomAdapter.getNode(fromId);
       const toNode = DomAdapter.getNode(toId);
 
-      // A node is hidden if its visible ancestor is NOT itself
-      // (i.e., an ancestor is collapsed, hiding this node)
-      const fromIsHidden = getVisibleAncestor(fromId) !== fromId;
-      const toIsHidden = getVisibleAncestor(toId) !== toId;
+      // A node is hidden if it's not in the visibleNodes set
+      // (computed once via DerivedState.deriveNodeVisibility)
+      const fromIsHidden = !visibleNodes.has(fromId);
+      const toIsHidden = !visibleNodes.has(toId);
 
       edges.push({
         hitarea,
@@ -785,9 +779,12 @@ if (typeof document !== 'undefined') {
       arrow.style.display = '';
     });
 
+    // === Derive visibility from state (via DerivedState) ===
+    const visibleNodes = DerivedState.deriveNodeVisibility(appState.collapsed, StaticData);
+
     // === Extract edge data from DOM ===
     const hitareas = document.querySelectorAll('.arc-hitarea');
-    const edgeData = extractEdgeData(hitareas);
+    const edgeData = extractEdgeData(hitareas, visibleNodes);
 
     // === Process edges: hide original elements, update visible paths ===
     edgeData.forEach(edge => {
@@ -1129,11 +1126,11 @@ if (typeof document !== 'undefined') {
 
   // Toggle collapse/expand all parent nodes
   function toggleCollapseAll() {
-    const allExpanded = [...document.querySelectorAll('[data-has-children="true"]')]
-      .every(node => !AppState.isCollapsed(appState, node.id.replace('node-', '')));
+    // Get parent node IDs from StaticData instead of DOM query
+    const parentNodeIds = StaticData.getAllNodeIds().filter(id => StaticData.hasChildren(id));
+    const allExpanded = parentNodeIds.every(id => !AppState.isCollapsed(appState, id));
 
-    document.querySelectorAll('[data-has-children="true"]').forEach(node => {
-      const nodeId = node.id.replace('node-', '');
+    parentNodeIds.forEach(nodeId => {
       if (allExpanded) {
         // Collapse all
         AppState.setCollapsed(appState, nodeId, true);

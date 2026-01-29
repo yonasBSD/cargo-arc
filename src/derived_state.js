@@ -122,3 +122,8 @@ const DerivedState = {
 if (typeof module !== 'undefined') {
   module.exports = { DerivedState };
 }
+
+// Browser export
+if (typeof window !== 'undefined') {
+  window.DerivedState = DerivedState;
+}
