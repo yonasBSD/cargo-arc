@@ -74,16 +74,7 @@ const StaticData = {
    * @returns {number} Stroke width in pixels (0.5 to 2.5)
    */
   getArcStrokeWidth(arcId) {
-    const weight = this.getArcWeight(arcId);
-    // ArcLogic.calculateStrokeWidth handles 0 -> MIN (0.5)
-    if (typeof ArcLogic !== 'undefined') {
-      return ArcLogic.calculateStrokeWidth(weight);
-    }
-    // Fallback for tests without ArcLogic
-    const MIN = 0.5, MAX = 2.5, CAP = 50;
-    if (weight <= 0) return MIN;
-    const count = Math.min(weight, CAP);
-    return MIN + (MAX - MIN) * Math.log(count) / Math.log(CAP);
+    return ArcLogic.calculateStrokeWidth(this.getArcWeight(arcId));
   },
 
   /**

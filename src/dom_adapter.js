@@ -1,8 +1,5 @@
-// In Browser/SVG context, Selectors is already global (loaded before this file)
-// In Node/Bun context, require it. Use different name to avoid redeclaration.
-const _Selectors = (typeof require !== "undefined")
-  ? require("./selectors.js").Selectors
-  : Selectors;
+// dom_adapter.js - DOM abstraction layer for SVG manipulation
+// Selectors is loaded before this file (see render.rs load order)
 
 function createFakeElement(tagName) {
   const attrs = new Map();
@@ -44,22 +41,22 @@ function createMockDomAdapter() {
     querySelector(sel) { track("querySelector", [sel]); return selectorResults.get(sel) ?? null; },
     querySelectorAll(sel) { track("querySelectorAll", [sel]); return selectorResults.get(sel) ?? []; },
     createSvgElement(tag) { track("createSvgElement", [tag]); return createFakeElement(tag); },
-    // Convenience methods (use _Selectors)
-    getNode(nodeId) { return this.getElementById(_Selectors.nodeId(nodeId)); },
+    // Convenience methods (use Selectors)
+    getNode(nodeId) { return this.getElementById(Selectors.nodeId(nodeId)); },
     getVisibleArc(arcId) {
-      const arc = this.querySelector(_Selectors.visibleArc(arcId));
+      const arc = this.querySelector(Selectors.visibleArc(arcId));
       if (!arc || arc.style.display === 'none') return null;
       return arc;
     },
-    getHitarea(arcId) { return this.querySelector(_Selectors.hitarea(arcId)); },
-    getArrows(arcId) { return this.querySelectorAll(_Selectors.arrows(arcId)); },
+    getHitarea(arcId) { return this.querySelector(Selectors.hitarea(arcId)); },
+    getArrows(arcId) { return this.querySelectorAll(Selectors.arrows(arcId)); },
     getVisibleArrows(arcId) {
-      const arrows = this.querySelectorAll(_Selectors.arrows(arcId));
+      const arrows = this.querySelectorAll(Selectors.arrows(arcId));
       return Array.from(arrows).filter(arr => arr.style.display !== 'none');
     },
-    getVirtualArrows(arcId) { return this.querySelectorAll(_Selectors.virtualArrows(arcId)); },
-    getConnectedHitareas(nodeId) { return this.querySelectorAll(_Selectors.connectedHitareas(nodeId)); },
-    getLabelGroup(arcId) { return this.querySelector(_Selectors.labelGroup(arcId)); },
+    getVirtualArrows(arcId) { return this.querySelectorAll(Selectors.virtualArrows(arcId)); },
+    getConnectedHitareas(nodeId) { return this.querySelectorAll(Selectors.connectedHitareas(nodeId)); },
+    getLabelGroup(arcId) { return this.querySelector(Selectors.labelGroup(arcId)); },
     _getCalls(method) { return calls.get(method) ?? []; },
     _registerElement(id, el) { elements.set(id, el); },
     _registerSelector(sel, result) { selectorResults.set(sel, result); },
@@ -73,25 +70,25 @@ const DomAdapter = {
   querySelector(sel) { return document.querySelector(sel); },
   querySelectorAll(sel) { return document.querySelectorAll(sel); },
   createSvgElement(tag) { return document.createElementNS(SVG_NS, tag); },
-  // Convenience methods (use _Selectors)
-  getNode(nodeId) { return this.getElementById(_Selectors.nodeId(nodeId)); },
+  // Convenience methods (use Selectors)
+  getNode(nodeId) { return this.getElementById(Selectors.nodeId(nodeId)); },
   getVisibleArc(arcId) {
-    const arc = this.querySelector(_Selectors.visibleArc(arcId));
+    const arc = this.querySelector(Selectors.visibleArc(arcId));
     // Return null if arc doesn't exist or is hidden
     if (!arc || arc.style.display === 'none') return null;
     return arc;
   },
-  getHitarea(arcId) { return this.querySelector(_Selectors.hitarea(arcId)); },
+  getHitarea(arcId) { return this.querySelector(Selectors.hitarea(arcId)); },
   // Raw access - returns ALL arrows (including hidden ones, for show/hide operations)
-  getArrows(arcId) { return this.querySelectorAll(_Selectors.arrows(arcId)); },
+  getArrows(arcId) { return this.querySelectorAll(Selectors.arrows(arcId)); },
   // Filtered access - returns only VISIBLE arrows (for highlight/scale operations)
   getVisibleArrows(arcId) {
-    const arrows = this.querySelectorAll(_Selectors.arrows(arcId));
+    const arrows = this.querySelectorAll(Selectors.arrows(arcId));
     return Array.from(arrows).filter(arr => arr.style.display !== 'none');
   },
-  getVirtualArrows(arcId) { return this.querySelectorAll(_Selectors.virtualArrows(arcId)); },
-  getConnectedHitareas(nodeId) { return this.querySelectorAll(_Selectors.connectedHitareas(nodeId)); },
-  getLabelGroup(arcId) { return this.querySelector(_Selectors.labelGroup(arcId)); },
+  getVirtualArrows(arcId) { return this.querySelectorAll(Selectors.virtualArrows(arcId)); },
+  getConnectedHitareas(nodeId) { return this.querySelectorAll(Selectors.connectedHitareas(nodeId)); },
+  getLabelGroup(arcId) { return this.querySelector(Selectors.labelGroup(arcId)); },
 };
 
 // Export for Browser
@@ -101,5 +98,5 @@ if (typeof window !== "undefined") {
 
 // Export for Bun/Node
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { DomAdapter, createMockDomAdapter, createFakeElement, Selectors: _Selectors };
+  module.exports = { DomAdapter, createMockDomAdapter, createFakeElement };
 }

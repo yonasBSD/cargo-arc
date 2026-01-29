@@ -1,5 +1,10 @@
 import { test, expect, describe } from "bun:test";
-import { createFakeElement, createMockDomAdapter, Selectors } from "./dom_adapter.js";
+import { Selectors } from "./selectors.js";
+
+// Set Selectors globally (simulating browser environment where it's loaded before dom_adapter.js)
+global.Selectors = Selectors;
+
+import { createFakeElement, createMockDomAdapter } from "./dom_adapter.js";
 
 describe("createFakeElement", () => {
   test("setAttribute/getAttribute roundtrip", () => {

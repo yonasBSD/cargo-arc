@@ -1,6 +1,6 @@
 // highlight_logic.js - Pure calculation functions for highlight effects
 // No DOM dependencies
-// Assumes ArrowLogic is available globally (loaded before this in browser, or via test setup)
+// Assumes ArcLogic is available globally (loaded before this in browser, or via test setup)
 
 const HighlightLogic = {
   // Constants
@@ -73,7 +73,7 @@ const HighlightLogic = {
    * @returns {number} - Arrow scale factor
    */
   calculateVirtualArrowScale(strokeWidth) {
-    return ArrowLogic.scaleFromStrokeWidth(strokeWidth);
+    return ArcLogic.scaleFromStrokeWidth(strokeWidth);
   },
 
   /**

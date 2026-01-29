@@ -1,23 +1,23 @@
 import { test, expect, describe } from "bun:test";
-import { ArrowLogic } from "./arrow_logic.js";
+import { ArcLogic } from "./arc_logic.js";
 
-describe("ArrowLogic", () => {
+describe("ArcLogic (Arrow functions)", () => {
   describe("getArrowPoints", () => {
     test("generates correct points at scale 1.0", () => {
-      const points = ArrowLogic.getArrowPoints({ x: 100, y: 50 }, 1.0);
+      const points = ArcLogic.getArrowPoints({ x: 100, y: 50 }, 1.0);
       // Arrow at (100, 50), len=8, hw=4
       // Format: "tip.x+len,tip.y-hw tip.x,tip.y tip.x+len,tip.y+hw"
       expect(points).toBe("108,46 100,50 108,54");
     });
 
     test("scales arrow dimensions correctly", () => {
-      const points = ArrowLogic.getArrowPoints({ x: 100, y: 50 }, 2.0);
+      const points = ArcLogic.getArrowPoints({ x: 100, y: 50 }, 2.0);
       // Arrow at (100, 50), len=16, hw=8
       expect(points).toBe("116,42 100,50 116,58");
     });
 
     test("handles small scale factors", () => {
-      const points = ArrowLogic.getArrowPoints({ x: 100, y: 50 }, 0.5);
+      const points = ArcLogic.getArrowPoints({ x: 100, y: 50 }, 0.5);
       // Arrow at (100, 50), len=4, hw=2
       expect(points).toBe("104,48 100,50 104,52");
     });
@@ -25,43 +25,43 @@ describe("ArrowLogic", () => {
 
   describe("parseTipFromPoints", () => {
     test("extracts tip coordinates from valid points string", () => {
-      const tip = ArrowLogic.parseTipFromPoints("108,46 100,50 108,54");
+      const tip = ArcLogic.parseTipFromPoints("108,46 100,50 108,54");
       expect(tip).toEqual({ x: 100, y: 50 });
     });
 
     test("returns null for single point (parts.length === 1)", () => {
-      const tip = ArrowLogic.parseTipFromPoints("108,46");
+      const tip = ArcLogic.parseTipFromPoints("108,46");
       expect(tip).toBeNull();
     });
 
     test("returns null for empty string", () => {
-      const tip = ArrowLogic.parseTipFromPoints("");
+      const tip = ArcLogic.parseTipFromPoints("");
       expect(tip).toBeNull();
     });
 
     test("returns null for malformed coordinate pair", () => {
-      const tip = ArrowLogic.parseTipFromPoints("108,46 invalid 108,54");
+      const tip = ArcLogic.parseTipFromPoints("108,46 invalid 108,54");
       expect(tip).toBeNull();
     });
   });
 
   describe("scaleFromStrokeWidth", () => {
     test("calculates correct scale for base stroke width", () => {
-      expect(ArrowLogic.scaleFromStrokeWidth(1.5)).toBe(1.0);
+      expect(ArcLogic.scaleFromStrokeWidth(1.5)).toBe(1.0);
     });
 
     test("calculates correct scale for larger stroke width", () => {
-      expect(ArrowLogic.scaleFromStrokeWidth(3.0)).toBe(2.0);
+      expect(ArcLogic.scaleFromStrokeWidth(3.0)).toBe(2.0);
     });
   });
 
   describe("constants", () => {
     test("exports ARROW_LENGTH", () => {
-      expect(ArrowLogic.ARROW_LENGTH).toBe(8);
+      expect(ArcLogic.ARROW_LENGTH).toBe(8);
     });
 
     test("exports ARROW_HALF_WIDTH", () => {
-      expect(ArrowLogic.ARROW_HALF_WIDTH).toBe(4);
+      expect(ArcLogic.ARROW_HALF_WIDTH).toBe(4);
     });
   });
 });

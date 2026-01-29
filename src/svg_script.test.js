@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { ArcLogic } from "./svg_script.js";
+import { ArcLogic } from "./arc_logic.js";
 
 describe("ArcLogic", () => {
   describe("getArcOffset", () => {
@@ -123,23 +123,24 @@ describe("ArcLogic", () => {
       expect(ArcLogic.estimatePathLength("invalid")).toBe(100);
     });
 
-    test("estimates length from valid S-curve path", () => {
+    test("estimates length from valid S-curve path using bezier approximation", () => {
       // Path: M fromX,fromY Q ctrlX,fromY ctrlX,midY Q ctrlX,toY toX,toY
-      // fromY=50, toY=150 -> height=100, result=100+50=150
+      // Uses quadratic bezier approximation for accurate S-curve length
       const path = "M 100,50 Q 300,50 300,100 Q 300,150 100,150";
-      expect(ArcLogic.estimatePathLength(path)).toBe(150);
+      // Horizontal extent 200, vertical extent 100 → bezier length ≈ 456
+      expect(ArcLogic.estimatePathLength(path)).toBeCloseTo(456, 0);
     });
 
     test("handles large vertical distance", () => {
-      // fromY=0, toY=500 -> height=500, result=500+50=550
+      // Horizontal extent 300, vertical extent 500 → bezier length ≈ 941
       const path = "M 100,0 Q 400,0 400,250 Q 400,500 100,500";
-      expect(ArcLogic.estimatePathLength(path)).toBe(550);
+      expect(ArcLogic.estimatePathLength(path)).toBeCloseTo(941, 0);
     });
 
     test("handles negative coordinates", () => {
-      // fromY=-50, toY=50 -> height=100, result=100+50=150
+      // Same geometry as first test, just shifted → ≈ 456
       const path = "M 100,-50 Q 300,-50 300,0 Q 300,50 100,50";
-      expect(ArcLogic.estimatePathLength(path)).toBe(150);
+      expect(ArcLogic.estimatePathLength(path)).toBeCloseTo(456, 0);
     });
   });
 

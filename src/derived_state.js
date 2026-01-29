@@ -1,12 +1,7 @@
 // derived_state.js - Pure functions to derive display state from core state
 // Computes highlights and visibility based on selection and collapse state
 // No DOM dependencies - operates on Maps/Sets
-
-// Import TreeLogic for visibility calculations
-// In browser: TreeLogic is global; in tests: imported
-const TreeLogic = (typeof window !== 'undefined' && window.TreeLogic)
-  ? window.TreeLogic
-  : require('./tree_logic.js').TreeLogic;
+// TreeLogic is loaded before this file (see render.rs load order)
 
 const DerivedState = {
   /**

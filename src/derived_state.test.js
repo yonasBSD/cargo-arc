@@ -1,6 +1,10 @@
 import { test, expect, describe, beforeEach } from "bun:test";
-import { DerivedState } from "./derived_state.js";
 import { TreeLogic } from "./tree_logic.js";
+
+// Set TreeLogic globally (simulating browser environment where it's loaded before derived_state.js)
+global.TreeLogic = TreeLogic;
+
+import { DerivedState } from "./derived_state.js";
 
 // Test data representing a mini crate structure:
 //

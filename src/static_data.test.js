@@ -1,5 +1,6 @@
 import { test, expect, describe, beforeEach } from "bun:test";
-import { ArcLogic } from "./svg_script.js";
+import { ArcLogic } from "./arc_logic.js";
+globalThis.ArcLogic = ArcLogic;
 
 // Mock STATIC_DATA for tests
 const TEST_STATIC_DATA = {

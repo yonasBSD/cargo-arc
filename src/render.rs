@@ -502,15 +502,20 @@ fn render_script(
     // 1. STATIC_DATA (generated above) - raw data from Rust
     // 2. static_data.js - helper to access STATIC_DATA
     // 3. app_state.js - unified state management (replaces CollapseState + HighlightState)
+    // Load order:
+    // 1. static_data (Rust-generated data)
+    // 2. arc_logic (pure geometry, no deps - needed by static_data.js)
+    // 3. static_data.js (uses ArcLogic.calculateStrokeWidth)
     // 4. selectors (no deps), then dom_adapter (uses selectors)
     // 5. Other modules that may use dom_adapter
+    let arc_logic = include_str!("arc_logic.js");
     let static_data_js = include_str!("static_data.js");
     let app_state = include_str!("app_state.js");
     let selectors = include_str!("selectors.js");
     let dom_adapter = include_str!("dom_adapter.js");
     let layer_manager = include_str!("layer_manager.js");
-    let arrow_logic = include_str!("arrow_logic.js");
     let tree_logic = include_str!("tree_logic.js");
+    let derived_state = include_str!("derived_state.js"); // after tree_logic (uses TreeLogic)
     let highlight_logic = include_str!("highlight_logic.js");
     let virtual_edge_logic = include_str!("virtual_edge_logic.js");
     let text_metrics = include_str!("text_metrics.js");
@@ -521,15 +526,16 @@ fn render_script(
         .replace("__TOOLBAR_HEIGHT__", &TOOLBAR_HEIGHT.to_string());
 
     format!(
-        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
+        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
         static_data,
+        arc_logic,
         static_data_js,
         app_state,
         selectors,
         dom_adapter,
         layer_manager,
-        arrow_logic,
         tree_logic,
+        derived_state,
         highlight_logic,
         virtual_edge_logic,
         text_metrics,

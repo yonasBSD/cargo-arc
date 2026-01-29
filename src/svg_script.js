@@ -1,183 +1,6 @@
-// svg_script.js - Extracted from render.rs
-// Placeholders replaced at runtime: __ROW_HEIGHT__, __MARGIN__
-
-// === Testable pure logic ===
-const ArcLogic = {
-  /**
-   * Calculate arc offset based on number of hops between nodes
-   * @param {number} hops - Number of row hops between source and target
-   * @returns {number} - Offset for arc control point
-   */
-  getArcOffset(hops) {
-    return 20 + (hops * 15);
-  },
-
-  /**
-   * Transform mouse event coordinates to SVG coordinates (scroll-aware)
-   * Uses getBoundingClientRect() instead of getScreenCTM() to handle scrollable containers.
-   * See: WebKit Bug #44083, D3.js Issue #1164
-   * @param {number} clientX - Mouse clientX from event
-   * @param {number} clientY - Mouse clientY from event
-   * @param {{left: number, top: number, width: number, height: number}} svgRect - SVG bounding rect
-   * @param {{x: number, y: number, width: number, height: number}|null} viewBox - SVG viewBox or null
-   * @returns {{x: number, y: number}} - Coordinates in SVG coordinate space
-   */
-  getSvgCoords(clientX, clientY, svgRect, viewBox) {
-    let x = clientX - svgRect.left;
-    let y = clientY - svgRect.top;
-
-    if (viewBox && viewBox.width > 0) {
-      x = x * (viewBox.width / svgRect.width) + viewBox.x;
-      y = y * (viewBox.height / svgRect.height) + viewBox.y;
-    }
-
-    return { x, y };
-  },
-
-  /**
-   * Calculate SVG path for an arc between two points
-   * @param {number} fromX - Start X coordinate
-   * @param {number} fromY - Start Y coordinate
-   * @param {number} toX - End X coordinate
-   * @param {number} toY - End Y coordinate
-   * @param {number} maxRight - Rightmost X coordinate of visible nodes
-   * @param {number} rowHeight - Height of each row
-   * @returns {{path: string, toX: number, toY: number, ctrlX: number, midY: number}}
-   */
-  calculateArcPath(fromX, fromY, toX, toY, maxRight, rowHeight) {
-    const hops = Math.max(1, Math.round(Math.abs(toY - fromY) / rowHeight));
-    const arcOffset = this.getArcOffset(hops);
-    const ctrlX = maxRight + arcOffset;
-    const midY = (fromY + toY) / 2;
-
-    return {
-      path: `M ${fromX},${fromY} Q ${ctrlX},${fromY} ${ctrlX},${midY} Q ${ctrlX},${toY} ${toX},${toY}`,
-      toX,
-      toY,
-      ctrlX,
-      midY
-    };
-  },
-
-  /**
-   * Sort and group tooltip location strings by symbol name.
-   * Re-sorts aggregated tooltip data for virtual arcs to ensure consistent display.
-   *
-   * Input format: Array of pipe-separated location strings, each containing
-   * entries like "Symbol  ← file:line" or bare "file:line"
-   *
-   * @param {string[]} locStrings - Array of tooltip location strings
-   * @returns {string} - Sorted and grouped locations joined by '|'
-   */
-  /**
-   * Count the number of source locations in a pipe-separated string.
-   * Format: "Symbol  ← file:line|     ← file:line|Symbol2  ← file:line"
-   * Each pipe-separated segment represents one location.
-   * @param {string} locationsString - Pipe-separated location string
-   * @returns {number} - Number of locations
-   */
-  countLocations(locationsString) {
-    if (!locationsString) return 0;
-    return locationsString.split('|').length;
-  },
-
-  /**
-   * Calculate stroke width based on location count using logarithmic scaling.
-   * @param {number} locationCount - Number of source locations
-   * @returns {number} - Stroke width in pixels (0.5 to 2.5)
-   */
-  calculateStrokeWidth(locationCount) {
-    const MIN = 0.5, MAX = 2.5, CAP = 50;
-    if (locationCount <= 0) return MIN;
-    const count = Math.min(locationCount, CAP);
-    return MIN + (MAX - MIN) * Math.log(count) / Math.log(CAP);
-  },
-
-  /**
-   * Estimate path length from SVG path string (no DOM read).
-   * Parses S-curve path format: M fromX,fromY Q ctrlX,fromY ctrlX,midY Q ctrlX,toY toX,toY
-   * @param {string} pathD - SVG path 'd' attribute value
-   * @returns {number} - Estimated path length in pixels
-   */
-  estimatePathLength(pathD) {
-    if (!pathD) return 100;
-
-    // Parse: M x,y Q cx,cy cx,my Q cx,ty tx,ty
-    const coords = pathD.match(/-?\d+\.?\d*/g);
-    if (!coords || coords.length < 10) return 100;
-
-    const fromY = parseFloat(coords[1]);
-    const toY = parseFloat(coords[9]);
-
-    // S-Bezier approximation: vertical distance + horizontal curve component
-    const height = Math.abs(toY - fromY) || 100;
-    return height + 50; // Base for horizontal curve extension
-  },
-
-  sortAndGroupLocations(locStrings) {
-    const symbolRegex = /^(\S+)\s+←\s+(.+)$/;
-    const bySymbol = {};  // symbol -> [locations]
-    const bareLocations = [];
-
-    // Parse all location entries
-    for (const str of locStrings) {
-      for (const entry of str.split('|')) {
-        const trimmed = entry.trim();
-        if (!trimmed) continue;
-
-        const match = trimmed.match(symbolRegex);
-        if (match) {
-          const symbol = match[1];
-          const location = match[2];
-          if (!bySymbol[symbol]) bySymbol[symbol] = [];
-          bySymbol[symbol].push(location);
-        } else {
-          // Bare location (no symbol prefix)
-          bareLocations.push(trimmed);
-        }
-      }
-    }
-
-    // Sort symbols alphabetically
-    const sortedSymbols = Object.keys(bySymbol).sort();
-
-    // Sort locations within each symbol
-    for (const symbol of sortedSymbols) {
-      bySymbol[symbol].sort();
-    }
-    bareLocations.sort();
-
-    // Find max symbol length for column alignment
-    const maxLen = sortedSymbols.reduce((max, s) => Math.max(max, s.length), 0);
-
-    // Build output
-    const lines = [];
-
-    // Bare locations first
-    for (const loc of bareLocations) {
-      lines.push(loc);
-    }
-
-    // Symbol-grouped locations with alignment
-    for (const symbol of sortedSymbols) {
-      const locs = bySymbol[symbol];
-      for (let i = 0; i < locs.length; i++) {
-        if (i === 0) {
-          const padding = ' '.repeat(maxLen - symbol.length + 2);
-          lines.push(`${symbol}${padding}← ${locs[i]}`);
-        } else {
-          const spaces = ' '.repeat(maxLen + 2);
-          lines.push(`${spaces}← ${locs[i]}`);
-        }
-      }
-    }
-
-    return lines.join('|');
-  }
-};
-
-// CommonJS export for tests (Node/Bun)
-if (typeof module !== 'undefined') module.exports = { ArcLogic };
+// svg_script.js - DOM code for interactive SVG
+// ArcLogic is loaded from arc_logic.js before this file
+// Placeholders replaced at runtime: __ROW_HEIGHT__, __MARGIN__, __TOOLBAR_HEIGHT__
 
 // IIFE for SVG embedding (DOM-code) - only runs in browser with placeholders replaced
 if (typeof document !== 'undefined') {
@@ -193,12 +16,12 @@ if (typeof document !== 'undefined') {
    * Parses current tip position from existing points.
    */
   function scaleArrow(edgeId, strokeWidth) {
-    const scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
+    const scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
     DomAdapter.getVisibleArrows(edgeId).forEach(arrow => {
       const points = arrow.getAttribute('points');
-      const tip = ArrowLogic.parseTipFromPoints(points);
+      const tip = ArcLogic.parseTipFromPoints(points);
       if (tip) {
-        arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, scale));
+        arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, scale));
       }
     });
   }
@@ -280,7 +103,7 @@ if (typeof document !== 'undefined') {
     } else {
       // Regular arcs: calculate from StaticData
       strokeWidth = StaticData.getArcStrokeWidth(arcId);
-      scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
+      scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
     }
 
     // Reset arc stroke-width
@@ -299,9 +122,9 @@ if (typeof document !== 'undefined') {
       ? DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`)
       : DomAdapter.getVisibleArrows(arcId);
     arrows.forEach(arrow => {
-      const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+      const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
       if (tip) {
-        arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, scale));
+        arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, scale));
       }
     });
   }
@@ -364,15 +187,26 @@ if (typeof document !== 'undefined') {
 
   /**
    * Highlight a single arc element with correct sequencing.
-   * CRITICAL: Reads width BEFORE adding CSS class to prevent shadow growth bug.
+   * CRITICAL: Calculates original width from source data to prevent growth bug.
    * @param {Element} arc - Arc DOM element
    * @param {string} arcId - Arc identifier (from-to)
    * @param {string} relationType - 'dep' (outgoing) or 'reverse' (incoming)
    * @returns {number} highlightWidth - For arrow scaling
    */
   function highlightArcElement(arc, arcId, relationType) {
-    // 1. Read ORIGINAL width BEFORE any DOM changes
-    const arcWidth = parseFloat(arc.style.strokeWidth) || 0.5;
+    // 1. Calculate ORIGINAL width from source data (not from DOM to prevent growth bug)
+    let arcWidth;
+    if (arc.classList.contains('virtual-arc')) {
+      // Virtual arc: find hitarea and calculate from sourceLocations
+      const hitarea = DomAdapter.querySelector(`.virtual-hitarea[data-arc-id="${arcId}"]`);
+      const sourceLocations = hitarea?.dataset.sourceLocations;
+      const count = ArcLogic.countLocations(sourceLocations);
+      arcWidth = ArcLogic.calculateStrokeWidth(count);
+    } else {
+      // Regular arc: use StaticData
+      arcWidth = StaticData.getArcStrokeWidth(arcId);
+    }
+
     const highlightWidth = HighlightLogic.calculateHighlightWidth(arcWidth);
 
     // 2. Apply highlighting
@@ -427,9 +261,9 @@ if (typeof document !== 'undefined') {
         // Scale virtual arrows (use virtual arc width, not regular arc width)
         DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
           arrow.classList.add('highlighted-arrow');
-          const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+          const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
           if (tip) {
-            arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(vHighlightWidth)));
+            arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(vHighlightWidth)));
           }
         });
       });
@@ -513,9 +347,9 @@ if (typeof document !== 'undefined') {
 
         // Scale virtual arrows
         DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
-          const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+          const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
           if (tip) {
-            arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
+            arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
           }
         });
 
@@ -777,7 +611,7 @@ if (typeof document !== 'undefined') {
           const scale = strokeWidth / 1.5;
           // Update ALL arrow positions (even hidden ones) so they have correct position when shown
           DomAdapter.getArrows(fromId + '-' + toId).forEach(arrow => {
-            arrow.setAttribute('points', ArrowLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
+            arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
           });
         }
       }
@@ -821,7 +655,7 @@ if (typeof document !== 'undefined') {
       arrow.setAttribute('data-vedge', arcId);
       arrow.setAttribute('data-from', fromId);
       arrow.setAttribute('data-to', toId);
-      arrow.setAttribute('points', ArrowLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
+      arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
       arrow.addEventListener('click', e => {
         e.stopPropagation();
         highlightVirtualEdge(fromId, toId, data.count);
@@ -949,9 +783,9 @@ if (typeof document !== 'undefined') {
     DomAdapter.querySelectorAll('.virtual-arrow[data-vedge="' + edgeId + '"]')
       .forEach(el => {
         el.classList.add('highlighted-arrow');
-        const tip = ArrowLogic.parseTipFromPoints(el.getAttribute('points'));
+        const tip = ArcLogic.parseTipFromPoints(el.getAttribute('points'));
         if (tip) {
-          el.setAttribute('points', ArrowLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
+          el.setAttribute('points', ArcLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
         }
       });
     // Arc-count labels
