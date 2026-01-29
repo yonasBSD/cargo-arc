@@ -498,14 +498,19 @@ fn render_script(
     let static_data = generate_static_data(ir, positioned, parents);
 
     // Module dependencies must be loaded before svg_script.js
-    // Order matters: selectors first (no deps), then dom_adapter (uses selectors),
-    // then others that may use dom_adapter
+    // Order matters:
+    // 1. STATIC_DATA (generated above) - raw data from Rust
+    // 2. static_data.js - helper to access STATIC_DATA
+    // 3. app_state.js - unified state management (replaces CollapseState + HighlightState)
+    // 4. selectors (no deps), then dom_adapter (uses selectors)
+    // 5. Other modules that may use dom_adapter
+    let static_data_js = include_str!("static_data.js");
+    let app_state = include_str!("app_state.js");
     let selectors = include_str!("selectors.js");
     let dom_adapter = include_str!("dom_adapter.js");
     let layer_manager = include_str!("layer_manager.js");
     let arrow_logic = include_str!("arrow_logic.js");
     let tree_logic = include_str!("tree_logic.js");
-    let highlight_state = include_str!("highlight_state.js");
     let highlight_logic = include_str!("highlight_logic.js");
     let virtual_edge_logic = include_str!("virtual_edge_logic.js");
 
@@ -515,14 +520,15 @@ fn render_script(
         .replace("__TOOLBAR_HEIGHT__", &TOOLBAR_HEIGHT.to_string());
 
     format!(
-        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
+        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
         static_data,
+        static_data_js,
+        app_state,
         selectors,
         dom_adapter,
         layer_manager,
         arrow_logic,
         tree_logic,
-        highlight_state,
         highlight_logic,
         virtual_edge_logic,
         svg_script
@@ -1190,8 +1196,8 @@ mod tests {
             "Script should contain relayout function"
         );
         assert!(
-            svg.contains("collapseState"),
-            "Script should contain collapseState map"
+            svg.contains("appState"),
+            "Script should contain appState for unified state management"
         );
     }
 
@@ -1200,8 +1206,8 @@ mod tests {
         let ir = LayoutIR::new();
         let svg = render(&ir, &RenderConfig::default());
         assert!(
-            svg.contains("HighlightState.create()"),
-            "Script should use HighlightState module"
+            svg.contains("AppState.create()"),
+            "Script should use AppState module"
         );
         assert!(
             svg.contains("handleMouseEnter"),
@@ -1225,15 +1231,15 @@ mod tests {
     fn test_render_script_has_toggle_deselect() {
         let ir = LayoutIR::new();
         let svg = render(&ir, &RenderConfig::default());
-        // highlightNode uses HighlightState.togglePinned for toggle-deselect
+        // highlightNode uses AppState.togglePinned for toggle-deselect
         assert!(
-            svg.contains("HighlightState.togglePinned(highlightState, 'node', nodeId)"),
-            "highlightNode should use HighlightState.togglePinned"
+            svg.contains("AppState.togglePinned(appState, 'node', nodeId)"),
+            "highlightNode should use AppState.togglePinned"
         );
-        // highlightEdge uses HighlightState.togglePinned for toggle-deselect
+        // highlightEdge uses AppState.togglePinned for toggle-deselect
         assert!(
-            svg.contains("HighlightState.togglePinned(highlightState, 'edge', edgeId)"),
-            "highlightEdge should use HighlightState.togglePinned"
+            svg.contains("AppState.togglePinned(appState, 'edge', edgeId)"),
+            "highlightEdge should use AppState.togglePinned"
         );
     }
 

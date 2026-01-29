@@ -198,7 +198,7 @@ if (typeof document !== 'undefined') {
       DomAdapter.getVisibleArrows(arcId).forEach(arrow => {
         const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
         if (tip) {
-          HighlightState.storeOriginal(highlightState, arcId, {
+          AppState.storeOriginal(appState, arcId, {
             strokeWidth: width,
             scale: scale,
             tipX: tip.x,
@@ -259,8 +259,8 @@ if (typeof document !== 'undefined') {
   }
 
   // === Highlight functionality ===
-  // Use HighlightState module for state management
-  const highlightState = HighlightState.create();
+  // Use AppState module for unified state management
+  const appState = AppState.create();
 
   function clearHighlights() {
     // Clear shadow paths
@@ -280,7 +280,7 @@ if (typeof document !== 'undefined') {
     // Reset regular arcs and arrows to original size (using stored values)
     DomAdapter.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
       const arcId = hitarea.dataset.arcId;
-      const original = HighlightState.getOriginal(highlightState, arcId);
+      const original = AppState.getOriginal(appState, arcId);
 
       if (original) {
         // Use stored original values (fixes arrow-head growth bug)
@@ -548,7 +548,7 @@ if (typeof document !== 'undefined') {
     const edgeId = from + '-' + to;
     if (pin) {
       // Toggle: if same edge is already pinned, deselect
-      const wasPinned = HighlightState.togglePinned(highlightState, 'edge', edgeId);
+      const wasPinned = AppState.togglePinned(appState, 'edge', edgeId);
       clearHighlights();
       if (!wasPinned) return; // Was unpinned, done
     } else {
@@ -560,7 +560,7 @@ if (typeof document !== 'undefined') {
   function highlightNode(nodeId, pin) {
     if (pin) {
       // Toggle: if same node is already pinned, deselect
-      const wasPinned = HighlightState.togglePinned(highlightState, 'node', nodeId);
+      const wasPinned = AppState.togglePinned(appState, 'node', nodeId);
       clearHighlights();
       if (!wasPinned) return; // Was unpinned, done
     } else {
@@ -570,7 +570,7 @@ if (typeof document !== 'undefined') {
   }
 
   function handleMouseEnter(type, id) {
-    if (HighlightState.getPinned(highlightState)) return; // Don't preview if something is pinned
+    if (AppState.getPinned(appState)) return; // Don't preview if something is pinned
     clearHighlights();
     if (type === 'node') applyNodeHighlight(id);
     else if (type === 'edge') {
@@ -580,27 +580,15 @@ if (typeof document !== 'undefined') {
   }
 
   function handleMouseLeave() {
-    if (HighlightState.getPinned(highlightState)) return; // Keep pinned highlight
+    if (AppState.getPinned(appState)) return; // Keep pinned highlight
     clearHighlights();
   }
 
   // === Collapse functionality ===
-  // Build parentMap once at init (pure data structure for TreeLogic)
-  const parentMap = TreeLogic.buildParentMap(document);
+  // Build parentMap from STATIC_DATA (no DOM read needed)
+  const parentMap = StaticData.buildParentMap();
 
-  // Initialize collapse state with CollapseState module
-  const collapseState = CollapseState.create();
-
-  // Store original positions on load
-  document.querySelectorAll('.crate, .module').forEach(node => {
-    const id = node.id.replace('node-', '');
-    CollapseState.storePosition(
-      collapseState,
-      id,
-      parseFloat(node.getAttribute('x')),
-      parseFloat(node.getAttribute('y'))
-    );
-  });
+  // Note: Original positions now come from STATIC_DATA, no need to store them
 
   // Wrapper functions for TreeLogic (use parentMap from closure)
   function getDescendants(nodeId) {
@@ -608,7 +596,7 @@ if (typeof document !== 'undefined') {
   }
 
   function getVisibleAncestor(nodeId) {
-    return TreeLogic.getVisibleAncestor(nodeId, collapseState.collapsed, parentMap);
+    return TreeLogic.getVisibleAncestor(nodeId, appState.collapsed, parentMap);
   }
 
   function countDescendants(nodeId) {
@@ -648,8 +636,8 @@ if (typeof document !== 'undefined') {
       .sort((a, b) => {
         const aId = a.id.replace('node-', '');
         const bId = b.id.replace('node-', '');
-        const posA = CollapseState.getPosition(collapseState, aId);
-        const posB = CollapseState.getPosition(collapseState, bId);
+        const posA = StaticData.getOriginalPosition(aId);
+        const posB = StaticData.getOriginalPosition(bId);
         return posA.y - posB.y;
       });
 
@@ -696,7 +684,7 @@ if (typeof document !== 'undefined') {
           const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
           if (tip) {
             // Force update - directly set instead of storeOriginal which skips if exists
-            highlightState.originalValues.set(arcId, {
+            appState.originalValues.set(arcId, {
               strokeWidth,
               scale,
               tipX: tip.x,
@@ -708,7 +696,7 @@ if (typeof document !== 'undefined') {
     });
 
     // Re-apply pinned highlight after edges were recreated
-    const pinned = HighlightState.getPinned(highlightState);
+    const pinned = AppState.getPinned(appState);
     if (pinned) {
       clearHighlights();  // Remove stale shadow paths from deleted virtual arcs
       if (pinned.type === 'node') {
@@ -965,7 +953,7 @@ if (typeof document !== 'undefined') {
       hitarea.addEventListener('mouseenter', () => handleMouseEnter('edge', arcId));
       hitarea.addEventListener('mousemove', (e) => {
         // When pinned, only show tooltip on highlighted arcs
-        const pinned = HighlightState.getPinned(highlightState);
+        const pinned = AppState.getPinned(appState);
         if (pinned) {
           const isHighlighted = pinned.type === 'edge'
             ? pinned.id === arcId
@@ -996,7 +984,7 @@ if (typeof document !== 'undefined') {
   function highlightVirtualEdge(fromId, toId, count) {
     const edgeId = fromId + '-' + toId;
     // Toggle: if same edge is already pinned, deselect
-    const wasPinned = HighlightState.togglePinned(highlightState, 'edge', edgeId);
+    const wasPinned = AppState.togglePinned(appState, 'edge', edgeId);
     clearHighlights();
     if (!wasPinned) return; // Was unpinned, done
     // from-Node: dependent (purple border)
@@ -1045,12 +1033,12 @@ if (typeof document !== 'undefined') {
   function toggleCollapse(nodeId) {
     // Always clear selection on collapse/expand - shadows would need recalculation
     // and the visual context changes significantly
-    if (HighlightState.getPinned(highlightState)) {
-      HighlightState.clearPinned(highlightState);
+    if (AppState.getPinned(appState)) {
+      AppState.clearPinned(appState);
       clearHighlights();
     }
 
-    const collapsed = CollapseState.toggle(collapseState, nodeId);
+    const collapsed = AppState.toggleCollapsed(appState, nodeId);
 
     const descendants = getDescendants(nodeId);
 
@@ -1072,7 +1060,7 @@ if (typeof document !== 'undefined') {
           const checkNode = DomAdapter.getNode(checkId);
           const parentId = checkNode?.dataset.parent;
           if (!parentId) break;
-          if (CollapseState.isCollapsed(collapseState, parentId) && parentId !== nodeId) {
+          if (AppState.isCollapsed(appState, parentId) && parentId !== nodeId) {
             ancestorCollapsed = true;
             break;
           }
@@ -1142,13 +1130,13 @@ if (typeof document !== 'undefined') {
   // Toggle collapse/expand all parent nodes
   function toggleCollapseAll() {
     const allExpanded = [...document.querySelectorAll('[data-has-children="true"]')]
-      .every(node => !CollapseState.isCollapsed(collapseState, node.id.replace('node-', '')));
+      .every(node => !AppState.isCollapsed(appState, node.id.replace('node-', '')));
 
     document.querySelectorAll('[data-has-children="true"]').forEach(node => {
       const nodeId = node.id.replace('node-', '');
       if (allExpanded) {
         // Collapse all
-        CollapseState.setCollapsed(collapseState, nodeId, true);
+        AppState.setCollapsed(appState, nodeId, true);
         getDescendants(nodeId).forEach(descId => {
           const descNode = DomAdapter.getNode(descId);
           const label = descNode?.nextElementSibling;
@@ -1184,7 +1172,7 @@ if (typeof document !== 'undefined') {
         }
       } else {
         // Expand all
-        CollapseState.setCollapsed(collapseState, nodeId, false);
+        AppState.setCollapsed(appState, nodeId, false);
         getDescendants(nodeId).forEach(descId => {
           const descNode = DomAdapter.getNode(descId);
           const label = descNode?.nextElementSibling;
@@ -1331,7 +1319,7 @@ if (typeof document !== 'undefined') {
 
     hitarea.addEventListener('mousemove', (e) => {
       // When pinned, only show tooltip on highlighted arcs
-      const pinned = HighlightState.getPinned(highlightState);
+      const pinned = AppState.getPinned(appState);
       if (pinned) {
         const arcId = hitarea.dataset.arcId;
         const isHighlighted = pinned.type === 'edge'
@@ -1359,7 +1347,7 @@ if (typeof document !== 'undefined') {
   });
 
   document.querySelector('svg').addEventListener('click', () => {
-    HighlightState.clearPinned(highlightState);
+    AppState.clearPinned(appState);
     clearHighlights();
   });
 

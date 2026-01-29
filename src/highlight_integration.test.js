@@ -8,7 +8,7 @@ global.ArrowLogic = require('./arrow_logic.js').ArrowLogic;
 global.HighlightLogic = require('./highlight_logic.js').HighlightLogic;
 
 const { createMockDomAdapter, createFakeElement } = require('./dom_adapter.js');
-const { HighlightState } = require('./highlight_state.js');
+const { AppState } = require('./app_state.js');
 
 describe('clearHighlights - Separation of Highlight State vs Layout State', () => {
   /**
@@ -37,8 +37,8 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     expect(arrow.getAttribute('points')).toBe('108,303 100,307 108,311');
 
     // Create highlight state and store initial values
-    const highlightState = HighlightState.create();
-    HighlightState.storeOriginal(highlightState, 'arc-1', {
+    const appState = AppState.create();
+    AppState.storeOriginal(appState, 'arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -51,7 +51,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     expect(arrow.getAttribute('points')).toBe('108,183 100,187 108,191');
 
     // Update stored state with new position (simulating what should happen after relayout)
-    highlightState.originalValues.set('arc-1', {
+    appState.originalValues.set('arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -64,7 +64,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     expect(arrow.getAttribute('points')).toBe('110.4,181.8 100,187 110.4,192.2');
 
     // === CLEAR HIGHLIGHTS: Should restore scale but KEEP position ===
-    const original = HighlightState.getOriginal(highlightState, 'arc-1');
+    const original = AppState.getOriginal(appState, 'arc-1');
     const currentTip = global.ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
 
     // This is the FIX: use currentTip (187), not original.tipY (which could be stale)
@@ -87,8 +87,8 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     // Initial: scale 1.0
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 200 }, 1.0));
 
-    const highlightState = HighlightState.create();
-    HighlightState.storeOriginal(highlightState, 'arc-1', {
+    const appState = AppState.create();
+    AppState.storeOriginal(appState, 'arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -100,7 +100,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     expect(arrow.getAttribute('points')).toBe('110.4,194.8 100,200 110.4,205.2');
 
     // Clear highlights: restore scale
-    const original = HighlightState.getOriginal(highlightState, 'arc-1');
+    const original = AppState.getOriginal(appState, 'arc-1');
     const currentTip = global.ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints(currentTip, original.scale));
 
@@ -110,11 +110,11 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
 
   test('handles multiple relayouts correctly', () => {
     const arrow = createFakeElement('polygon');
-    const highlightState = HighlightState.create();
+    const appState = AppState.create();
 
     // Initial position: Y=300
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 300 }, 1.0));
-    HighlightState.storeOriginal(highlightState, 'arc-1', {
+    AppState.storeOriginal(appState, 'arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -123,7 +123,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
 
     // First relayout: collapse to Y=200
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 200 }, 1.0));
-    highlightState.originalValues.set('arc-1', {
+    appState.originalValues.set('arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -134,14 +134,14 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 200 }, 1.3));
 
     // Clear - should be at Y=200
-    let original = HighlightState.getOriginal(highlightState, 'arc-1');
+    let original = AppState.getOriginal(appState, 'arc-1');
     let currentTip = global.ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints(currentTip, original.scale));
     expect(global.ArrowLogic.parseTipFromPoints(arrow.getAttribute('points')).y).toBe(200);
 
     // Second relayout: collapse further to Y=100
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 100 }, 1.0));
-    highlightState.originalValues.set('arc-1', {
+    appState.originalValues.set('arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -152,7 +152,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 100 }, 1.3));
 
     // Clear - should be at Y=100, NOT Y=200 or Y=300
-    original = HighlightState.getOriginal(highlightState, 'arc-1');
+    original = AppState.getOriginal(appState, 'arc-1');
     currentTip = global.ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints(currentTip, original.scale));
     expect(global.ArrowLogic.parseTipFromPoints(arrow.getAttribute('points')).y).toBe(100);
@@ -161,11 +161,11 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
   test('uses current arrow position, not stored position', () => {
     // Specification: clearHighlights must read current position from DOM, not from stored state
     const arrow = createFakeElement('polygon');
-    const highlightState = HighlightState.create();
+    const appState = AppState.create();
 
     // Initial state
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 307 }, 1.0));
-    HighlightState.storeOriginal(highlightState, 'arc-1', {
+    AppState.storeOriginal(appState, 'arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -179,7 +179,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints({ x: 100, y: 187 }, 1.3));
 
     // Clear: must use current position from DOM
-    const original = HighlightState.getOriginal(highlightState, 'arc-1');
+    const original = AppState.getOriginal(appState, 'arc-1');
     const currentTip = global.ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
     arrow.setAttribute('points', global.ArrowLogic.getArrowPoints(
       currentTip,       // Current position (source of truth)
@@ -194,10 +194,10 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
 
 describe('State Separation: Highlight vs Layout', () => {
   test('highlight state: scale (ephemeral, changes on hover)', () => {
-    const highlightState = HighlightState.create();
+    const appState = AppState.create();
 
     // Store initial scale
-    HighlightState.storeOriginal(highlightState, 'arc-1', {
+    AppState.storeOriginal(appState, 'arc-1', {
       strokeWidth: 1.5,
       scale: 1.0,
       tipX: 100,
@@ -205,7 +205,7 @@ describe('State Separation: Highlight vs Layout', () => {
     });
 
     // Highlight changes scale
-    const original = HighlightState.getOriginal(highlightState, 'arc-1');
+    const original = AppState.getOriginal(appState, 'arc-1');
     expect(original.scale).toBe(1.0);
 
     // Scale changes to 1.3 during highlight (not stored)
