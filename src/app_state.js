@@ -13,8 +13,7 @@ const AppState = {
   create() {
     return {
       collapsed: new Set(),
-      selection: { mode: 'none', type: null, id: null },
-      originalValues: new Map()  // arcId -> {strokeWidth, scale, tipX, tipY} (legacy, for migration)
+      selection: { mode: 'none', type: null, id: null }
     };
   },
 
@@ -134,32 +133,7 @@ const AppState = {
     return true;
   },
 
-  // === Original Values (arc styling, for reset after highlight) ===
-  // Legacy: stored per-arc. Will be replaced by StaticData calculations.
-
-  /**
-   * Store original values for an arc (only if not already stored)
-   * @param {Object} state
-   * @param {string} arcId
-   * @param {Object} values - {strokeWidth, scale, tipX, tipY}
-   */
-  storeOriginal(state, arcId, values) {
-    if (!state.originalValues.has(arcId)) {
-      state.originalValues.set(arcId, values);
-    }
-  },
-
-  /**
-   * Get stored original values for an arc
-   * @param {Object} state
-   * @param {string} arcId
-   * @returns {Object|undefined}
-   */
-  getOriginal(state, arcId) {
-    return state.originalValues.get(arcId);
-  },
-
-  // === Legacy Compatibility (for gradual migration) ===
+  // === Legacy Compatibility ===
   // These mirror HighlightState API for easier migration
 
   /**

@@ -204,27 +204,12 @@ if (typeof document !== 'undefined') {
   }
 
   function applyInitialArcWeights() {
-    // Iterate over StaticData instead of DOM queries
+    // Apply stroke-width from StaticData (no state storage needed - values are calculated on demand)
     for (const arcId of StaticData.getAllArcIds()) {
       const width = StaticData.getArcStrokeWidth(arcId);
       const visibleArc = DomAdapter.getVisibleArc(arcId);
       if (visibleArc) visibleArc.style.strokeWidth = width + 'px';
       scaleArrow(arcId, width);
-
-      // Store original values for reset (fixes arrow-head growth bug)
-      // Only store for visible arrows - hidden arrows have stale positions
-      const scale = ArrowLogic.scaleFromStrokeWidth(width);
-      DomAdapter.getVisibleArrows(arcId).forEach(arrow => {
-        const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
-        if (tip) {
-          AppState.storeOriginal(appState, arcId, {
-            strokeWidth: width,
-            scale: scale,
-            tipX: tip.x,
-            tipY: tip.y
-          });
-        }
-      });
     }
   }
 
@@ -278,6 +263,49 @@ if (typeof document !== 'undefined') {
   // Use AppState module for unified state management
   const appState = AppState.create();
 
+  /**
+   * Reset arc and arrows to original styling.
+   * @param {string} arcId - Arc identifier
+   * @param {boolean} isVirtual - True for virtual arcs (aggregated), false for regular
+   * @param {string|undefined} aggregatedLocs - Pipe-separated locations for virtual arcs
+   */
+  function resetArcToOriginal(arcId, isVirtual, aggregatedLocs) {
+    // Determine strokeWidth and scale from StaticData (no stored state needed)
+    let strokeWidth, scale;
+    if (isVirtual) {
+      // Virtual arcs: calculate from aggregated locations
+      const count = ArcLogic.countLocations(aggregatedLocs);
+      strokeWidth = ArcLogic.calculateStrokeWidth(count);
+      scale = strokeWidth / 1.5;
+    } else {
+      // Regular arcs: calculate from StaticData
+      strokeWidth = StaticData.getArcStrokeWidth(arcId);
+      scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
+    }
+
+    // Reset arc stroke-width
+    const arcSelector = isVirtual ? `.virtual-arc[data-arc-id="${arcId}"]` : null;
+    if (isVirtual) {
+      DomAdapter.querySelectorAll(arcSelector).forEach(arc => {
+        arc.style.strokeWidth = strokeWidth + 'px';
+      });
+    } else {
+      const visibleArc = DomAdapter.getVisibleArc(arcId);
+      if (visibleArc) visibleArc.style.strokeWidth = strokeWidth + 'px';
+    }
+
+    // Reset arrow scale (keep current position)
+    const arrows = isVirtual
+      ? DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`)
+      : DomAdapter.getVisibleArrows(arcId);
+    arrows.forEach(arrow => {
+      const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+      if (tip) {
+        arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, scale));
+      }
+    });
+  }
+
   function clearHighlights() {
     // Clear shadow paths
     LayerManager.clearLayer(LayerManager.LAYERS.SHADOWS, DomAdapter);
@@ -293,60 +321,17 @@ if (typeof document !== 'undefined') {
       LayerManager.moveToBaseLayer(el, DomAdapter);
     });
 
-    // Reset regular arcs and arrows to original size (using stored values)
+    // Reset regular arcs to original size
     DomAdapter.querySelectorAll('.arc-hitarea:not(.virtual-hitarea)').forEach(hitarea => {
-      const arcId = hitarea.dataset.arcId;
-      const original = AppState.getOriginal(appState, arcId);
-
-      if (original) {
-        // Use stored original values (fixes arrow-head growth bug)
-        const visibleArc = DomAdapter.getVisibleArc(arcId);
-        if (visibleArc) visibleArc.style.strokeWidth = original.strokeWidth + 'px';
-        // Reset arrow scale (NOT position - position is layout state, not highlight state)
-        DomAdapter.getVisibleArrows(arcId).forEach(arrow => {
-          const currentTip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
-          if (currentTip) {
-            arrow.setAttribute('points', ArrowLogic.getArrowPoints(
-              currentTip,  // Keep CURRENT position
-              original.scale  // Restore ORIGINAL scale
-            ));
-          }
-        });
-      } else {
-        // Fallback: use StaticData (for arcs without stored values)
-        const strokeWidth = StaticData.getArcStrokeWidth(arcId);
-        const visibleArc = DomAdapter.getVisibleArc(arcId);
-        if (visibleArc) visibleArc.style.strokeWidth = strokeWidth + 'px';
-        scaleArrow(arcId, strokeWidth);
-      }
+      resetArcToOriginal(hitarea.dataset.arcId, false);
     });
 
-    // Reset virtual arcs and arrows to original size (based on aggregated arc weights)
-    // Note: Virtual arcs don't use stored originals because they are destroyed and
-    // recreated on each recalculateVirtualEdges() call. Recalculating from
-    // sourceLocations is correct here - no accumulation bug possible.
+    // Reset virtual arcs to original size (recalculated from aggregated locations)
     DomAdapter.querySelectorAll('.virtual-hitarea').forEach(hitarea => {
-      const arcId = hitarea.dataset.arcId;
-      const locs = hitarea.dataset.sourceLocations;
-      const count = ArcLogic.countLocations(locs);
-      const strokeWidth = ArcLogic.calculateStrokeWidth(count);
-      const scale = strokeWidth / 1.5;
-
-      // Reset virtual arc stroke-width
-      DomAdapter.querySelectorAll(`.virtual-arc[data-arc-id="${arcId}"]`).forEach(arc => {
-        arc.style.strokeWidth = strokeWidth + 'px';
-      });
-
-      // Reset virtual arrow size
-      DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
-        const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
-        if (tip) {
-          arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, scale));
-        }
-      });
+      resetArcToOriginal(hitarea.dataset.arcId, true, hitarea.dataset.sourceLocations);
     });
 
-    // Remove CSS classes (including new highlight marker classes)
+    // Remove CSS classes
     DomAdapter.querySelectorAll('.selected-crate, .selected-module, .dep-node, .dependent-node, .highlighted-arc, .highlighted-arrow, .highlighted-label, .dimmed')
       .forEach(el => el.classList.remove('selected-crate', 'selected-module', 'dep-node', 'dependent-node', 'highlighted-arc', 'highlighted-arrow', 'highlighted-label', 'dimmed'));
   }
@@ -685,27 +670,6 @@ if (typeof document !== 'undefined') {
     });
 
     recalculateVirtualEdges();
-
-    // Update stored arrow positions after relayout (fixes stale positions after collapse/expand)
-    // Must FORCE update, not use storeOriginal() which skips if values already exist
-    // Iterate over StaticData instead of DOM queries for arc IDs
-    for (const arcId of StaticData.getAllArcIds()) {
-      const strokeWidth = StaticData.getArcStrokeWidth(arcId);
-      const scale = ArrowLogic.scaleFromStrokeWidth(strokeWidth);
-      // Get ALL arrows (even hidden ones) because they have updated positions from recalculateVirtualEdges
-      DomAdapter.getArrows(arcId).forEach(arrow => {
-        const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
-        if (tip) {
-          // Force update - directly set instead of storeOriginal which skips if exists
-          appState.originalValues.set(arcId, {
-            strokeWidth,
-            scale,
-            tipX: tip.x,
-            tipY: tip.y
-          });
-        }
-      });
-    }
 
     // Re-apply pinned highlight after edges were recreated
     const pinned = AppState.getPinned(appState);

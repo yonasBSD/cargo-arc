@@ -695,19 +695,12 @@ fn render_edges(positioned: &[PositionedItem], ir: &LayoutIR) -> String {
                 base_arc_class.to_string()
             };
 
-            // Build data-source-locations attribute (symbol-grouped format)
-            let locations_str = format_source_locations_by_symbol(&edge.source_locations);
-            let data_loc_attr = if !locations_str.is_empty() {
-                format!(r#" data-source-locations="{}""#, escape_xml(&locations_str))
-            } else {
-                String::new()
-            };
-
             let edge_id = format!("{}-{}", edge.from, edge.to);
 
             // Hit-area path (invisible, 12px wide, receives pointer events) → hitareas layer
+            // Note: source-locations are read from STATIC_DATA in JavaScript, not DOM attributes
             hitareas.push_str(&format!(
-                "    <path class=\"arc-hitarea\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" data-direction=\"{direction}\" d=\"{path}\"{data_loc_attr}/>\n",
+                "    <path class=\"arc-hitarea\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" data-direction=\"{direction}\" d=\"{path}\"/>\n",
                 edge.from, edge.to
             ));
             // Visible path (styled, no pointer events) → base-arcs layer
@@ -1246,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_edge_has_data_source_locations() {
+    fn test_render_edge_source_locations_in_static_data() {
         use crate::graph::SourceLocation;
         use std::path::PathBuf;
 
@@ -1277,8 +1270,14 @@ mod tests {
             }],
         );
         let svg = render(&ir, &RenderConfig::default());
-        assert!(svg.contains(r#"data-source-locations="#));
+        // Source locations are now in STATIC_DATA, not DOM attributes
+        assert!(
+            !svg.contains(r#"data-source-locations="#),
+            "DOM attribute should not exist - use STATIC_DATA instead"
+        );
+        // Location should be in STATIC_DATA usages array
         assert!(svg.contains("src/a.rs:5"));
+        assert!(svg.contains("usages: ["));
     }
 
     #[test]
@@ -1478,7 +1477,7 @@ mod tests {
             "Both paths should have data-arc-id"
         );
 
-        // Hit-area should have data-from, data-to, and data-source-locations
+        // Hit-area should have data-from and data-to (source-locations are in STATIC_DATA)
         let hitarea_line = svg
             .lines()
             .find(|l| l.contains("arc-hitarea") && l.contains("data-arc-id"))
