@@ -1,6 +1,7 @@
 //! Layout IR & Algorithms
 
 use crate::graph::{ArcGraph, Edge};
+use crate::volatility::Volatility;
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -404,6 +405,18 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
 
         let layout_id = ir.add_item(kind, label);
         node_map.insert(idx, layout_id);
+
+        // Extract source file path for modules from outgoing ModuleDep edges
+        if matches!(&graph[idx], Node::Module { .. }) {
+            let source_path = graph
+                .edges_directed(idx, petgraph::Direction::Outgoing)
+                .filter_map(|e| match e.weight() {
+                    Edge::ModuleDep(locs) => locs.first().map(|l| l.file.display().to_string()),
+                    _ => None,
+                })
+                .next();
+            ir.items[layout_id].source_path = source_path;
+        }
     }
 
     // Build set of crate pairs that have ModuleDep edges between them
@@ -532,6 +545,8 @@ pub struct LayoutItem {
     pub id: NodeId,
     pub kind: ItemKind,
     pub label: String,
+    pub source_path: Option<String>,
+    pub volatility: Option<(Volatility, usize)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -565,7 +580,13 @@ impl LayoutIR {
 
     pub fn add_item(&mut self, kind: ItemKind, label: String) -> NodeId {
         let id = self.items.len();
-        self.items.push(LayoutItem { id, kind, label });
+        self.items.push(LayoutItem {
+            id,
+            kind,
+            label,
+            source_path: None,
+            volatility: None,
+        });
         id
     }
 
@@ -1013,6 +1034,8 @@ mod tests {
             id: 0,
             kind: ItemKind::Crate,
             label: "my_crate".to_string(),
+            source_path: None,
+            volatility: None,
         };
         let module_item = LayoutItem {
             id: 1,
@@ -1021,6 +1044,8 @@ mod tests {
                 parent: 0,
             },
             label: "my_module".to_string(),
+            source_path: None,
+            volatility: None,
         };
         assert_eq!(crate_item.label, "my_crate");
         assert_eq!(module_item.id, 1);
@@ -1076,6 +1101,20 @@ mod tests {
         assert_eq!(ir.items.len(), 2);
         assert_eq!(ir.edges.len(), 1);
         assert_eq!(ir.items[crate_id].label, "my_crate");
+    }
+
+    #[test]
+    fn test_layout_item_default_source_path_is_none() {
+        let mut ir = LayoutIR::new();
+        let id = ir.add_item(ItemKind::Crate, "test".to_string());
+        assert!(ir.items[id].source_path.is_none());
+    }
+
+    #[test]
+    fn test_layout_item_default_volatility_is_none() {
+        let mut ir = LayoutIR::new();
+        let id = ir.add_item(ItemKind::Crate, "test".to_string());
+        assert!(ir.items[id].volatility.is_none());
     }
 
     #[test]

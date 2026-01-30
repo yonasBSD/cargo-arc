@@ -58,6 +58,22 @@ pub struct Args {
     /// Print volatility report (text) instead of dependency SVG
     #[arg(long)]
     pub volatility: bool,
+
+    /// Disable git volatility analysis in SVG output
+    #[arg(long)]
+    pub no_volatility: bool,
+
+    /// Volatility analysis period in months (default: 6)
+    #[arg(long, default_value = "6")]
+    pub volatility_months: usize,
+
+    /// Low volatility threshold (default: 2)
+    #[arg(long, default_value = "2")]
+    pub volatility_low: usize,
+
+    /// High volatility threshold (default: 10)
+    #[arg(long, default_value = "10")]
+    pub volatility_high: usize,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -72,6 +88,12 @@ pub fn run(args: Args) -> Result<()> {
             .init();
     }
 
+    let vol_config = VolatilityConfig {
+        months: args.volatility_months,
+        low_threshold: args.volatility_low,
+        high_threshold: args.volatility_high,
+    };
+
     // Volatility-only mode: skip the full pipeline, just run git analysis
     if args.volatility {
         let repo_path = args
@@ -79,7 +101,7 @@ pub fn run(args: Args) -> Result<()> {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let mut analyzer = VolatilityAnalyzer::new(VolatilityConfig::default());
+        let mut analyzer = VolatilityAnalyzer::new(vol_config);
         analyzer.analyze(repo_path)?;
         let report = analyzer.format_report();
         match args.output {
@@ -135,7 +157,31 @@ pub fn run(args: Args) -> Result<()> {
     let order = topo_sort(&graph, &cycles);
 
     // 9. Build layout (CrateDep edges skipped when ModuleDeps exist between crates)
-    let layout = build_layout(&graph, &order, &cycles);
+    let mut layout = build_layout(&graph, &order, &cycles);
+
+    // 9b. Populate volatility data (graceful degradation on failure)
+    if !args.no_volatility {
+        let repo_path = args
+            .manifest_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut analyzer = VolatilityAnalyzer::new(vol_config);
+        match analyzer.analyze(repo_path) {
+            Ok(()) => {
+                for item in &mut layout.items {
+                    if let Some(ref path) = item.source_path {
+                        let vol = analyzer.get_volatility(path);
+                        let count = analyzer.get_change_count(path);
+                        item.volatility = Some((vol, count));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Volatility analysis skipped: {e}");
+            }
+        }
+    }
 
     // 10. Render to SVG
     let svg = render(&layout, &RenderConfig::default());
@@ -197,6 +243,41 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_no_volatility_flag() {
+        let args = parse_args(&["cargo", "arc", "--no-volatility"]);
+        assert!(args.no_volatility);
+    }
+
+    #[test]
+    fn test_cli_volatility_months() {
+        let args = parse_args(&["cargo", "arc", "--volatility-months", "3"]);
+        assert_eq!(args.volatility_months, 3);
+    }
+
+    #[test]
+    fn test_cli_volatility_thresholds() {
+        let args = parse_args(&[
+            "cargo",
+            "arc",
+            "--volatility-low",
+            "5",
+            "--volatility-high",
+            "20",
+        ]);
+        assert_eq!(args.volatility_low, 5);
+        assert_eq!(args.volatility_high, 20);
+    }
+
+    #[test]
+    fn test_cli_volatility_config_defaults() {
+        let args = parse_args(&["cargo", "arc"]);
+        assert!(!args.no_volatility);
+        assert_eq!(args.volatility_months, 6);
+        assert_eq!(args.volatility_low, 2);
+        assert_eq!(args.volatility_high, 10);
+    }
+
+    #[test]
     #[ignore] // Smoke test - requires rust-analyzer (~30s)
     fn test_run_with_output_file() {
         let temp = tempfile::NamedTempFile::new().unwrap();
@@ -209,6 +290,10 @@ mod tests {
             cfg: vec![],
             debug: false,
             volatility: false,
+            no_volatility: false,
+            volatility_months: 6,
+            volatility_low: 2,
+            volatility_high: 10,
         };
         let result = run(args);
         assert!(result.is_ok());

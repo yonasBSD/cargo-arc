@@ -17,6 +17,10 @@ fn test_multi_crate_fixture() {
         cfg: vec![],
         debug: false,
         volatility: false,
+        no_volatility: false,
+        volatility_months: 6,
+        volatility_low: 2,
+        volatility_high: 10,
     };
 
     let result = run(args);
@@ -50,6 +54,10 @@ fn test_self_analysis() {
         cfg: vec![],
         debug: false,
         volatility: false,
+        no_volatility: false,
+        volatility_months: 6,
+        volatility_low: 2,
+        volatility_high: 10,
     };
 
     let result = run(args);
@@ -85,6 +93,10 @@ fn test_cfg_test_excluded_by_default() {
         cfg: vec![], // No --cfg test flag
         debug: false,
         volatility: false,
+        no_volatility: false,
+        volatility_months: 6,
+        volatility_low: 2,
+        volatility_high: 10,
     };
 
     let result = run(args);
@@ -115,6 +127,10 @@ fn test_cfg_test_included_with_flag() {
         cfg: vec!["test".to_string()], // --cfg test flag
         debug: false,
         volatility: false,
+        no_volatility: false,
+        volatility_months: 6,
+        volatility_low: 2,
+        volatility_high: 10,
     };
 
     let result = run(args);
