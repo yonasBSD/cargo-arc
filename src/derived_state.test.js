@@ -48,6 +48,7 @@ function createMockStaticData(data = TEST_STATIC_DATA) {
     },
     getAllNodeIds: () => Object.keys(data.nodes),
     getAllArcIds: () => Object.keys(data.arcs),
+    hasChildren: (nodeId) => data.nodes[nodeId]?.hasChildren ?? false,
     buildParentMap: () => {
       const parentMap = new Map();
       for (const [nodeId, node] of Object.entries(data.nodes)) {
@@ -322,6 +323,63 @@ describe("DerivedState", () => {
 
     test("returns 0 for empty positions", () => {
       expect(DerivedState.computeMaxRight(new Map())).toBe(0);
+    });
+  });
+
+  describe("deriveHighlightSet", () => {
+    test("collapsed node → only {nodeId}", () => {
+      const collapsed = new Set(["mod_a"]);
+      const result = DerivedState.deriveHighlightSet("mod_a", collapsed, staticData);
+
+      expect(result.size).toBe(1);
+      expect(result.has("mod_a")).toBe(true);
+    });
+
+    test("expanded parent → {nodeId, child1, child2, ...}", () => {
+      const collapsed = new Set();
+      const result = DerivedState.deriveHighlightSet("mod_a", collapsed, staticData);
+
+      expect(result.has("mod_a")).toBe(true);
+      expect(result.has("fn_1")).toBe(true);
+      expect(result.has("fn_2")).toBe(true);
+      expect(result.size).toBe(3);
+    });
+
+    test("nested expansion includes grandchildren", () => {
+      // crate expanded, mod_a expanded, mod_b expanded → all descendants
+      const collapsed = new Set();
+      const result = DerivedState.deriveHighlightSet("crate", collapsed, staticData);
+
+      expect(result.has("crate")).toBe(true);
+      expect(result.has("mod_a")).toBe(true);
+      expect(result.has("mod_b")).toBe(true);
+      expect(result.has("fn_1")).toBe(true);
+      expect(result.has("fn_2")).toBe(true);
+      expect(result.has("fn_3")).toBe(true);
+      expect(result.size).toBe(6);
+    });
+
+    test("partially collapsed subtree excludes hidden descendants", () => {
+      // crate expanded, mod_a collapsed → mod_a visible but fn_1/fn_2 hidden
+      const collapsed = new Set(["mod_a"]);
+      const result = DerivedState.deriveHighlightSet("crate", collapsed, staticData);
+
+      expect(result.has("crate")).toBe(true);
+      expect(result.has("mod_a")).toBe(true);
+      expect(result.has("mod_b")).toBe(true);
+      expect(result.has("fn_3")).toBe(true);
+      // fn_1 and fn_2 are hidden (mod_a is collapsed)
+      expect(result.has("fn_1")).toBe(false);
+      expect(result.has("fn_2")).toBe(false);
+      expect(result.size).toBe(4);
+    });
+
+    test("leaf node → only {nodeId}", () => {
+      const collapsed = new Set();
+      const result = DerivedState.deriveHighlightSet("fn_1", collapsed, staticData);
+
+      expect(result.size).toBe(1);
+      expect(result.has("fn_1")).toBe(true);
     });
   });
 });

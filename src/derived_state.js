@@ -113,6 +113,38 @@ const DerivedState = {
   },
 
   /**
+   * Derive the set of node IDs that should be highlighted when a node is pinned.
+   * - Collapsed node → {nodeId} (children hidden, virtual arcs cover them)
+   * - Expanded node → {nodeId, ...visible descendants}
+   * - Leaf node → {nodeId}
+   * @param {string} nodeId - The pinned node ID
+   * @param {Set<string>} collapsed - Set of collapsed node IDs
+   * @param {Object} staticData - StaticData accessor
+   * @returns {Set<string>} - Set of node IDs to highlight
+   */
+  deriveHighlightSet(nodeId, collapsed, staticData) {
+    const result = new Set([nodeId]);
+
+    // Collapsed or leaf → only the node itself
+    if (collapsed.has(nodeId) || !staticData.hasChildren(nodeId)) {
+      return result;
+    }
+
+    // Expanded parent → add visible descendants recursively
+    const parentMap = staticData.buildParentMap();
+    const descendants = TreeLogic.getDescendants(nodeId, parentMap);
+    for (const descId of descendants) {
+      // Only include if the descendant is visible (no collapsed ancestor between it and nodeId)
+      const visibleAncestor = TreeLogic.getVisibleAncestor(descId, collapsed, parentMap);
+      if (visibleAncestor === descId) {
+        result.add(descId);
+      }
+    }
+
+    return result;
+  },
+
+  /**
    * Compute current positions for all visible nodes based on collapse state.
    * Replaces extractNodePositions() - no DOM reads needed.
    * @param {Set<string>} collapsed - Set of collapsed node IDs

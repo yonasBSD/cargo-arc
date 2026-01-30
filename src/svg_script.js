@@ -378,6 +378,119 @@ if (typeof document !== 'undefined') {
     dimNonHighlighted();
   }
 
+  /**
+   * Highlight a group of nodes (primary + descendants) and their connected arcs.
+   * Used when a pinned node is expanded — all visible descendants get highlighted too.
+   * @param {string} primaryNodeId - The pinned node
+   * @param {Set<string>} highlightSet - Set of node IDs to highlight (primary + descendants)
+   */
+  function applyNodeGroupHighlight(primaryNodeId, highlightSet) {
+    // Primary node: saturated original color
+    const selectedNode = DomAdapter.getNode(primaryNodeId);
+    if (selectedNode) {
+      if (selectedNode.classList.contains('crate')) {
+        selectedNode.classList.add('selected-crate');
+      } else if (selectedNode.classList.contains('module')) {
+        selectedNode.classList.add('selected-module');
+      }
+    }
+
+    const processedArcs = new Set();
+
+    // For each node in the highlight set, process connected arcs
+    for (const nodeId of highlightSet) {
+      // Regular arcs via hitareas
+      DomAdapter.getConnectedHitareas(nodeId)
+        .forEach(hitarea => {
+          if (hitarea.classList.contains('hidden-by-filter')) return;
+
+          const arcId = hitarea.dataset.arcId;
+          if (processedArcs.has(arcId)) return;
+          processedArcs.add(arcId);
+
+          const visibleArc = DomAdapter.getVisibleArc(arcId);
+          if (visibleArc?.style.display === 'none') return;
+          if (!visibleArc) return;
+
+          const from = hitarea.dataset.from;
+          const to = hitarea.dataset.to;
+
+          // Determine relation type relative to the SET
+          const fromInSet = highlightSet.has(from);
+          const toInSet = highlightSet.has(to);
+          const relationType = fromInSet && !toInSet ? 'dep'
+            : !fromInSet && toInSet ? 'reverse'
+            : 'dep'; // both in set → internal, use dep convention
+
+          const highlightWidth = highlightArcElement(visibleArc, arcId, relationType);
+          if (highlightWidth > 0) scaleArrow(from + '-' + to, highlightWidth);
+
+          // External nodes (not in set) get border
+          if (!fromInSet) {
+            DomAdapter.getNode(from)?.classList.add('dependent-node');
+          }
+          if (!toInSet) {
+            DomAdapter.getNode(to)?.classList.add('dep-node');
+          }
+
+          DomAdapter.getVisibleArrows(from + '-' + to)
+            .forEach(arr => arr.classList.add('highlighted-arrow'));
+
+          LayerManager.moveToHighlightLayer(visibleArc, DomAdapter);
+          LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
+          DomAdapter.getVisibleArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
+        });
+
+      // Virtual arcs
+      DomAdapter.querySelectorAll('.virtual-arc[data-from="' + nodeId + '"], .virtual-arc[data-to="' + nodeId + '"]')
+        .forEach(arc => {
+          const from = arc.dataset.from;
+          const to = arc.dataset.to;
+          const arcId = from + '-' + to;
+          if (processedArcs.has('v:' + arcId)) return;
+          processedArcs.add('v:' + arcId);
+
+          const fromInSet = highlightSet.has(from);
+          const toInSet = highlightSet.has(to);
+          const relationType = fromInSet && !toInSet ? 'dep'
+            : !fromInSet && toInSet ? 'reverse'
+            : 'dep';
+
+          const highlightWidth = highlightArcElement(arc, arcId, relationType);
+
+          DomAdapter.querySelectorAll(`.virtual-arrow[data-vedge="${arcId}"]`).forEach(arrow => {
+            const tip = ArrowLogic.parseTipFromPoints(arrow.getAttribute('points'));
+            if (tip) {
+              arrow.setAttribute('points', ArrowLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
+            }
+          });
+
+          if (!fromInSet) {
+            DomAdapter.getNode(from)?.classList.add('dependent-node');
+          }
+          if (!toInSet) {
+            DomAdapter.getNode(to)?.classList.add('dep-node');
+          }
+
+          DomAdapter.getVirtualArrows(arcId)
+            .forEach(arr => arr.classList.add('highlighted-arrow'));
+
+          DomAdapter.querySelectorAll('.arc-count[data-vedge="' + arcId + '"]')
+            .forEach(el => el.classList.add('highlighted-label'));
+
+          LayerManager.moveToHighlightLayer(arc, DomAdapter);
+          LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
+          DomAdapter.getVirtualArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
+        });
+
+      // Move connected hitareas to highlight layer
+      DomAdapter.getConnectedHitareas(nodeId)
+        .forEach(h => LayerManager.moveToLayer(h, LayerManager.LAYERS.HIGHLIGHT_HITAREAS, DomAdapter));
+    }
+
+    dimNonHighlighted();
+  }
+
   function highlightEdge(from, to, pin) {
     const edgeId = from + '-' + to;
     if (pin) {
@@ -400,7 +513,12 @@ if (typeof document !== 'undefined') {
     } else {
       clearHighlights();
     }
-    applyNodeHighlight(nodeId);
+    const highlightSet = DerivedState.deriveHighlightSet(nodeId, appState.collapsed, StaticData);
+    if (highlightSet.size === 1) {
+      applyNodeHighlight(nodeId);
+    } else {
+      applyNodeGroupHighlight(nodeId, highlightSet);
+    }
   }
 
   function handleMouseEnter(type, id) {
@@ -510,7 +628,12 @@ if (typeof document !== 'undefined') {
     if (pinned) {
       clearHighlights();  // Remove stale shadow paths from deleted virtual arcs
       if (pinned.type === 'node') {
-        applyNodeHighlight(pinned.id);
+        const highlightSet = DerivedState.deriveHighlightSet(pinned.id, appState.collapsed, StaticData);
+        if (highlightSet.size === 1) {
+          applyNodeHighlight(pinned.id);
+        } else {
+          applyNodeGroupHighlight(pinned.id, highlightSet);
+        }
       } else if (pinned.type === 'edge') {
         const [from, to] = pinned.id.split('-');
         applyEdgeHighlight(from, to);
@@ -882,10 +1005,8 @@ if (typeof document !== 'undefined') {
 
   // Toggle collapse state
   function toggleCollapse(nodeId) {
-    if (AppState.getPinned(appState)) {
-      AppState.clearPinned(appState);
-      clearHighlights();
-    }
+    // Only clear visual highlights - relayout() will re-apply for pinned nodes
+    clearHighlights();
 
     const collapsed = AppState.toggleCollapsed(appState, nodeId);
 
@@ -901,10 +1022,8 @@ if (typeof document !== 'undefined') {
 
   // Toggle collapse/expand all parent nodes
   function toggleCollapseAll() {
-    if (AppState.getPinned(appState)) {
-      AppState.clearPinned(appState);
-      clearHighlights();
-    }
+    // Only clear visual highlights - relayout() will re-apply for pinned nodes
+    clearHighlights();
 
     const parentNodeIds = StaticData.getAllNodeIds().filter(id => StaticData.hasChildren(id));
     const allExpanded = parentNodeIds.every(id => !AppState.isCollapsed(appState, id));
