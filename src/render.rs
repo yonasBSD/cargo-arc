@@ -4,6 +4,8 @@ use crate::graph::SourceLocation;
 use crate::layout::{EdgeKind, ItemKind, LayoutIR, NodeId};
 use std::collections::HashSet;
 
+include!(concat!(env!("OUT_DIR"), "/js_modules.rs"));
+
 /// Character width for monospace 12px font
 const CHAR_WIDTH: f32 = 7.2;
 
@@ -497,49 +499,25 @@ fn render_script(
     // Generate STATIC_DATA first (global scope, before IIFE)
     let static_data = generate_static_data(ir, positioned, parents);
 
-    // Module dependencies must be loaded before svg_script.js
-    // Order matters:
-    // 1. STATIC_DATA (generated above) - raw data from Rust
-    // 2. static_data.js - helper to access STATIC_DATA
-    // 3. app_state.js - unified state management (replaces CollapseState + HighlightState)
-    // Load order:
-    // 1. static_data (Rust-generated data)
-    // 2. arc_logic (pure geometry, no deps - needed by static_data.js)
-    // 3. static_data.js (uses ArcLogic.calculateStrokeWidth)
-    // 4. selectors (no deps), then dom_adapter (uses selectors)
-    // 5. Other modules that may use dom_adapter
-    let arc_logic = include_str!("arc_logic.js");
-    let static_data_js = include_str!("static_data.js");
-    let app_state = include_str!("app_state.js");
-    let selectors = include_str!("selectors.js");
-    let dom_adapter = include_str!("dom_adapter.js");
-    let layer_manager = include_str!("layer_manager.js");
-    let tree_logic = include_str!("tree_logic.js");
-    let derived_state = include_str!("derived_state.js"); // after tree_logic (uses TreeLogic)
-    let highlight_logic = include_str!("highlight_logic.js");
-    let virtual_edge_logic = include_str!("virtual_edge_logic.js");
-    let text_metrics = include_str!("text_metrics.js");
-
-    let svg_script = include_str!("svg_script.js")
-        .replace("__ROW_HEIGHT__", &config.row_height.to_string())
-        .replace("__MARGIN__", &config.margin.to_string())
-        .replace("__TOOLBAR_HEIGHT__", &TOOLBAR_HEIGHT.to_string());
-
+    // JS modules loaded via build.rs-generated registry (topological order)
+    let mut scripts = vec![static_data];
+    for module in MODULES {
+        let mut source = module.source.to_string();
+        for key in module.config_keys {
+            let placeholder = format!("__{}__", key);
+            let value = match *key {
+                "ROW_HEIGHT" => config.row_height.to_string(),
+                "MARGIN" => config.margin.to_string(),
+                "TOOLBAR_HEIGHT" => TOOLBAR_HEIGHT.to_string(),
+                other => panic!("Unknown config key: {}", other),
+            };
+            source = source.replace(&placeholder, &value);
+        }
+        scripts.push(source);
+    }
     format!(
-        "  <script><![CDATA[\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n]]></script>\n",
-        static_data,
-        arc_logic,
-        static_data_js,
-        app_state,
-        selectors,
-        dom_adapter,
-        layer_manager,
-        tree_logic,
-        derived_state,
-        highlight_logic,
-        virtual_edge_logic,
-        text_metrics,
-        svg_script
+        "  <script><![CDATA[\n{}\n]]></script>\n",
+        scripts.join("\n")
     )
 }
 
@@ -1700,23 +1678,69 @@ mod tests {
     }
 
     #[test]
-    fn test_all_js_modules_embedded() {
-        // Ensures all JS modules referenced in svg_script.js are embedded in render_script()
+    fn test_all_registry_modules_embedded() {
         let config = RenderConfig::default();
         let ir = LayoutIR::new();
         let script = render_script(&config, &ir, &[], &HashSet::new());
 
-        // Known external modules that svg_script.js depends on
-        let required_modules = ["VirtualEdgeLogic"];
+        // Registry must contain all 12 modules
+        assert!(
+            MODULES.len() >= 12,
+            "Expected at least 12 modules in registry, got {}",
+            MODULES.len()
+        );
 
-        for module in required_modules {
-            // Check module is defined (const X = { or X = {)
-            let definition_pattern = format!("{} = {{", module);
+        // Every module from the registry must appear in the script output
+        for module in MODULES {
+            let annotation = format!("// @module {}", module.name);
             assert!(
-                script.contains(&definition_pattern),
-                "JS module '{}' is used but not embedded in render_script(). \
-                 Add include_str!() for the module file in render.rs.",
-                module
+                script.contains(&annotation),
+                "Registry module '{}' not found in render_script() output.",
+                module.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_module_order_deps_before_dependents() {
+        let config = RenderConfig::default();
+        let ir = LayoutIR::new();
+        let script = render_script(&config, &ir, &[], &HashSet::new());
+
+        // Collect positions of each module annotation in the output
+        let positions: Vec<(&str, usize)> = MODULES
+            .iter()
+            .map(|m| {
+                let pattern = format!("// @module {}", m.name);
+                let pos = script
+                    .find(&pattern)
+                    .unwrap_or_else(|| panic!("Module '{}' not found in script output", m.name));
+                (m.name, pos)
+            })
+            .collect();
+
+        // SvgScript must be last module (highest position)
+        let svg_script_pos = positions.iter().find(|(n, _)| *n == "SvgScript").unwrap().1;
+        for (name, pos) in &positions {
+            if *name != "SvgScript" {
+                assert!(
+                    *pos < svg_script_pos,
+                    "{} (pos {}) must appear before SvgScript (pos {})",
+                    name,
+                    pos,
+                    svg_script_pos
+                );
+            }
+        }
+
+        // STATIC_DATA (Rust-generated) must appear before all registry modules
+        let static_data_pos = script.find("const STATIC_DATA").unwrap();
+        for (name, pos) in &positions {
+            assert!(
+                static_data_pos < *pos,
+                "STATIC_DATA must appear before {} (pos {})",
+                name,
+                pos
             );
         }
     }

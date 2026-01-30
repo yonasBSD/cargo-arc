@@ -1,3 +1,6 @@
+// @module ArcLogic
+// @deps
+// @config
 // arc_logic.js - Pure geometry functions for arcs and arrows
 // No DOM dependencies
 

@@ -1,3 +1,6 @@
+// @module AppState
+// @deps
+// @config
 // app_state.js - Unified application state management
 // Consolidates CollapseState and HighlightState into single state object
 // No DOM dependencies - pure state operations

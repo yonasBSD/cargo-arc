@@ -1,3 +1,6 @@
+// @module LayerManager
+// @deps
+// @config
 /**
  * LayerManager - SVG layer management for highlight/base layer switching
  * Pure functions where possible, DOM operations via DomAdapter

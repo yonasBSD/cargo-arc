@@ -1,3 +1,6 @@
+// @module SvgScript
+// @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightLogic, VirtualEdgeLogic, TextMetrics
+// @config ROW_HEIGHT, MARGIN, TOOLBAR_HEIGHT
 // svg_script.js - DOM code for interactive SVG
 // ArcLogic is loaded from arc_logic.js before this file
 // Placeholders replaced at runtime: __ROW_HEIGHT__, __MARGIN__, __TOOLBAR_HEIGHT__

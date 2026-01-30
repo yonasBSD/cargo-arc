@@ -7,3 +7,6 @@ pub mod render;
 pub mod volatility;
 
 pub use cli::{Args, Cargo, run};
+
+#[cfg(test)]
+mod js_registry;

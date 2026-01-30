@@ -1,3 +1,6 @@
+// @module VirtualEdgeLogic
+// @deps ArcLogic
+// @config
 // virtual_edge_logic.js - Pure logic for virtual edge aggregation
 // No DOM dependencies - uses Maps as data structures
 

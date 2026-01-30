@@ -1,3 +1,6 @@
+// @module TreeLogic
+// @deps
+// @config
 // tree_logic.js - Pure tree traversal logic
 // No DOM dependencies - operates on Maps/Sets
 // State management moved to AppState module

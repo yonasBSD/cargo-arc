@@ -1,3 +1,6 @@
+// @module StaticData
+// @deps ArcLogic
+// @config
 // static_data.js - Helper for accessing STATIC_DATA
 // Provides typed access to pre-rendered node/arc data from Rust
 // Eliminates DOM reads for static properties (positions, parents, arc weights)

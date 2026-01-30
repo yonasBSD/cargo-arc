@@ -1,3 +1,6 @@
+// @module Selectors
+// @deps
+// @config
 /**
  * Selectors - CSS selector generators for SVG elements
  * Pure functions, no DOM access - testable in isolation

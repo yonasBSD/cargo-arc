@@ -1,3 +1,6 @@
+// @module TextMetrics
+// @deps
+// @config
 // text_metrics.js - Pure text width estimation without DOM
 // Replaces getBBox() calls for text measurement
 

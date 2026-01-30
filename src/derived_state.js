@@ -1,3 +1,6 @@
+// @module DerivedState
+// @deps TreeLogic
+// @config
 // derived_state.js - Pure functions to derive display state from core state
 // Computes highlights and visibility based on selection and collapse state
 // No DOM dependencies - operates on Maps/Sets

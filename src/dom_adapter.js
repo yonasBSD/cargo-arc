@@ -1,3 +1,6 @@
+// @module DomAdapter
+// @deps Selectors
+// @config
 // dom_adapter.js - DOM abstraction layer for SVG manipulation
 // Selectors is loaded before this file (see render.rs load order)
 
