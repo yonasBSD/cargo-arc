@@ -1,4 +1,8 @@
 //! HIR-based module analysis using rust-analyzer.
+//!
+//! All HIR functions below `FeatureConfig` are dead code without `feature = "hir"`.
+//! Phase 5 (ca-0116) will gate them behind `#[cfg(feature = "hir")]` properly.
+#![allow(dead_code)]
 
 use super::use_parser::{normalize_crate_name, parse_workspace_dependencies};
 use crate::model::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};

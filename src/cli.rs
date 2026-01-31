@@ -5,10 +5,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
-use crate::analyze::{
-    FeatureConfig, analyze_modules, analyze_workspace, collect_hir_module_paths,
-    find_crate_in_workspace, load_workspace_hir, normalize_crate_name,
-};
+use crate::analyze::{AnalysisBackend, FeatureConfig, analyze_workspace, normalize_crate_name};
 use crate::graph::build_graph;
 use crate::layout::{build_layout, detect_cycles, topo_sort};
 use crate::render::{RenderConfig, render};
@@ -131,25 +128,31 @@ pub fn run(args: Args) -> Result<()> {
     // 3. Build workspace crate names set for inter-crate dependency detection
     let workspace_crates: HashSet<String> = crates.iter().map(|c| c.name.clone()).collect();
 
-    // 4. Load rust-analyzer ONCE for the entire workspace
-    let (host, vfs) = load_workspace_hir(&args.manifest_path, &feature_config)?;
+    // 4. Create analysis backend (syn default, hir only with --hir flag)
+    #[cfg(feature = "hir")]
+    let use_hir = args.hir;
+    #[cfg(not(feature = "hir"))]
+    let use_hir = false;
+    let backend = AnalysisBackend::new(&args.manifest_path, &feature_config, use_hir)?;
 
-    // 5a. Collect module paths from ALL crates (lightweight hir walk)
-    let db = host.raw_database();
+    // 5a. Collect module paths from ALL crates
     let all_module_paths: HashMap<String, HashSet<String>> = crates
         .iter()
-        .filter_map(|c| {
-            let krate = find_crate_in_workspace(c, &host, &vfs).ok()?;
+        .map(|c| {
             let name = normalize_crate_name(&c.name);
-            let paths = collect_hir_module_paths(krate.root_module(db), db, &name, &name);
-            Some((name, paths))
+            let paths = backend.collect_module_paths(c);
+            (name, paths)
         })
         .collect();
 
-    // 5b. Analyze modules for each crate (reusing loaded workspace)
+    // 5b. Analyze modules for each crate
     let modules: Vec<_> = crates
         .iter()
-        .filter_map(|c| analyze_modules(c, &host, &vfs, &workspace_crates, &all_module_paths).ok())
+        .filter_map(|c| {
+            backend
+                .analyze_modules(c, &workspace_crates, &all_module_paths)
+                .ok()
+        })
         .collect();
 
     // 6. Build dependency graph

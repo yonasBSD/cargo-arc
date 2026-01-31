@@ -64,8 +64,8 @@ fn extract_path_attribute(attrs: &[syn::Attribute]) -> Option<String> {
 }
 
 /// Parse a Rust source file and return all external `mod` declarations,
-/// filtering out `#[cfg(test)]` modules and inline modules.
-fn parse_mod_declarations(file_path: &Path) -> Result<Vec<ModDecl>> {
+/// filtering out `#[cfg(test)]` modules (unless included) and inline modules.
+fn parse_mod_declarations(file_path: &Path, include_cfg_test: bool) -> Result<Vec<ModDecl>> {
     let source = std::fs::read_to_string(file_path)
         .with_context(|| format!("reading {}", file_path.display()))?;
     let syntax =
@@ -78,8 +78,8 @@ fn parse_mod_declarations(file_path: &Path) -> Result<Vec<ModDecl>> {
             if item_mod.content.is_some() {
                 continue;
             }
-            // Skip #[cfg(test)] modules
-            if is_cfg_test(&item_mod.attrs) {
+            // Skip #[cfg(test)] modules unless --cfg test was passed
+            if !include_cfg_test && is_cfg_test(&item_mod.attrs) {
                 continue;
             }
             decls.push(ModDecl {
@@ -125,8 +125,13 @@ fn child_resolve_dir(file_path: &Path) -> PathBuf {
 
 /// Recursively walk `mod` declarations starting from `file_path`,
 /// collecting relative module paths (e.g. `"foo"`, `"foo::bar"`).
-fn walk_modules_for_paths(file_path: &Path, parent_path: &str, paths: &mut HashSet<String>) {
-    let decls = match parse_mod_declarations(file_path) {
+fn walk_modules_for_paths(
+    file_path: &Path,
+    parent_path: &str,
+    paths: &mut HashSet<String>,
+    include_cfg_test: bool,
+) {
+    let decls = match parse_mod_declarations(file_path, include_cfg_test) {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!("skipping {}: {e:#}", file_path.display());
@@ -152,14 +157,18 @@ fn walk_modules_for_paths(file_path: &Path, parent_path: &str, paths: &mut HashS
         paths.insert(child_full.clone());
 
         if let Some(resolved) = child_path {
-            walk_modules_for_paths(&resolved, &child_full, paths);
+            walk_modules_for_paths(&resolved, &child_full, paths, include_cfg_test);
         }
     }
 }
 
 /// Collect all module paths reachable from `crate_root` via filesystem walk.
 /// Returns relative paths without crate prefix, e.g. `{"analyze", "analyze::hir"}`.
-pub(crate) fn collect_syn_module_paths(crate_root: &Path, crate_name: &str) -> HashSet<String> {
+pub(crate) fn collect_syn_module_paths(
+    crate_root: &Path,
+    crate_name: &str,
+    include_cfg_test: bool,
+) -> HashSet<String> {
     let _ = crate_name; // unused; kept for API parity with collect_hir_module_paths
     let root_file = match find_crate_root_file(crate_root) {
         Ok(f) => f,
@@ -169,7 +178,7 @@ pub(crate) fn collect_syn_module_paths(crate_root: &Path, crate_name: &str) -> H
         }
     };
     let mut paths = HashSet::new();
-    walk_modules_for_paths(&root_file, "", &mut paths);
+    walk_modules_for_paths(&root_file, "", &mut paths, include_cfg_test);
     paths
 }
 
@@ -187,6 +196,7 @@ fn walk_module_syn(
     crate_root: &Path,
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    include_cfg_test: bool,
 ) -> ModuleInfo {
     let full_path = if parent_path == module_name {
         // root module: full_path == crate name
@@ -217,7 +227,7 @@ fn walk_module_syn(
     );
 
     // Discover children
-    let decls = parse_mod_declarations(file_path).unwrap_or_default();
+    let decls = parse_mod_declarations(file_path, include_cfg_test).unwrap_or_default();
 
     let resolve_dir = child_resolve_dir(file_path);
 
@@ -240,6 +250,7 @@ fn walk_module_syn(
                     crate_root,
                     workspace_crates,
                     all_module_paths,
+                    include_cfg_test,
                 )
             })
         })
@@ -259,6 +270,7 @@ pub(crate) fn analyze_modules_syn(
     crate_info: &CrateInfo,
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    include_cfg_test: bool,
 ) -> Result<ModuleTree> {
     let root_file = find_crate_root_file(&crate_info.path)?;
     let normalized = normalize_crate_name(&crate_info.name);
@@ -271,6 +283,7 @@ pub(crate) fn analyze_modules_syn(
         &crate_info.path,
         workspace_crates,
         all_module_paths,
+        include_cfg_test,
     );
 
     Ok(ModuleTree { root })
@@ -373,7 +386,7 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let path = write_rust_file(&tmp, "mod foo;");
 
-            let decls = parse_mod_declarations(&path).unwrap();
+            let decls = parse_mod_declarations(&path, false).unwrap();
             assert_eq!(decls.len(), 1);
             assert_eq!(decls[0].name, "foo");
             assert!(decls[0].explicit_path.is_none());
@@ -384,7 +397,7 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let path = write_rust_file(&tmp, "#[cfg(test)]\nmod tests;");
 
-            let decls = parse_mod_declarations(&path).unwrap();
+            let decls = parse_mod_declarations(&path, false).unwrap();
             assert!(decls.is_empty());
         }
 
@@ -393,7 +406,7 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let path = write_rust_file(&tmp, "mod alpha;\nmod beta;\nmod gamma;");
 
-            let decls = parse_mod_declarations(&path).unwrap();
+            let decls = parse_mod_declarations(&path, false).unwrap();
             let names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
             assert_eq!(names, vec!["alpha", "beta", "gamma"]);
         }
@@ -403,7 +416,7 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let path = write_rust_file(&tmp, "mod foo { fn bar() {} }");
 
-            let decls = parse_mod_declarations(&path).unwrap();
+            let decls = parse_mod_declarations(&path, false).unwrap();
             assert!(decls.is_empty());
         }
 
@@ -412,7 +425,7 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let path = write_rust_file(&tmp, "#[path = \"custom.rs\"]\nmod foo;");
 
-            let decls = parse_mod_declarations(&path).unwrap();
+            let decls = parse_mod_declarations(&path, false).unwrap();
             assert_eq!(decls.len(), 1);
             assert_eq!(decls[0].name, "foo");
             assert_eq!(decls[0].explicit_path.as_deref(), Some("custom.rs"));
@@ -478,7 +491,7 @@ mod tests {
             std::fs::create_dir_all(&foo_dir).unwrap();
             std::fs::write(foo_dir.join("bar.rs"), "").unwrap();
 
-            let paths = collect_syn_module_paths(tmp.path(), "synth");
+            let paths = collect_syn_module_paths(tmp.path(), "synth", false);
             assert!(
                 paths.contains("foo"),
                 "should contain 'foo', found: {paths:?}"
@@ -493,7 +506,7 @@ mod tests {
         #[test]
         fn test_collect_paths_own_crate() {
             let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-            let paths = collect_syn_module_paths(crate_root, "cargo_arc");
+            let paths = collect_syn_module_paths(crate_root, "cargo_arc", false);
 
             for expected in [
                 "analyze",
@@ -522,7 +535,7 @@ mod tests {
             std::fs::create_dir_all(&src).unwrap();
             std::fs::write(src.join("lib.rs"), "// empty crate").unwrap();
 
-            let paths = collect_syn_module_paths(tmp.path(), "empty");
+            let paths = collect_syn_module_paths(tmp.path(), "empty", false);
             assert!(paths.is_empty(), "expected empty set, found: {paths:?}");
         }
     }
@@ -541,7 +554,7 @@ mod tests {
             let workspace_crates: HashSet<String> =
                 ["cargo-arc"].iter().map(|s| s.to_string()).collect();
 
-            let tree = analyze_modules_syn(&crate_info, &workspace_crates, &HashMap::new())
+            let tree = analyze_modules_syn(&crate_info, &workspace_crates, &HashMap::new(), false)
                 .expect("should analyze");
 
             assert_eq!(tree.root.name, "cargo_arc");
@@ -593,11 +606,12 @@ mod tests {
 
             // Collect module paths for accurate dependency resolution
             let mut all_module_paths = HashMap::new();
-            let paths = collect_syn_module_paths(crate_root, "cargo_arc");
+            let paths = collect_syn_module_paths(crate_root, "cargo_arc", false);
             all_module_paths.insert("cargo_arc".to_string(), paths);
 
-            let tree = analyze_modules_syn(&crate_info, &workspace_crates, &all_module_paths)
-                .expect("should analyze");
+            let tree =
+                analyze_modules_syn(&crate_info, &workspace_crates, &all_module_paths, false)
+                    .expect("should analyze");
 
             let graph_mod = tree
                 .root

@@ -18,7 +18,7 @@ use {
 /// Backend for module analysis: lightweight syn-based or full HIR-based.
 pub enum AnalysisBackend {
     /// Fast filesystem + syn parsing (default).
-    Syn,
+    Syn { include_cfg_test: bool },
     /// Full rust-analyzer HIR (requires `--hir` flag + `feature = "hir"`).
     #[cfg(feature = "hir")]
     Hir {
@@ -41,14 +41,17 @@ impl AnalysisBackend {
             return Ok(Self::Hir { host, vfs });
         }
 
-        let _ = (manifest_path, feature_config, use_hir);
-        Ok(Self::Syn)
+        let include_cfg_test = feature_config.cfg_flags.contains(&"test".to_string());
+        let _ = (manifest_path, use_hir);
+        Ok(Self::Syn { include_cfg_test })
     }
 
     /// Collect all module paths for a crate (lightweight).
     pub fn collect_module_paths(&self, crate_info: &CrateInfo) -> HashSet<String> {
         match self {
-            Self::Syn => collect_syn_module_paths(&crate_info.path, &crate_info.name),
+            Self::Syn { include_cfg_test } => {
+                collect_syn_module_paths(&crate_info.path, &crate_info.name, *include_cfg_test)
+            }
             #[cfg(feature = "hir")]
             Self::Hir { host, vfs } => {
                 let Ok(krate) = find_crate_in_workspace(crate_info, host, vfs) else {
@@ -69,7 +72,12 @@ impl AnalysisBackend {
         all_module_paths: &HashMap<String, HashSet<String>>,
     ) -> Result<ModuleTree> {
         match self {
-            Self::Syn => analyze_modules_syn(crate_info, workspace_crates, all_module_paths),
+            Self::Syn { include_cfg_test } => analyze_modules_syn(
+                crate_info,
+                workspace_crates,
+                all_module_paths,
+                *include_cfg_test,
+            ),
             #[cfg(feature = "hir")]
             Self::Hir { host, vfs } => super::hir::analyze_modules(
                 crate_info,
@@ -90,7 +98,7 @@ mod tests {
     fn test_backend_syn_default() {
         let backend = AnalysisBackend::new(Path::new("."), &FeatureConfig::default(), false)
             .expect("should create backend");
-        assert!(matches!(backend, AnalysisBackend::Syn));
+        assert!(matches!(backend, AnalysisBackend::Syn { .. }));
     }
 
     #[cfg(feature = "hir")]
@@ -98,6 +106,6 @@ mod tests {
     fn test_backend_syn_when_hir_not_requested() {
         let backend = AnalysisBackend::new(Path::new("."), &FeatureConfig::default(), false)
             .expect("should create backend");
-        assert!(matches!(backend, AnalysisBackend::Syn));
+        assert!(matches!(backend, AnalysisBackend::Syn { .. }));
     }
 }
