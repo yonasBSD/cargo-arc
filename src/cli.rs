@@ -74,6 +74,11 @@ pub struct Args {
     /// High volatility threshold (default: 10)
     #[arg(long, default_value = "10")]
     pub volatility_high: usize,
+
+    /// Use rust-analyzer HIR backend instead of syn (slower but may catch more)
+    #[cfg(feature = "hir")]
+    #[arg(long)]
+    pub hir: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {

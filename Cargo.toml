@@ -24,6 +24,9 @@ ra_ap_cfg = "=0.0.316"
 dunce = "1.0.4"
 syn = { version = "2", features = ["full"] }
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("hir"))'] }
+
 [dev-dependencies]
 tempfile = "3"
 
