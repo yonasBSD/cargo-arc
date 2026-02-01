@@ -29,6 +29,37 @@ pub(crate) struct LayoutConstants {
     pub arc_y_offset: f32,
     pub arc_min_space: f32,
     pub toolbar: ToolbarLayout,
+    pub sidebar: SidebarLayout,
+}
+
+/// Sidebar shadow parameters — single source of truth.
+/// Used to generate: CSS box-shadow, SVG canvas padding, and JS foreignObject padding.
+/// The sidebar sits inside a foreignObject in SVG. Both the foreignObject and the SVG
+/// canvas itself clip content at their boundaries. These values ensure the shadow has
+/// enough room to render without being cut off.
+pub(crate) struct SidebarLayout {
+    /// box-shadow Y offset (px)
+    pub shadow_offset_y: f32,
+    /// box-shadow blur radius (px)
+    pub shadow_blur: f32,
+    /// box-shadow opacity (0.0–1.0)
+    pub shadow_opacity: f32,
+}
+
+impl SidebarLayout {
+    /// CSS box-shadow value derived from the layout constants.
+    pub fn box_shadow_css(&self) -> String {
+        format!(
+            "0 {}px {}px rgba(0,0,0,{})",
+            self.shadow_offset_y as i32, self.shadow_blur as i32, self.shadow_opacity,
+        )
+    }
+
+    /// Extra padding needed so SVG canvas and foreignObject don't clip the shadow.
+    /// max downward extent = offset_y + blur, plus 2px safety margin.
+    pub fn shadow_padding(&self) -> f32 {
+        self.shadow_offset_y + self.shadow_blur + 2.0
+    }
 }
 
 pub(crate) struct ToolbarLayout {
@@ -83,6 +114,11 @@ static LAYOUT: LayoutConstants = LayoutConstants {
         label_x_offset: 6.0,
         label_y_offset: 4.0,
         cb2_x_offset: 190.0,
+    },
+    sidebar: SidebarLayout {
+        shadow_offset_y: 2.0,
+        shadow_blur: 8.0,
+        shadow_opacity: 0.12,
     },
 };
 
@@ -600,8 +636,11 @@ fn calculate_canvas_size(
     } else {
         config.margin * 2.0 + positioned.len() as f32 * config.row_height
     };
-    // Add toolbar height and tooltip height for bottom overflow
-    let height = base_height + LAYOUT.toolbar.height + max_tooltip_height;
+    // Sidebar box-shadow extends below the SVG canvas edge when the panel sits
+    // near the bottom. The SVG element itself clips anything beyond its viewBox,
+    // so we add padding to ensure the shadow renders fully.
+    let height =
+        base_height + LAYOUT.toolbar.height + max_tooltip_height + LAYOUT.sidebar.shadow_padding();
 
     // Width: max(box_right_edge) + arc_space + tooltip_width + margin
     let max_x = positioned
@@ -940,13 +979,14 @@ fn build_css_rules() -> Vec<CssRule> {
             &format!(".{}", c.sidebar.root),
             &[
                 ("background", GRAY_50),
-                ("border-left", &format!("1px solid {}", GRAY_200)),
+                ("border", &format!("1px solid {}", GRAY_200)),
+                ("border-radius", "8px"),
+                ("box-shadow", &LAYOUT.sidebar.box_shadow_css()),
                 ("font-family", "monospace"),
                 ("font-size", "12px"),
                 ("color", GRAY_600),
                 ("display", "flex"),
                 ("flex-direction", "column"),
-                ("height", "100%"),
                 ("overflow", "hidden"),
                 ("user-select", "text"),
             ],
@@ -1043,10 +1083,12 @@ fn render_sidebar(width: f32) -> String {
         0
     };
     let cs = &CSS.sidebar;
+    // overflow:visible lets box-shadow and border-radius render outside the
+    // foreignObject boundary (SVG foreignObject defaults to overflow:hidden).
     // Initial height 500 — JS updatePosition() caps dynamically via SIDEBAR_MAX_HEIGHT
     format!(
         concat!(
-            "<foreignObject id=\"relation-sidebar\" x=\"{}\" y=\"0\" width=\"280\" height=\"500\" style=\"display:none\">\n",
+            "<foreignObject id=\"relation-sidebar\" x=\"{}\" y=\"0\" width=\"280\" height=\"500\" style=\"display:none; overflow:visible\">\n",
             "  <div class=\"{}\" xmlns=\"http://www.w3.org/1999/xhtml\"></div>\n",
             "</foreignObject>\n",
         ),
@@ -1320,6 +1362,7 @@ fn render_script(
                 "ROW_HEIGHT" => config.row_height.to_string(),
                 "MARGIN" => config.margin.to_string(),
                 "TOOLBAR_HEIGHT" => LAYOUT.toolbar.height.to_string(),
+                "SIDEBAR_SHADOW_PAD" => LAYOUT.sidebar.shadow_padding().to_string(),
                 other => panic!("Unknown config key: {}", other),
             };
             source = source.replace(&placeholder, &value);

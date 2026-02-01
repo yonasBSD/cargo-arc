@@ -647,6 +647,9 @@ if (typeof document !== 'undefined') {
         applyEdgeHighlight(from, to);
       }
     }
+
+    // Update sidebar position after layout changed arc positions
+    if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
   }
 
   // Helper: Calculate arc path from position objects (no DOM read)

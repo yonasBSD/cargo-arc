@@ -105,6 +105,10 @@ describe("Selectors", () => {
     test("allBaseArrows returns dep-arrow, cycle-arrow", () => {
       expect(Selectors.allBaseArrows()).toBe(".dep-arrow, .cycle-arrow");
     });
+
+    test("allArcPaths returns dep-arc, cycle-arc, virtual-arc", () => {
+      expect(Selectors.allArcPaths()).toBe(".dep-arc, .cycle-arc, .virtual-arc");
+    });
   });
 
   describe("Layer Selectors", () => {

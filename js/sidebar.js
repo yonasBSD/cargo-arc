@@ -1,11 +1,19 @@
 // @module SidebarLogic
-// @deps StaticData, DomAdapter
-// @config
+// @deps StaticData, DomAdapter, Selectors
+// @config TOOLBAR_HEIGHT, SIDEBAR_SHADOW_PAD
 // sidebar.js - Relation sidebar for arc usage details
 // Shows usage locations when an arc is selected (pinned)
 // foreignObject-based HTML sidebar with scroll tracking
 
 const SIDEBAR_MAX_HEIGHT = 500;
+const TOOLBAR_HEIGHT = typeof __TOOLBAR_HEIGHT__ !== 'undefined' ? __TOOLBAR_HEIGHT__ : 0;
+const SIDEBAR_GAP_X = 24;
+const SIDEBAR_MARGIN_RIGHT = 16;
+const SIDEBAR_GAP_TOP = 20;
+// foreignObject must be taller than the visible sidebar so box-shadow
+// (which renders outside the div) is not clipped by the foreignObject boundary.
+// Value derived from box-shadow offset+blur in render.rs layout constants.
+const SIDEBAR_SHADOW_PAD = typeof __SIDEBAR_SHADOW_PAD__ !== 'undefined' ? __SIDEBAR_SHADOW_PAD__ : 12;
 
 const SidebarLogic = {
   /**
@@ -90,8 +98,23 @@ const SidebarLogic = {
   },
 
   /**
+   * Find the rightmost X coordinate among all visible arc paths.
+   * @returns {number}
+   */
+  _getMaxArcRightX() {
+    const arcs = DomAdapter.querySelectorAll(Selectors.allArcPaths());
+    let maxX = 0;
+    for (const arc of arcs) {
+      if (arc.style.display === 'none') continue;
+      const bbox = arc.getBBox();
+      maxX = Math.max(maxX, bbox.x + bbox.width);
+    }
+    return maxX;
+  },
+
+  /**
    * Calculate sidebar x/y in SVG coordinates based on visible viewport.
-   * Centers sidebar horizontally in the browser window, tracks scroll vertically.
+   * Positions sidebar right of the widest visible arc, tracks scroll vertically.
    * @returns {{ x: number, y: number, height: number }|null}
    */
   _calcPosition() {
@@ -102,16 +125,30 @@ const SidebarLogic = {
     const scaleX = viewBox.width / rect.width;
     const scaleY = viewBox.height / rect.height;
 
-    // Viewport center in SVG-coordinates
-    const vpCenterX = (window.innerWidth / 2 - rect.left) * scaleX;
     const sidebarWidth = 280;
-    const x = Math.max(0, vpCenterX - sidebarWidth / 2);
 
-    // Scroll offset in SVG-coordinates
+    // X: right of the widest visible arc + gap
+    const maxArcRight = this._getMaxArcRightX();
+    let x = maxArcRight + SIDEBAR_GAP_X;
+
+    // Fallback: right viewport edge - width - margin
+    const viewportRight = (window.innerWidth - rect.left) * scaleX;
+    if (x + sidebarWidth > viewportRight) {
+      x = viewportRight - sidebarWidth - SIDEBAR_MARGIN_RIGHT;
+    }
+    x = Math.max(0, x);
+
+    // Y: scroll offset + toolbar height + gap
     const scrollTop = Math.max(0, -rect.top) * scaleY;
+    const y = scrollTop + TOOLBAR_HEIGHT + SIDEBAR_GAP_TOP;
+
     const vpHeight = window.innerHeight * scaleY;
 
-    return { x: Math.round(x), y: Math.round(scrollTop), height: Math.round(Math.min(vpHeight, SIDEBAR_MAX_HEIGHT)) };
+    return {
+      x: Math.round(x),
+      y: Math.round(y),
+      height: Math.round(Math.min(vpHeight - TOOLBAR_HEIGHT - SIDEBAR_GAP_TOP, SIDEBAR_MAX_HEIGHT)),
+    };
   },
 
   /**
@@ -159,7 +196,9 @@ const SidebarLogic = {
     if (!pos) return;
     el.setAttribute("x", String(pos.x));
     el.setAttribute("y", String(pos.y));
-    el.setAttribute("height", String(pos.height));
+    el.setAttribute("height", String(pos.height + SIDEBAR_SHADOW_PAD));
+    const innerDiv = el.querySelector(".sidebar-root");
+    if (innerDiv) innerDiv.style.height = pos.height + 'px';
   },
 };
 

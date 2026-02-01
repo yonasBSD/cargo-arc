@@ -2,6 +2,11 @@ import { test, expect, describe, beforeEach } from "bun:test";
 import { createFakeElement } from "./dom_adapter.js";
 import { SidebarLogic } from "./sidebar.js";
 
+// Mock Selectors (sidebar.js uses _getMaxArcRightX → Selectors.allArcPaths)
+globalThis.Selectors = {
+  allArcPaths: () => ".dep-arc, .cycle-arc, .virtual-arc",
+};
+
 // Mock STATIC_DATA for buildContent tests
 globalThis.STATIC_DATA = {
   arcs: {
@@ -148,6 +153,7 @@ describe("SidebarLogic", () => {
         },
         getSvgRoot() { return svgMock; },
         querySelector(sel) { if (sel === "svg") return svgMock; return null; },
+        querySelectorAll() { return []; },
       };
       globalThis.window = globalThis.window || {};
       globalThis.window.innerWidth = 1000;
@@ -176,7 +182,7 @@ describe("SidebarLogic", () => {
   });
 
   describe("updatePosition", () => {
-    test("sets x and y based on viewport center", () => {
+    test("positions right of arcs with fallback to viewport edge", () => {
       const fakeEl = createFakeElement("foreignObject");
       const innerDiv = createFakeElement("div");
       Object.defineProperty(innerDiv, "innerHTML", {
@@ -196,16 +202,52 @@ describe("SidebarLogic", () => {
           return null;
         },
         getSvgRoot() { return svgMock; },
+        querySelectorAll() { return []; },
       };
       globalThis.window = globalThis.window || {};
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 800;
       SidebarLogic.show("crate_a-crate_b");
-      // scaleX = 2000/1000 = 2, vpCenterX = (500 - 0)*2 = 1000
-      // x = 1000 - 140 = 860
-      expect(fakeEl.getAttribute("x")).toBe("860");
-      // scaleY = 1600/800 = 2, scrollTop = max(0, 300)*2 = 600
-      expect(fakeEl.getAttribute("y")).toBe("600");
+      // No arcs → maxArcRight=0, x=0+24=24
+      // viewportRight = (1000-0)*2 = 2000, 24+280=304 < 2000 → no fallback
+      expect(fakeEl.getAttribute("x")).toBe("24");
+      // scaleY = 1600/800 = 2, scrollTop = max(0,300)*2 = 600
+      // y = 600 + TOOLBAR_HEIGHT(0 in test) + GAP_TOP(20) = 620
+      expect(fakeEl.getAttribute("y")).toBe("620");
+    });
+
+    test("falls back to viewport edge when arcs are too wide", () => {
+      const fakeEl = createFakeElement("foreignObject");
+      const innerDiv = createFakeElement("div");
+      Object.defineProperty(innerDiv, "innerHTML", {
+        get() { return this._innerHTML || ""; },
+        set(v) { this._innerHTML = v; },
+      });
+      fakeEl.querySelector = () => innerDiv;
+      const svgMock = {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+      };
+      // Mock an arc at x=1800, width=100 → right edge at 1900
+      const fakeArc = { style: { display: '' }, getBBox() { return { x: 1800, width: 100 }; } };
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === "relation-sidebar") return fakeEl;
+          return null;
+        },
+        getSvgRoot() { return svgMock; },
+        querySelectorAll() { return [fakeArc]; },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 800;
+      SidebarLogic.show("crate_a-crate_b");
+      // maxArcRight=1900, x=1900+24=1924
+      // viewportRight = (1000-0)*2 = 2000, 1924+280=2204 > 2000
+      // fallback: x = 2000-280-16 = 1704
+      expect(fakeEl.getAttribute("x")).toBe("1704");
     });
 
     test("height is capped at MAX_HEIGHT", () => {
@@ -229,13 +271,15 @@ describe("SidebarLogic", () => {
           return null;
         },
         getSvgRoot() { return svgMock; },
+        querySelectorAll() { return []; },
       };
       globalThis.window = globalThis.window || {};
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 2000;
       SidebarLogic.show("crate_a-crate_b");
-      // vpHeight = 2000 * (1600/800) = 4000, but capped at MAX_HEIGHT (500)
-      expect(Number(fakeEl.getAttribute("height"))).toBeLessThanOrEqual(500);
+      // vpHeight = 2000 * (1600/800) = 4000, 4000 - 0 - 20 = 3980, capped at 500
+      // Inner div gets content height, foreignObject gets +12 for shadow padding
+      expect(parseInt(innerDiv.style.height)).toBeLessThanOrEqual(500);
     });
   });
 });

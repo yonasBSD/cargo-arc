@@ -29,6 +29,7 @@ const Selectors = {
   allVirtualElements: () => { const c = STATIC_DATA.classes; return `.${c.virtualArc}, .${c.virtualHitarea}, .${c.virtualArrow}, .${c.arcCount}, .${c.arcCountGroup}, .${c.arcCountBg}`; },
   allBaseEdges: () => { const c = STATIC_DATA.classes; return `.${c.arcHitarea}, .${c.depArc}, .${c.cycleArc}`; },
   allBaseArrows: () => { const c = STATIC_DATA.classes; return `.${c.depArrow}, .${c.cycleArrow}`; },
+  allArcPaths: () => { const c = STATIC_DATA.classes; return `.${c.depArc}, .${c.cycleArc}, .${c.virtualArc}`; },
 
   // Layer selectors (for clearHighlights)
   highlightedArcs: () => '#highlight-arcs-layer > *',
