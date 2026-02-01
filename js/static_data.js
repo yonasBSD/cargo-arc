@@ -49,7 +49,9 @@ const StaticData = {
    * @returns {number}
    */
   getArcWeight(arcId) {
-    return STATIC_DATA.arcs[arcId]?.usages.length ?? 0;
+    const usages = STATIC_DATA.arcs[arcId]?.usages;
+    if (!usages) return 0;
+    return usages.reduce((sum, g) => sum + g.locations.length, 0);
   },
 
   /**
@@ -62,12 +64,21 @@ const StaticData = {
   },
 
   /**
-   * Get formatted usages as pipe-separated string (for tooltips)
+   * Get formatted usages as pipe-separated string (for tooltips).
+   * Flattens structured groups into "symbol ← file:line" lines.
    * @param {string} arcId
    * @returns {string}
    */
   getFormattedUsages(arcId) {
-    return this.getArcUsages(arcId).join('|');
+    const groups = this.getArcUsages(arcId);
+    const lines = [];
+    for (const g of groups) {
+      for (const loc of g.locations) {
+        const prefix = g.symbol ? `${g.symbol}  \u2190 ` : '';
+        lines.push(`${prefix}${loc.file}:${loc.line}`);
+      }
+    }
+    return lines.join('|');
   },
 
   /**

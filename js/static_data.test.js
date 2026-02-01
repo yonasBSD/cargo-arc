@@ -2,7 +2,9 @@ import { test, expect, describe, beforeEach } from "bun:test";
 import { ArcLogic } from "./arc_logic.js";
 globalThis.ArcLogic = ArcLogic;
 
-// Mock STATIC_DATA for tests
+globalThis.ArcLogic = ArcLogic;
+
+// Mock STATIC_DATA for tests (structured object format from Phase 1)
 const TEST_STATIC_DATA = {
   nodes: {
     crate: { type: "crate", parent: null, x: 0, y: 0, width: 100, height: 24, hasChildren: true },
@@ -11,8 +13,14 @@ const TEST_STATIC_DATA = {
     fn_2: { type: "function", parent: "mod_a", x: 40, y: 80, width: 100, height: 20, hasChildren: false }
   },
   arcs: {
-    "fn_1-fn_2": { from: "fn_1", to: "fn_2", usages: ["mod_a.rs:10"] },
-    "mod_a-crate": { from: "mod_a", to: "crate", usages: ["lib.rs:5", "lib.rs:10", "lib.rs:15"] }
+    "fn_1-fn_2": { from: "fn_1", to: "fn_2", usages: [
+      { symbol: "call_fn2", modulePath: null, locations: [{ file: "mod_a.rs", line: 10 }] }
+    ] },
+    "mod_a-crate": { from: "mod_a", to: "crate", usages: [
+      { symbol: "use_crate", modulePath: null, locations: [
+        { file: "lib.rs", line: 5 }, { file: "lib.rs", line: 10 }, { file: "lib.rs", line: 15 }
+      ] }
+    ] }
   }
 };
 
@@ -55,7 +63,7 @@ describe("StaticData", () => {
       TEST_STATIC_DATA.arcs["heavy-arc"] = {
         from: "fn_1",
         to: "crate",
-        usages: Array(50).fill("file.rs:1")
+        usages: [{ symbol: "heavy", modulePath: null, locations: Array(50).fill({ file: "file.rs", line: 1 }) }]
       };
 
       const width = StaticData.getArcStrokeWidth("heavy-arc");
@@ -98,34 +106,16 @@ describe("StaticData", () => {
   });
 
   describe("getArcUsages", () => {
-    test("returns usages array for arc with 1 usage", () => {
+    test("returns structured usages array", () => {
       const usages = StaticData.getArcUsages("fn_1-fn_2");
-      expect(usages).toEqual(["mod_a.rs:10"]);
-    });
-
-    test("returns usages array for arc with multiple usages", () => {
-      const usages = StaticData.getArcUsages("mod_a-crate");
-      expect(usages).toHaveLength(3);
-      expect(usages).toContain("lib.rs:5");
+      expect(usages).toHaveLength(1);
+      expect(usages[0].symbol).toBe("call_fn2");
+      expect(usages[0].locations).toHaveLength(1);
+      expect(usages[0].locations[0].file).toBe("mod_a.rs");
     });
 
     test("returns empty array for non-existent arc", () => {
       expect(StaticData.getArcUsages("nonexistent")).toEqual([]);
-    });
-  });
-
-  describe("getFormattedUsages", () => {
-    test("returns pipe-separated string for single usage", () => {
-      expect(StaticData.getFormattedUsages("fn_1-fn_2")).toBe("mod_a.rs:10");
-    });
-
-    test("returns pipe-separated string for multiple usages", () => {
-      const result = StaticData.getFormattedUsages("mod_a-crate");
-      expect(result).toBe("lib.rs:5|lib.rs:10|lib.rs:15");
-    });
-
-    test("returns empty string for non-existent arc", () => {
-      expect(StaticData.getFormattedUsages("nonexistent")).toBe("");
     });
   });
 });

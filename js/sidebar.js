@@ -17,74 +17,58 @@ const SIDEBAR_SHADOW_PAD = typeof __SIDEBAR_SHADOW_PAD__ !== 'undefined' ? __SID
 
 const SidebarLogic = {
   /**
-   * Parse usage strings into structured groups.
-   * Input:  ["ModuleInfo  <- src/cli.rs:7", "             <- src/render.rs:12", "analyze  <- src/cli.rs:7"]
-   * Output: [{ symbol: "ModuleInfo", locations: ["src/cli.rs:7", "src/render.rs:12"] }, ...]
-   * Lines starting with non-space = new symbol, space-start = continuation of previous.
-   * @param {string[]|undefined|null} usages
-   * @returns {{ symbol: string, locations: string[] }[]}
-   */
-  parseUsages(usages) {
-    if (!usages || usages.length === 0) return [];
-
-    const groups = [];
-    let current = null;
-
-    for (const line of usages) {
-      const arrowIdx = line.indexOf("<-");
-      const location = arrowIdx >= 0 ? line.substring(arrowIdx + 3).trim() : line.trim();
-
-      if (line.length > 0 && line[0] !== " ") {
-        // New symbol: text before "  <-"
-        const symbol = arrowIdx >= 0 ? line.substring(0, arrowIdx).trim() : line.trim();
-        current = { symbol, locations: [location] };
-        groups.push(current);
-      } else {
-        // Continuation line
-        if (!current) {
-          current = { symbol: "", locations: [] };
-          groups.push(current);
-        }
-        current.locations.push(location);
-      }
-    }
-
-    return groups;
-  },
-
-  /**
    * Build HTML content string for the sidebar.
    * Uses overrideData if provided, otherwise STATIC_DATA.arcs[arcId].
+   * Expects structured usages: [{ symbol, modulePath, locations: [{ file, line }] }]
    * @param {string} arcId
-   * @param {{ from: string, to: string, usages: string[] }} [overrideData]
+   * @param {{ from: string, to: string, usages: Array, originalArcs?: string[] }} [overrideData]
    * @returns {string}
    */
   buildContent(arcId, overrideData) {
     const arc = overrideData || STATIC_DATA.arcs[arcId];
     if (!arc) return "";
-    const from = arc.from;
-    const to = arc.to;
-    const groups = this.parseUsages(arc.usages);
+    const groups = arc.usages || [];
 
     let html = `<div class="sidebar-header">`;
-    html += `<span class="sidebar-title">${from} &#x2192; ${to}</span>`;
+    html += `<span class="sidebar-title">${arc.from} &#x2192; ${arc.to}</span>`;
+    if (overrideData && overrideData.originalArcs) {
+      html += `<span class="sidebar-badge-relations">${overrideData.originalArcs.length} relations</span>`;
+    }
     html += `<button class="sidebar-close">&#x2715;</button>`;
     html += `</div>`;
 
     html += `<div class="sidebar-content">`;
     if (groups.length === 0) {
-      html += `<div class="sidebar-usage-group">No usages</div>`;
+      html += `<div class="sidebar-usage-group">Cargo.toml dependency</div>`;
     } else {
       for (const group of groups) {
+        const collapsed = group.locations.length >= 5;
         html += `<div class="sidebar-usage-group">`;
-        html += `<div class="sidebar-symbol">${group.symbol}</div>`;
-        for (const loc of group.locations) {
-          html += `<div class="sidebar-location">${loc}</div>`;
+        if (group.symbol) {
+          html += `<div class="sidebar-symbol"${collapsed ? ' data-collapsed="true"' : ''}>`;
+          html += `<span class="sidebar-toggle">${collapsed ? '&#x25B8;' : '&#x25BE;'}</span>`;
+          html += `${group.symbol}`;
+          html += `<span class="sidebar-ref-count">${group.locations.length}</span>`;
+          html += `</div>`;
         }
+        html += `<div class="sidebar-locations"${collapsed ? ' style="display:none"' : ''}>`;
+        for (const loc of group.locations) {
+          html += `<div class="sidebar-location">${loc.file}<span class="sidebar-line-badge">:${loc.line}</span></div>`;
+        }
+        html += `</div>`;
         html += `</div>`;
       }
     }
     html += `</div>`;
+
+    // Footer
+    const totalLocs = groups.reduce((sum, g) => sum + g.locations.length, 0);
+    const symbolCount = groups.filter(g => g.symbol).length;
+    let footerText = `${totalLocs} Referenzen \u00b7 ${symbolCount} Symbole`;
+    if (overrideData && overrideData.originalArcs) {
+      footerText += ` \u00b7 ${overrideData.originalArcs.length} Relations`;
+    }
+    html += `<div class="sidebar-footer">${footerText}</div>`;
 
     return html;
   },
@@ -162,9 +146,34 @@ const SidebarLogic = {
     const innerDiv = el.querySelector(".sidebar-root");
     if (innerDiv) {
       innerDiv.innerHTML = this.buildContent(arcId, overrideData);
+      this._setupCollapseHandlers(innerDiv);
     }
     el.style.display = "block";
     this.updatePosition();
+  },
+
+  _setupCollapseHandlers(root) {
+    if (!root || !root.querySelector) return;
+    const content = root.querySelector(".sidebar-content");
+    if (!content) return;
+    content.addEventListener("click", (e) => {
+      const symbolEl = e.target.closest(".sidebar-symbol");
+      if (!symbolEl) return;
+      const locsEl = symbolEl.nextElementSibling;
+      if (!locsEl || !locsEl.classList.contains("sidebar-locations")) return;
+      const isCollapsed = symbolEl.getAttribute("data-collapsed") === "true";
+      if (isCollapsed) {
+        symbolEl.removeAttribute("data-collapsed");
+        locsEl.style.display = "";
+        const toggle = symbolEl.querySelector(".sidebar-toggle");
+        if (toggle) toggle.innerHTML = "\u25BE";
+      } else {
+        symbolEl.setAttribute("data-collapsed", "true");
+        locsEl.style.display = "none";
+        const toggle = symbolEl.querySelector(".sidebar-toggle");
+        if (toggle) toggle.innerHTML = "\u25B8";
+      }
+    });
   },
 
   /**
@@ -194,10 +203,17 @@ const SidebarLogic = {
     if (!el) return;
     const pos = this._calcPosition();
     if (!pos) return;
+
+    // Dynamic width based on content
+    const innerDiv = el.querySelector(".sidebar-root");
+    const scrollW = innerDiv ? (innerDiv.scrollWidth || 0) : 0;
+    const vpWidth = window.innerWidth;
+    const width = Math.max(280, Math.min(scrollW + 20, vpWidth * 0.5));
+
+    el.setAttribute("width", String(Math.round(width)));
     el.setAttribute("x", String(pos.x));
     el.setAttribute("y", String(pos.y));
     el.setAttribute("height", String(pos.height + SIDEBAR_SHADOW_PAD));
-    const innerDiv = el.querySelector(".sidebar-root");
     if (innerDiv) innerDiv.style.height = pos.height + 'px';
   },
 };

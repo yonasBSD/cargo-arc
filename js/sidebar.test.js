@@ -7,16 +7,15 @@ globalThis.Selectors = {
   allArcPaths: () => ".dep-arc, .cycle-arc, .virtual-arc",
 };
 
-// Mock STATIC_DATA for buildContent tests
+// Mock STATIC_DATA for buildContent tests (structured object format from Phase 1)
 globalThis.STATIC_DATA = {
   arcs: {
     "crate_a-crate_b": {
       from: "crate_a",
       to: "crate_b",
       usages: [
-        "ModuleInfo  <- src/cli.rs:7",
-        "             <- src/render.rs:12",
-        "analyze  <- src/cli.rs:7",
+        { symbol: "ModuleInfo", modulePath: null, locations: [{ file: "src/cli.rs", line: 7 }, { file: "src/render.rs", line: 12 }] },
+        { symbol: "analyze", modulePath: null, locations: [{ file: "src/cli.rs", line: 7 }] },
       ],
     },
     "empty_arc": {
@@ -28,52 +27,6 @@ globalThis.STATIC_DATA = {
 };
 
 describe("SidebarLogic", () => {
-  describe("parseUsages", () => {
-    test("single symbol with one location", () => {
-      const result = SidebarLogic.parseUsages(["ModuleInfo  <- src/cli.rs:7"]);
-      expect(result).toEqual([
-        { symbol: "ModuleInfo", locations: ["src/cli.rs:7"] },
-      ]);
-    });
-
-    test("single symbol with continuation lines", () => {
-      const result = SidebarLogic.parseUsages([
-        "ModuleInfo  <- src/cli.rs:7",
-        "             <- src/render.rs:12",
-      ]);
-      expect(result).toEqual([
-        { symbol: "ModuleInfo", locations: ["src/cli.rs:7", "src/render.rs:12"] },
-      ]);
-    });
-
-    test("multiple symbols", () => {
-      const result = SidebarLogic.parseUsages([
-        "ModuleInfo  <- src/cli.rs:7",
-        "             <- src/render.rs:12",
-        "analyze  <- src/cli.rs:7",
-      ]);
-      expect(result).toEqual([
-        { symbol: "ModuleInfo", locations: ["src/cli.rs:7", "src/render.rs:12"] },
-        { symbol: "analyze", locations: ["src/cli.rs:7"] },
-      ]);
-    });
-
-    test("empty input", () => {
-      expect(SidebarLogic.parseUsages([])).toEqual([]);
-      expect(SidebarLogic.parseUsages(undefined)).toEqual([]);
-      expect(SidebarLogic.parseUsages(null)).toEqual([]);
-    });
-
-    test("bare locations (no symbol prefix)", () => {
-      const result = SidebarLogic.parseUsages([
-        "  <- src/lib.rs:1",
-      ]);
-      expect(result).toEqual([
-        { symbol: "", locations: ["src/lib.rs:1"] },
-      ]);
-    });
-  });
-
   describe("buildContent", () => {
     test("header shows from → to from STATIC_DATA", () => {
       const html = SidebarLogic.buildContent("crate_a-crate_b");
@@ -88,37 +41,127 @@ describe("SidebarLogic", () => {
       expect(html).toContain("&#x2715;");
     });
 
-    test("contains usage groups", () => {
+    test("renders structured usage groups with symbol and locations", () => {
       const html = SidebarLogic.buildContent("crate_a-crate_b");
       expect(html).toContain("sidebar-usage-group");
       expect(html).toContain("sidebar-symbol");
       expect(html).toContain("ModuleInfo");
-      expect(html).toContain("src/cli.rs:7");
+      expect(html).toContain("src/cli.rs");
+      expect(html).toContain("src/render.rs");
+      expect(html).toContain("sidebar-locations");
     });
 
-    test("empty usages shows message", () => {
+    test("renders line numbers as badges", () => {
+      const html = SidebarLogic.buildContent("crate_a-crate_b");
+      expect(html).toContain("sidebar-line-badge");
+      expect(html).toContain(":7");
+      expect(html).toContain(":12");
+    });
+
+    test("empty usages shows Cargo.toml dependency", () => {
       const html = SidebarLogic.buildContent("empty_arc");
       expect(html).toContain("sidebar-header");
-      expect(html).toContain("No usages");
+      expect(html).toContain("Cargo.toml dependency");
     });
 
-    test("uses overrideData instead of STATIC_DATA when provided", () => {
+    test("uses overrideData with structured objects", () => {
       const override = {
         from: "parent_crate",
         to: "dep_crate",
-        usages: ["VirtSymbol  <- src/virt.rs:42"],
+        usages: [
+          { symbol: "VirtSymbol", modulePath: null, locations: [{ file: "src/virt.rs", line: 42 }] },
+        ],
       };
       const html = SidebarLogic.buildContent("nonexistent-id", override);
       expect(html).toContain("parent_crate");
       expect(html).toContain("dep_crate");
       expect(html).toContain("VirtSymbol");
-      expect(html).toContain("src/virt.rs:42");
+      expect(html).toContain("src/virt.rs");
+      expect(html).toContain(":42");
     });
 
-    test("overrideData with empty usages shows No usages", () => {
+    test("overrideData with empty usages shows Cargo.toml dependency", () => {
       const override = { from: "a", to: "b", usages: [] };
       const html = SidebarLogic.buildContent("whatever", override);
-      expect(html).toContain("No usages");
+      expect(html).toContain("Cargo.toml dependency");
+    });
+
+    test("overrideData with originalArcs shows badge-relations", () => {
+      const override = {
+        from: "parent",
+        to: "child",
+        usages: [
+          { symbol: "Sym", modulePath: null, locations: [{ file: "a.rs", line: 1 }] },
+        ],
+        originalArcs: ["arc1", "arc2"],
+      };
+      const html = SidebarLogic.buildContent("virt-id", override);
+      expect(html).toContain("sidebar-badge-relations");
+      expect(html).toContain("2 relations");
+    });
+
+    test("renders footer with reference and symbol counts", () => {
+      const html = SidebarLogic.buildContent("crate_a-crate_b");
+      expect(html).toContain("sidebar-footer");
+      // 3 locations total (2 + 1), 2 symbols
+      expect(html).toContain("3 Referenzen");
+      expect(html).toContain("2 Symbole");
+    });
+
+    test("bare locations (empty symbol) render without symbol name", () => {
+      const override = {
+        from: "a", to: "b",
+        usages: [
+          { symbol: "", modulePath: null, locations: [{ file: "src/lib.rs", line: 1 }] },
+        ],
+      };
+      const html = SidebarLogic.buildContent("bare-id", override);
+      expect(html).toContain("src/lib.rs");
+      expect(html).toContain(":1");
+      expect(html).toContain("sidebar-usage-group");
+    });
+  });
+
+  describe("collapse defaults in buildContent", () => {
+    test("groups with >=5 locations start collapsed", () => {
+      const override = {
+        from: "a", to: "b",
+        usages: [{
+          symbol: "BigSymbol", modulePath: null,
+          locations: [
+            { file: "a.rs", line: 1 }, { file: "b.rs", line: 2 },
+            { file: "c.rs", line: 3 }, { file: "d.rs", line: 4 },
+            { file: "e.rs", line: 5 },
+          ],
+        }],
+      };
+      const html = SidebarLogic.buildContent("test-id", override);
+      expect(html).toContain('data-collapsed="true"');
+      expect(html).toContain('display:none');
+      // Toggle icon should be ▸ (collapsed)
+      expect(html).toContain("&#x25B8;");
+    });
+
+    test("groups with <5 locations start expanded", () => {
+      const override = {
+        from: "a", to: "b",
+        usages: [{
+          symbol: "SmallSymbol", modulePath: null,
+          locations: [
+            { file: "a.rs", line: 1 }, { file: "b.rs", line: 2 },
+          ],
+        }],
+      };
+      const html = SidebarLogic.buildContent("test-id", override);
+      expect(html).not.toContain('data-collapsed="true"');
+      expect(html).not.toContain('display:none');
+      // Toggle icon should be ▾ (expanded)
+      expect(html).toContain("&#x25BE;");
+    });
+
+    test("toggle icon present on symbol headers", () => {
+      const html = SidebarLogic.buildContent("crate_a-crate_b");
+      expect(html).toContain("sidebar-toggle");
     });
   });
 
@@ -280,6 +323,99 @@ describe("SidebarLogic", () => {
       // vpHeight = 2000 * (1600/800) = 4000, 4000 - 0 - 20 = 3980, capped at 500
       // Inner div gets content height, foreignObject gets +12 for shadow padding
       expect(parseInt(innerDiv.style.height)).toBeLessThanOrEqual(500);
+    });
+
+    test("sets dynamic width from scrollWidth", () => {
+      const fakeEl = createFakeElement("foreignObject");
+      const innerDiv = createFakeElement("div");
+      Object.defineProperty(innerDiv, "innerHTML", {
+        get() { return this._innerHTML || ""; },
+        set(v) { this._innerHTML = v; },
+      });
+      innerDiv.scrollWidth = 350;
+      fakeEl.querySelector = () => innerDiv;
+      const svgMock = {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+      };
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === "relation-sidebar") return fakeEl;
+          return null;
+        },
+        getSvgRoot() { return svgMock; },
+        querySelectorAll() { return []; },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 800;
+      SidebarLogic.show("crate_a-crate_b");
+      // scrollWidth=350 + 20 = 370, max(280, min(370, 1000*0.5)) = 370
+      expect(parseInt(fakeEl.getAttribute("width"))).toBe(370);
+    });
+
+    test("caps dynamic width at 50% viewport", () => {
+      const fakeEl = createFakeElement("foreignObject");
+      const innerDiv = createFakeElement("div");
+      Object.defineProperty(innerDiv, "innerHTML", {
+        get() { return this._innerHTML || ""; },
+        set(v) { this._innerHTML = v; },
+      });
+      innerDiv.scrollWidth = 800;
+      fakeEl.querySelector = () => innerDiv;
+      const svgMock = {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+      };
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === "relation-sidebar") return fakeEl;
+          return null;
+        },
+        getSvgRoot() { return svgMock; },
+        querySelectorAll() { return []; },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 800;
+      SidebarLogic.show("crate_a-crate_b");
+      // scrollWidth=800+20=820, max(280, min(820, 1000*0.5=500)) = 500
+      expect(parseInt(fakeEl.getAttribute("width"))).toBe(500);
+    });
+
+    test("falls back to 280 when scrollWidth is 0", () => {
+      const fakeEl = createFakeElement("foreignObject");
+      const innerDiv = createFakeElement("div");
+      Object.defineProperty(innerDiv, "innerHTML", {
+        get() { return this._innerHTML || ""; },
+        set(v) { this._innerHTML = v; },
+      });
+      innerDiv.scrollWidth = 0;
+      fakeEl.querySelector = () => innerDiv;
+      const svgMock = {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+      };
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === "relation-sidebar") return fakeEl;
+          return null;
+        },
+        getSvgRoot() { return svgMock; },
+        querySelectorAll() { return []; },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 800;
+      SidebarLogic.show("crate_a-crate_b");
+      // scrollWidth=0+20=20, max(280, min(20, 500)) = 280
+      expect(parseInt(fakeEl.getAttribute("width"))).toBe(280);
     });
   });
 });
