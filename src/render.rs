@@ -320,6 +320,15 @@ pub(crate) struct SidebarClasses {
     pub usage_group: &'static str,
     pub symbol: &'static str,
     pub location: &'static str,
+    pub toggle: &'static str,
+    pub symbol_name: &'static str,
+    pub ns: &'static str,
+    pub ref_count: &'static str,
+    pub locations: &'static str,
+    pub line_badge: &'static str,
+    pub divider: &'static str,
+    pub footer: &'static str,
+    pub badge_relations: &'static str,
 }
 
 #[allow(dead_code)]
@@ -398,6 +407,15 @@ static CSS: CssClassNames = CssClassNames {
         usage_group: "sidebar-usage-group",
         symbol: "sidebar-symbol",
         location: "sidebar-location",
+        toggle: "sidebar-toggle",
+        symbol_name: "sidebar-symbol-name",
+        ns: "sidebar-ns",
+        ref_count: "sidebar-ref-count",
+        locations: "sidebar-locations",
+        line_badge: "sidebar-line-badge",
+        divider: "sidebar-divider",
+        footer: "sidebar-footer",
+        badge_relations: "sidebar-badge-relations",
     },
 };
 
@@ -1043,7 +1061,13 @@ fn build_css_rules() -> Vec<CssRule> {
         ),
         CssRule::new(
             &format!(".{}", c.sidebar.symbol),
-            &[("font-weight", "bold"), ("margin-bottom", "2px")],
+            &[
+                ("cursor", "pointer"),
+                ("display", "flex"),
+                ("align-items", "center"),
+                ("gap", "4px"),
+                ("margin-bottom", "2px"),
+            ],
         ),
         CssRule::new(
             &format!(".{}", c.sidebar.location),
@@ -1051,6 +1075,71 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("color", GRAY_400),
                 ("padding-left", "12px"),
                 ("font-size", "11px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.toggle),
+            &[
+                ("font-size", "10px"),
+                ("color", GRAY_400),
+                ("width", "12px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.symbol_name),
+            &[("font-weight", "bold")],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.ns),
+            &[("color", GRAY_400), ("font-size", "10px")],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.ref_count),
+            &[
+                ("color", GRAY_400),
+                ("font-size", "10px"),
+                ("margin-left", "auto"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.locations),
+            &[("padding-left", "16px")],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.line_badge),
+            &[
+                ("background", BLUE_100),
+                ("color", BLUE),
+                ("padding", "1px 4px"),
+                ("border-radius", "3px"),
+                ("font-size", "10px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.divider),
+            &[
+                ("border", "none"),
+                ("border-top", &format!("1px solid {}", GRAY_200)),
+                ("margin", "6px 0"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.footer),
+            &[
+                ("padding", "6px 10px"),
+                ("border-top", &format!("1px solid {}", GRAY_200)),
+                ("font-size", "10px"),
+                ("color", GRAY_400),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.badge_relations),
+            &[
+                ("background", "rgba(136,57,239,0.15)"),
+                ("color", PURPLE),
+                ("padding", "1px 6px"),
+                ("border-radius", "3px"),
+                ("font-size", "10px"),
             ],
         ),
     ]
@@ -3167,6 +3256,71 @@ mod tests {
         assert!(
             css.contains(&format!(".{}", CSS.sidebar.location)),
             "CSS should contain .sidebar-location"
+        );
+
+        // Phase 2: 9 neue Sidebar-Klassen
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.toggle)),
+            "CSS should contain .sidebar-toggle"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.symbol_name)),
+            "CSS should contain .sidebar-symbol-name"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.ns)),
+            "CSS should contain .sidebar-ns"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.ref_count)),
+            "CSS should contain .sidebar-ref-count"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.locations)),
+            "CSS should contain .sidebar-locations"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.line_badge)),
+            "CSS should contain .sidebar-line-badge"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.divider)),
+            "CSS should contain .sidebar-divider"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.footer)),
+            "CSS should contain .sidebar-footer"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.badge_relations)),
+            "CSS should contain .sidebar-badge-relations"
+        );
+    }
+
+    #[test]
+    fn test_sidebar_css_properties() {
+        let css = render_styles();
+
+        // .sidebar-symbol: cursor:pointer, display:flex
+        assert!(css.contains("cursor:pointer") || css.contains("cursor: pointer"));
+        assert!(css.contains("display:flex") || css.contains("display: flex"));
+
+        // .sidebar-line-badge: background mit BLUE_100
+        assert!(
+            css.contains(BLUE_100),
+            "CSS should contain BLUE_100 for line-badge background"
+        );
+
+        // .sidebar-footer: border-top
+        assert!(
+            css.contains(".sidebar-footer"),
+            "CSS should contain .sidebar-footer selector"
+        );
+
+        // .sidebar-badge-relations: background mit PURPLE opacity
+        assert!(
+            css.contains(".sidebar-badge-relations"),
+            "CSS should contain .sidebar-badge-relations selector"
         );
     }
 
