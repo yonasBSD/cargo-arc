@@ -415,9 +415,6 @@ fn calculate_box_width(ir: &LayoutIR) -> f32 {
         + LAYOUT.box_padding
 }
 
-/// Separator for tooltip lines (newlines get normalized in XML attributes)
-const TOOLTIP_LINE_SEP: &str = "|";
-
 /// Calculate maximum arc width from edges
 fn calculate_max_arc_width(positioned: &[PositionedItem], ir: &LayoutIR, row_height: f32) -> f32 {
     ir.edges
@@ -433,36 +430,33 @@ fn calculate_max_arc_width(positioned: &[PositionedItem], ir: &LayoutIR, row_hei
 
 /// Format source locations grouped by symbol.
 ///
-/// Inverts the Location→Symbols structure to Symbol→Locations for clearer display.
+/// Inverts the Location→Symbols structure to Symbol→Locations for structured display.
 ///
-/// Example output (column-aligned):
-/// ```text
-/// ModuleInfo      ← src/cli.rs:7
-///                 ← src/render.rs:12
-/// analyze_module  ← src/cli.rs:7
-/// ```
-fn format_source_locations_by_symbol(locs: &[SourceLocation]) -> String {
+/// Returns a Vec of SymbolUsageGroup objects. Bare locations (without symbols)
+/// are returned with symbol="". Groups are ordered: bare locations first, then
+/// symbol groups alphabetically.
+fn format_source_locations_by_symbol(locs: &[SourceLocation]) -> Vec<SymbolUsageGroup> {
     use std::collections::BTreeMap;
 
     if locs.is_empty() {
-        return String::new();
+        return Vec::new();
     }
 
-    // Invert: Symbol → Vec<file:line>
-    let mut by_symbol: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut bare_locations: Vec<String> = Vec::new();
+    // Invert: Symbol → Vec<(file, line)>
+    let mut by_symbol: BTreeMap<String, Vec<(String, usize)>> = BTreeMap::new();
+    let mut bare_locations: Vec<(String, usize)> = Vec::new();
 
     for loc in locs {
-        let file_line = format!("{}:{}", loc.file.display(), loc.line);
+        let file_str = loc.file.display().to_string();
         if loc.symbols.is_empty() {
             // Location without symbols - collect separately
-            bare_locations.push(file_line);
+            bare_locations.push((file_str, loc.line));
         } else {
             for symbol in &loc.symbols {
                 by_symbol
                     .entry(symbol.clone())
                     .or_default()
-                    .push(file_line.clone());
+                    .push((file_str.clone(), loc.line));
             }
         }
     }
@@ -472,32 +466,44 @@ fn format_source_locations_by_symbol(locs: &[SourceLocation]) -> String {
         locations.sort();
     }
 
-    // Find max symbol length for column alignment
-    let max_symbol_len = by_symbol.keys().map(|s| s.len()).max().unwrap_or(0);
+    let mut groups = Vec::new();
 
-    let mut lines = Vec::new();
-
-    // First: bare locations (without symbols)
-    for loc in bare_locations {
-        lines.push(loc);
+    // First: bare locations (symbol = "")
+    if !bare_locations.is_empty() {
+        bare_locations.sort();
+        groups.push(SymbolUsageGroup {
+            symbol: String::new(),
+            locations: bare_locations
+                .into_iter()
+                .map(|(file, line)| UsageLocation { file, line })
+                .collect(),
+        });
     }
 
-    // Then: symbol-grouped locations in aligned columns
+    // Then: symbol-grouped locations in alphabetical order
     for (symbol, locations) in by_symbol {
-        for (i, loc) in locations.iter().enumerate() {
-            if i == 0 {
-                // First line: symbol + padding + arrow + location
-                let padding = " ".repeat(max_symbol_len - symbol.len() + 2);
-                lines.push(format!("{}{}← {}", symbol, padding, loc));
-            } else {
-                // Continuation: spaces + arrow + location
-                let spaces = " ".repeat(max_symbol_len + 2);
-                lines.push(format!("{}← {}", spaces, loc));
-            }
-        }
+        groups.push(SymbolUsageGroup {
+            symbol,
+            locations: locations
+                .into_iter()
+                .map(|(file, line)| UsageLocation { file, line })
+                .collect(),
+        });
     }
 
-    lines.join(TOOLTIP_LINE_SEP)
+    groups
+}
+
+/// A group of usage locations for a single symbol
+struct SymbolUsageGroup {
+    symbol: String,
+    locations: Vec<UsageLocation>,
+}
+
+/// A single usage location (file + line number)
+struct UsageLocation {
+    file: String,
+    line: usize,
 }
 
 /// Configuration for SVG rendering
@@ -603,11 +609,14 @@ fn calculate_max_tooltip_size(ir: &LayoutIR) -> (f32, f32) {
         .iter()
         .filter(|e| !e.source_locations.is_empty())
         .map(|edge| {
-            let tooltip_text = format_source_locations_by_symbol(&edge.source_locations);
-            let line_count = tooltip_text.split(TOOLTIP_LINE_SEP).count();
-            let max_line_len = tooltip_text
-                .split(TOOLTIP_LINE_SEP)
-                .map(|line| line.len())
+            let groups = format_source_locations_by_symbol(&edge.source_locations);
+            // Count total lines: each group contributes its locations
+            let line_count: usize = groups.iter().map(|g| g.locations.len()).sum();
+            // Find longest line (file path with line number)
+            let max_line_len = groups
+                .iter()
+                .flat_map(|g| &g.locations)
+                .map(|loc| format!("{}:{}", loc.file, loc.line).len())
                 .max()
                 .unwrap_or(0);
             let width = calculate_text_width(&"x".repeat(max_line_len));
@@ -1204,21 +1213,29 @@ fn generate_static_data(
     for (i, edge) in ir.edges.iter().enumerate() {
         let arc_id = format!("{}-{}", edge.from, edge.to);
 
-        // Format usages from source_locations
-        let usages: Vec<String> = if edge.source_locations.is_empty() {
-            vec![]
-        } else {
-            let formatted = format_source_locations_by_symbol(&edge.source_locations);
-            formatted
-                .split(TOOLTIP_LINE_SEP)
-                .map(escape_js_string)
-                .collect()
-        };
-
-        let usages_str = if usages.is_empty() {
+        // Format usages from source_locations as structured objects
+        let usages_str = if edge.source_locations.is_empty() {
             "[]".to_string()
         } else {
-            format!("[\"{}\"]", usages.join("\", \""))
+            let groups = format_source_locations_by_symbol(&edge.source_locations);
+            let mut group_strs = Vec::new();
+            for group in groups {
+                let symbol_escaped = escape_js_string(&group.symbol);
+                let mut loc_strs = Vec::new();
+                for loc in group.locations {
+                    let file_escaped = escape_js_string(&loc.file);
+                    loc_strs.push(format!(
+                        "{{ file: \"{}\", line: {} }}",
+                        file_escaped, loc.line
+                    ));
+                }
+                group_strs.push(format!(
+                    "{{ symbol: \"{}\", modulePath: null, locations: [{}] }}",
+                    symbol_escaped,
+                    loc_strs.join(", ")
+                ));
+            }
+            format!("[{}]", group_strs.join(", "))
         };
 
         let comma = if i < ir.edges.len() - 1 { "," } else { "" };
@@ -2150,8 +2167,9 @@ mod tests {
             !svg.contains(r#"data-source-locations="#),
             "DOM attribute should not exist - use STATIC_DATA instead"
         );
-        // Location should be in STATIC_DATA usages array
-        assert!(svg.contains("src/a.rs:5"));
+        // Location should be in STATIC_DATA usages array (structured format)
+        assert!(svg.contains(r#"file: "src/a.rs""#));
+        assert!(svg.contains("line: 5"));
         assert!(svg.contains("usages: ["));
     }
 
@@ -2193,7 +2211,8 @@ mod tests {
     #[test]
     fn test_format_source_locations_by_symbol_empty() {
         let locs: Vec<SourceLocation> = vec![];
-        assert_eq!(format_source_locations_by_symbol(&locs), "");
+        let groups = format_source_locations_by_symbol(&locs);
+        assert_eq!(groups.len(), 0);
     }
 
     #[test]
@@ -2206,7 +2225,12 @@ mod tests {
             line: 7,
             symbols: vec![],
         }];
-        assert_eq!(format_source_locations_by_symbol(&locs), "src/cli.rs:7");
+        let groups = format_source_locations_by_symbol(&locs);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].symbol, "");
+        assert_eq!(groups[0].locations.len(), 1);
+        assert_eq!(groups[0].locations[0].file, "src/cli.rs");
+        assert_eq!(groups[0].locations[0].line, 7);
     }
 
     #[test]
@@ -2219,11 +2243,12 @@ mod tests {
             line: 7,
             symbols: vec!["ModuleInfo".to_string()],
         }];
-        // Column-aligned: symbol + padding + arrow + location
-        assert_eq!(
-            format_source_locations_by_symbol(&locs),
-            "ModuleInfo  ← src/cli.rs:7"
-        );
+        let groups = format_source_locations_by_symbol(&locs);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].symbol, "ModuleInfo");
+        assert_eq!(groups[0].locations.len(), 1);
+        assert_eq!(groups[0].locations[0].file, "src/cli.rs");
+        assert_eq!(groups[0].locations[0].line, 7);
     }
 
     #[test]
@@ -2244,11 +2269,15 @@ mod tests {
                 symbols: vec!["ModuleInfo".to_string()],
             },
         ];
-        // Column-aligned: continuation lines have spaces instead of symbol
-        assert_eq!(
-            format_source_locations_by_symbol(&locs),
-            "ModuleInfo  ← src/cli.rs:7|            ← src/render.rs:12"
-        );
+        let groups = format_source_locations_by_symbol(&locs);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].symbol, "ModuleInfo");
+        assert_eq!(groups[0].locations.len(), 2);
+        // Locations sorted alphabetically
+        assert_eq!(groups[0].locations[0].file, "src/cli.rs");
+        assert_eq!(groups[0].locations[0].line, 7);
+        assert_eq!(groups[0].locations[1].file, "src/render.rs");
+        assert_eq!(groups[0].locations[1].line, 12);
     }
 
     #[test]
@@ -2262,11 +2291,13 @@ mod tests {
             line: 7,
             symbols: vec!["ModuleInfo".to_string(), "analyze_module".to_string()],
         }];
-        // Column-aligned: symbols padded to max length (analyze_module = 14 chars)
-        assert_eq!(
-            format_source_locations_by_symbol(&locs),
-            "ModuleInfo      ← src/cli.rs:7|analyze_module  ← src/cli.rs:7"
-        );
+        let groups = format_source_locations_by_symbol(&locs);
+        assert_eq!(groups.len(), 2);
+        // Symbols in alphabetical order
+        assert_eq!(groups[0].symbol, "ModuleInfo");
+        assert_eq!(groups[0].locations.len(), 1);
+        assert_eq!(groups[1].symbol, "analyze_module");
+        assert_eq!(groups[1].locations.len(), 1);
     }
 
     #[test]
@@ -2287,11 +2318,17 @@ mod tests {
                 symbols: vec!["ModuleInfo".to_string()],
             },
         ];
-        // Column-aligned: ModuleInfo has 2 locations, analyze_module has 1
-        assert_eq!(
-            format_source_locations_by_symbol(&locs),
-            "ModuleInfo      ← src/cli.rs:7|                ← src/render.rs:12|analyze_module  ← src/cli.rs:7"
-        );
+        let groups = format_source_locations_by_symbol(&locs);
+        assert_eq!(groups.len(), 2);
+        // ModuleInfo: 2 locations
+        assert_eq!(groups[0].symbol, "ModuleInfo");
+        assert_eq!(groups[0].locations.len(), 2);
+        assert_eq!(groups[0].locations[0].file, "src/cli.rs");
+        assert_eq!(groups[0].locations[1].file, "src/render.rs");
+        // analyze_module: 1 location
+        assert_eq!(groups[1].symbol, "analyze_module");
+        assert_eq!(groups[1].locations.len(), 1);
+        assert_eq!(groups[1].locations[0].file, "src/cli.rs");
     }
 
     #[test]
@@ -2780,11 +2817,15 @@ mod tests {
         assert!(script.contains(r#"from: "1""#), "Arc should have from");
         assert!(script.contains(r#"to: "2""#), "Arc should have to");
         assert!(script.contains("usages: ["), "Arc should have usages array");
-        assert!(script.contains("MyStruct"), "Usages should contain symbol");
         assert!(
-            script.contains("src/a.rs:5"),
-            "Usages should contain location"
+            script.contains(r#"symbol: "MyStruct""#),
+            "Usages should contain symbol"
         );
+        assert!(
+            script.contains(r#"file: "src/a.rs""#),
+            "Usages should contain file"
+        );
+        assert!(script.contains("line: 5"), "Usages should contain line");
     }
 
     #[test]
@@ -2817,6 +2858,77 @@ mod tests {
         assert!(
             script.contains("usages: []"),
             "Arc without locations should have empty usages array"
+        );
+    }
+
+    #[test]
+    fn test_static_data_usages_structured() {
+        use crate::graph::SourceLocation;
+        use std::path::PathBuf;
+
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(
+            a,
+            b,
+            EdgeKind::Downward,
+            vec![
+                SourceLocation {
+                    file: PathBuf::from("src/a.rs"),
+                    line: 5,
+                    symbols: vec!["Symbol1".to_string()],
+                },
+                SourceLocation {
+                    file: PathBuf::from("src/b.rs"),
+                    line: 10,
+                    symbols: vec!["Symbol1".to_string()],
+                },
+            ],
+        );
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // Usages should be array of objects, not array of strings
+        assert!(script.contains("usages: ["), "Should have usages array");
+        assert!(
+            script.contains(r#"symbol: "Symbol1""#),
+            "Should have symbol field"
+        );
+        assert!(
+            script.contains("modulePath: null"),
+            "Should have modulePath field"
+        );
+        assert!(
+            script.contains("locations: ["),
+            "Should have locations array"
+        );
+        assert!(
+            script.contains(r#"file: "src/a.rs""#),
+            "Should have file field"
+        );
+        assert!(script.contains("line: 5"), "Should have line field");
+        // Should NOT contain pipe-separated string format
+        assert!(
+            !script.contains("Symbol1  ← src/a.rs:5"),
+            "Should NOT use old string format"
         );
     }
 
@@ -3181,5 +3293,88 @@ mod tests {
             ),
             "Should have .dep-arc.downward rule"
         );
+    }
+
+    #[test]
+    fn test_symbol_usage_group_creation() {
+        // Test struct creation with empty locations
+        let group = SymbolUsageGroup {
+            symbol: "TestSymbol".to_string(),
+            locations: vec![],
+        };
+        assert_eq!(group.symbol, "TestSymbol");
+        assert_eq!(group.locations.len(), 0);
+
+        // Test with populated locations
+        let group_with_locs = SymbolUsageGroup {
+            symbol: "AnotherSymbol".to_string(),
+            locations: vec![
+                UsageLocation {
+                    file: "src/main.rs".to_string(),
+                    line: 42,
+                },
+                UsageLocation {
+                    file: "src/lib.rs".to_string(),
+                    line: 100,
+                },
+            ],
+        };
+        assert_eq!(group_with_locs.locations.len(), 2);
+        assert_eq!(group_with_locs.locations[0].file, "src/main.rs");
+        assert_eq!(group_with_locs.locations[0].line, 42);
+    }
+
+    #[test]
+    fn test_format_returns_structured_groups() {
+        use std::path::PathBuf;
+
+        // Test with 2+ symbols and bare locations
+        let locs = vec![
+            SourceLocation {
+                file: PathBuf::from("src/main.rs"),
+                line: 10,
+                symbols: vec!["Symbol1".to_string()],
+            },
+            SourceLocation {
+                file: PathBuf::from("src/lib.rs"),
+                line: 20,
+                symbols: vec!["Symbol1".to_string()],
+            },
+            SourceLocation {
+                file: PathBuf::from("src/util.rs"),
+                line: 30,
+                symbols: vec!["Symbol2".to_string()],
+            },
+            SourceLocation {
+                file: PathBuf::from("src/bare.rs"),
+                line: 40,
+                symbols: vec![], // Bare location
+            },
+        ];
+
+        let groups = format_source_locations_by_symbol(&locs);
+
+        // Should have 3 groups: 1 bare (symbol=""), 2 named symbols
+        assert_eq!(groups.len(), 3);
+
+        // First group: bare locations (symbol="")
+        assert_eq!(groups[0].symbol, "");
+        assert_eq!(groups[0].locations.len(), 1);
+        assert_eq!(groups[0].locations[0].file, "src/bare.rs");
+        assert_eq!(groups[0].locations[0].line, 40);
+
+        // Second group: Symbol1 (2 locations)
+        assert_eq!(groups[1].symbol, "Symbol1");
+        assert_eq!(groups[1].locations.len(), 2);
+        assert_eq!(groups[1].locations[0].file, "src/lib.rs");
+        assert_eq!(groups[1].locations[0].line, 20);
+        assert_eq!(groups[1].locations[1].file, "src/main.rs");
+        assert_eq!(groups[1].locations[1].line, 10);
+
+        // Third group: Symbol2 (1 location)
+        assert_eq!(groups[2].symbol, "Symbol2");
+        assert_eq!(groups[2].locations.len(), 1);
+        assert_eq!(groups[2].locations[0].file, "src/util.rs");
+        assert_eq!(groups[2].locations[0].line, 30);
     }
 }
