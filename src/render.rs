@@ -1142,6 +1142,30 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("font-size", "10px"),
             ],
         ),
+        CssRule::new(
+            ".sidebar-node-crate",
+            &[
+                ("background", BLUE_100),
+                ("padding", "1px 4px"),
+                ("border-radius", "3px"),
+            ],
+        ),
+        CssRule::new(
+            ".sidebar-node-module",
+            &[
+                ("background", ORANGE_100),
+                ("padding", "1px 4px"),
+                ("border-radius", "3px"),
+            ],
+        ),
+        CssRule::new(
+            ".sidebar-node-from",
+            &[("border", &format!("2px solid {}", PURPLE))],
+        ),
+        CssRule::new(
+            ".sidebar-node-to",
+            &[("border", &format!("2px solid {}", GREEN))],
+        ),
     ]
 }
 
@@ -1290,9 +1314,10 @@ fn generate_static_data(
         let has_children = parents.contains(&pos.id);
         let comma = if i < positioned.len() - 1 { "," } else { "" };
 
+        let name_escaped = escape_js_string(&item.label);
         lines.push(format!(
-            "    \"{}\": {{ type: \"{}\", parent: {}, x: {}, y: {}, width: {}, height: {}, hasChildren: {} }}{}",
-            pos.id, node_type, parent_str, pos.x, pos.y, pos.width, pos.height, has_children, comma
+            "    \"{}\": {{ type: \"{}\", name: \"{}\", parent: {}, x: {}, y: {}, width: {}, height: {}, hasChildren: {} }}{}",
+            pos.id, node_type, name_escaped, parent_str, pos.x, pos.y, pos.width, pos.height, has_children, comma
         ));
     }
     lines.push("  },".to_string());
@@ -1840,8 +1865,15 @@ mod tests {
         let mut ir = LayoutIR::new();
         ir.add_item(ItemKind::Crate, "foo<bar>&baz".into());
         let svg = render(&ir, &RenderConfig::default());
+        // SVG text elements must use XML-escaped entities
         assert!(svg.contains("foo&lt;bar&gt;&amp;baz"));
-        assert!(!svg.contains("foo<bar>&baz"));
+        // Raw string may appear in CDATA script section (valid), but not in SVG markup.
+        // Check that SVG text content (outside CDATA) uses escaped form:
+        let outside_cdata = svg.split("CDATA[").next().unwrap_or(&svg);
+        assert!(
+            !outside_cdata.contains("foo<bar>&baz"),
+            "Raw XML-special chars must not appear outside CDATA"
+        );
     }
 
     #[test]
@@ -2282,7 +2314,7 @@ mod tests {
     fn test_render_script_arc_hover_shows_locations() {
         let ir = LayoutIR::new();
         let svg = render(&ir, &RenderConfig::default());
-        assert!(svg.contains("dataset.sourceLocations"));
+        assert!(svg.contains("getFormattedUsages"));
         assert!(svg.contains("showFloatingLabel"));
     }
 

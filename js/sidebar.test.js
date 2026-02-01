@@ -9,6 +9,12 @@ globalThis.Selectors = {
 
 // Mock STATIC_DATA for buildContent tests (structured object format from Phase 1)
 globalThis.STATIC_DATA = {
+  nodes: {
+    "crate_a": { type: "crate", name: "crate_a", parent: null, x: 0, y: 0, width: 100, height: 30, hasChildren: false },
+    "crate_b": { type: "crate", name: "crate_b", parent: null, x: 0, y: 0, width: 100, height: 30, hasChildren: false },
+    "x": { type: "module", name: "x", parent: "crate_a", x: 0, y: 0, width: 100, height: 30, hasChildren: false },
+    "y": { type: "module", name: "y", parent: "crate_b", x: 0, y: 0, width: 100, height: 30, hasChildren: false },
+  },
   arcs: {
     "crate_a-crate_b": {
       from: "crate_a",
@@ -23,6 +29,13 @@ globalThis.STATIC_DATA = {
       to: "y",
       usages: [],
     },
+  },
+};
+
+// Mock StaticData module (sidebar.js uses StaticData.getNode for name resolution)
+globalThis.StaticData = {
+  getNode(id) {
+    return (globalThis.STATIC_DATA.nodes || {})[id] || null;
   },
 };
 
@@ -412,8 +425,8 @@ describe("SidebarLogic", () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 800;
       SidebarLogic.show("crate_a-crate_b");
-      // scrollWidth=350 + 20 = 370, max(280, min(370, 1000*0.5)) = 370
-      expect(parseInt(fakeEl.getAttribute("width"))).toBe(370);
+      // scrollWidth=350 + 20 = 370, max(280, min(370, 1000*0.5)) = 370, +12 shadow pad
+      expect(parseInt(fakeEl.getAttribute("width"))).toBe(382);
     });
 
     test("caps dynamic width at 50% viewport", () => {
@@ -443,8 +456,8 @@ describe("SidebarLogic", () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 800;
       SidebarLogic.show("crate_a-crate_b");
-      // scrollWidth=800+20=820, max(280, min(820, 1000*0.5=500)) = 500
-      expect(parseInt(fakeEl.getAttribute("width"))).toBe(500);
+      // scrollWidth=800+20=820, max(280, min(820, 1000*0.5=500)) = 500, +12 shadow pad
+      expect(parseInt(fakeEl.getAttribute("width"))).toBe(512);
     });
 
     test("falls back to 280 when scrollWidth is 0", () => {
@@ -474,8 +487,8 @@ describe("SidebarLogic", () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 800;
       SidebarLogic.show("crate_a-crate_b");
-      // scrollWidth=0+20=20, max(280, min(20, 500)) = 280
-      expect(parseInt(fakeEl.getAttribute("width"))).toBe(280);
+      // scrollWidth=0+20=20, max(280, min(20, 500)) = 280, +12 shadow pad
+      expect(parseInt(fakeEl.getAttribute("width"))).toBe(292);
     });
   });
 });

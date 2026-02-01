@@ -14,6 +14,7 @@ const SIDEBAR_GAP_TOP = 20;
 // (which renders outside the div) is not clipped by the foreignObject boundary.
 // Value derived from box-shadow offset+blur in render.rs layout constants.
 const SIDEBAR_SHADOW_PAD = typeof __SIDEBAR_SHADOW_PAD__ !== 'undefined' ? __SIDEBAR_SHADOW_PAD__ : 12;
+const SIDEBAR_MIN_WIDTH = 280;
 
 const SidebarLogic = {
   /**
@@ -51,8 +52,15 @@ const SidebarLogic = {
     if (!arc) return "";
     const groups = arc.usages || [];
 
+    const fromNode = StaticData.getNode(arc.from);
+    const toNode = StaticData.getNode(arc.to);
+    const fromName = fromNode ? fromNode.name : arc.from;
+    const toName = toNode ? toNode.name : arc.to;
+    const fromClass = (fromNode ? `sidebar-node-${fromNode.type} ` : '') + 'sidebar-node-from';
+    const toClass = (toNode ? `sidebar-node-${toNode.type} ` : '') + 'sidebar-node-to';
+
     let html = `<div class="sidebar-header">`;
-    html += `<span class="sidebar-title">${arc.from} &#x2192; ${arc.to}</span>`;
+    html += `<span class="sidebar-title"><span class="${fromClass}">${fromName}</span> &#x2192; <span class="${toClass}">${toName}</span></span>`;
     if (overrideData && overrideData.originalArcs) {
       html += `<span class="sidebar-badge-relations">${overrideData.originalArcs.length} relations</span>`;
     }
@@ -118,40 +126,46 @@ const SidebarLogic = {
     return maxX;
   },
 
+  /** Cached X position — set once in show(), reused by updatePosition(). */
+  _cachedX: null,
+
   /**
-   * Calculate sidebar x/y in SVG coordinates based on visible viewport.
-   * Positions sidebar right of the widest visible arc, tracks scroll vertically.
-   * @returns {{ x: number, y: number, height: number }|null}
+   * Calculate sidebar x in SVG coordinates (right of widest visible arc).
+   * @returns {number}
+   */
+  _calcX() {
+    const svg = DomAdapter.getSvgRoot();
+    if (!svg) return 0;
+    const rect = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox.baseVal;
+    const scaleX = viewBox.width / rect.width;
+
+    const maxArcRight = this._getMaxArcRightX();
+    let x = maxArcRight + SIDEBAR_GAP_X;
+
+    const viewportRight = (window.innerWidth - rect.left) * scaleX;
+    if (x + SIDEBAR_MIN_WIDTH > viewportRight) {
+      x = viewportRight - SIDEBAR_MIN_WIDTH - SIDEBAR_MARGIN_RIGHT;
+    }
+    return Math.max(0, Math.round(x));
+  },
+
+  /**
+   * Calculate sidebar y + height in SVG coordinates (tracks scroll).
+   * @returns {{ y: number, height: number }|null}
    */
   _calcPosition() {
     const svg = DomAdapter.getSvgRoot();
     if (!svg) return null;
     const rect = svg.getBoundingClientRect();
     const viewBox = svg.viewBox.baseVal;
-    const scaleX = viewBox.width / rect.width;
     const scaleY = viewBox.height / rect.height;
 
-    const sidebarWidth = 280;
-
-    // X: right of the widest visible arc + gap
-    const maxArcRight = this._getMaxArcRightX();
-    let x = maxArcRight + SIDEBAR_GAP_X;
-
-    // Fallback: right viewport edge - width - margin
-    const viewportRight = (window.innerWidth - rect.left) * scaleX;
-    if (x + sidebarWidth > viewportRight) {
-      x = viewportRight - sidebarWidth - SIDEBAR_MARGIN_RIGHT;
-    }
-    x = Math.max(0, x);
-
-    // Y: scroll offset + toolbar height + gap
     const scrollTop = Math.max(0, -rect.top) * scaleY;
     const y = scrollTop + TOOLBAR_HEIGHT + SIDEBAR_GAP_TOP;
-
     const vpHeight = window.innerHeight * scaleY;
 
     return {
-      x: Math.round(x),
       y: Math.round(y),
       height: Math.round(Math.min(vpHeight - TOOLBAR_HEIGHT - SIDEBAR_GAP_TOP, SIDEBAR_MAX_HEIGHT)),
     };
@@ -171,6 +185,7 @@ const SidebarLogic = {
       this._setupCollapseHandlers(innerDiv);
     }
     el.style.display = "block";
+    this._cachedX = this._calcX();
     this.updatePosition();
   },
 
@@ -205,6 +220,7 @@ const SidebarLogic = {
     const el = this._getElement();
     if (!el) return;
     el.style.display = "none";
+    this._cachedX = null;
   },
 
   /**
@@ -226,14 +242,16 @@ const SidebarLogic = {
     const pos = this._calcPosition();
     if (!pos) return;
 
-    // Dynamic width based on content
+    // Dynamic width: measure content, then size foreignObject to fit.
+    // Shrink to min-width first so scrollWidth reflects content, not container.
     const innerDiv = el.querySelector(".sidebar-root");
+    el.setAttribute("width", String(SIDEBAR_MIN_WIDTH));
     const scrollW = innerDiv ? (innerDiv.scrollWidth || 0) : 0;
     const vpWidth = window.innerWidth;
-    const width = Math.max(280, Math.min(scrollW + 20, vpWidth * 0.5));
+    const width = Math.max(SIDEBAR_MIN_WIDTH, Math.min(scrollW + 20, vpWidth * 0.5));
 
-    el.setAttribute("width", String(Math.round(width)));
-    el.setAttribute("x", String(pos.x));
+    el.setAttribute("width", String(Math.round(width) + SIDEBAR_SHADOW_PAD));
+    el.setAttribute("x", String(this._cachedX != null ? this._cachedX : this._calcX()));
     el.setAttribute("y", String(pos.y));
     el.setAttribute("height", String(pos.height + SIDEBAR_SHADOW_PAD));
     if (innerDiv) innerDiv.style.height = pos.height + 'px';
