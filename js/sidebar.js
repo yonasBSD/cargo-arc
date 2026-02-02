@@ -63,10 +63,15 @@ const SidebarLogic = {
 
     let html = `<div class="sidebar-header">`;
     html += `<span class="sidebar-title"><span class="${fromClass}">${fromName}</span><span class="sidebar-arrow">&#x2192;</span><span class="${toClass}">${toName}</span></span>`;
-    if (overrideData && overrideData.originalArcs) {
-      html += `<span class="sidebar-badge-relations">${overrideData.originalArcs.length} relations</span>`;
+    const hasSymbols = groups.some(g => g.symbol);
+    if (hasSymbols) {
+      html += `<div class="sidebar-header-actions">`;
+      html += `<button class="sidebar-collapse-all" title="Collapse all">&#x2212;</button>`;
+      html += `<button class="sidebar-close">&#x2715;</button>`;
+      html += `</div>`;
+    } else {
+      html += `<button class="sidebar-close">&#x2715;</button>`;
     }
-    html += `<button class="sidebar-close">&#x2715;</button>`;
     html += `</div>`;
 
     html += `<div class="sidebar-content">`;
@@ -252,6 +257,36 @@ const SidebarLogic = {
         const toggle = symbolEl.querySelector(".sidebar-toggle");
         if (toggle) toggle.innerHTML = "\u25B8";
       }
+      const allBtn = root.querySelector(".sidebar-collapse-all");
+      if (allBtn) {
+        const allCollapsed = Array.from(content.querySelectorAll(".sidebar-symbol"))
+          .every(s => s.getAttribute("data-collapsed") === "true");
+        allBtn.innerHTML = allCollapsed ? "+" : "\u2212";
+      }
+    });
+    const collapseAllBtn = root.querySelector(".sidebar-collapse-all");
+    if (!collapseAllBtn) return;
+    collapseAllBtn.addEventListener("click", () => {
+      const symbols = content.querySelectorAll(".sidebar-symbol");
+      if (!symbols.length) return;
+      const anyExpanded = Array.from(symbols).some(
+        s => s.getAttribute("data-collapsed") !== "true"
+      );
+      for (const symbolEl of symbols) {
+        const locsEl = symbolEl.nextElementSibling;
+        if (!locsEl || !locsEl.classList.contains("sidebar-locations")) continue;
+        const toggle = symbolEl.querySelector(".sidebar-toggle");
+        if (anyExpanded) {
+          symbolEl.setAttribute("data-collapsed", "true");
+          locsEl.style.display = "none";
+          if (toggle) toggle.innerHTML = "\u25B8";
+        } else {
+          symbolEl.removeAttribute("data-collapsed");
+          locsEl.style.display = "";
+          if (toggle) toggle.innerHTML = "\u25BE";
+        }
+      }
+      collapseAllBtn.innerHTML = anyExpanded ? "+" : "\u2212";
     });
   },
 
@@ -286,13 +321,18 @@ const SidebarLogic = {
     const pos = this._calcPosition();
     if (!pos) return;
 
-    // Dynamic width: measure content, then size foreignObject to fit.
-    // Shrink to min-width first so scrollWidth reflects content, not container.
+    // Dynamic width: expand foreignObject first, shrink-wrap .sidebar-root with
+    // max-content to measure the natural content width, then clamp to bounds.
+    // Previous approach (shrink → measure scrollWidth) failed because nested
+    // overflow containers (sidebar-content has implicit overflow-x:auto) don't
+    // propagate scrollWidth reliably in foreignObject context.
     const innerDiv = el.querySelector(".sidebar-root");
-    el.setAttribute("width", String(SIDEBAR_MIN_WIDTH));
-    const scrollW = innerDiv ? (innerDiv.scrollWidth || 0) : 0;
+    el.setAttribute("width", "9999");
+    if (innerDiv) innerDiv.style.width = "max-content";
+    const naturalW = innerDiv ? innerDiv.offsetWidth : 0;
+    if (innerDiv) innerDiv.style.width = "";
     const vpWidth = window.innerWidth;
-    const width = Math.max(SIDEBAR_MIN_WIDTH, Math.min(scrollW + 20, vpWidth * 0.5));
+    const width = Math.max(SIDEBAR_MIN_WIDTH, Math.min(naturalW, vpWidth * 0.5));
 
     el.setAttribute("width", String(Math.round(width) + SIDEBAR_SHADOW_PAD));
     el.setAttribute("x", String(this._cachedX != null ? this._cachedX : this._calcX()));

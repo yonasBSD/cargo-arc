@@ -298,6 +298,8 @@ pub(crate) struct SidebarClasses {
     pub header: &'static str,
     pub title: &'static str,
     pub close: &'static str,
+    pub collapse_all: &'static str,
+    pub header_actions: &'static str,
     pub content: &'static str,
     pub usage_group: &'static str,
     pub symbol: &'static str,
@@ -310,7 +312,6 @@ pub(crate) struct SidebarClasses {
     pub line_badge: &'static str,
     pub divider: &'static str,
     pub footer: &'static str,
-    pub badge_relations: &'static str,
 }
 
 #[allow(dead_code)]
@@ -384,6 +385,8 @@ static CSS: CssClassNames = CssClassNames {
         header: "sidebar-header",
         title: "sidebar-title",
         close: "sidebar-close",
+        collapse_all: "sidebar-collapse-all",
+        header_actions: "sidebar-header-actions",
         content: "sidebar-content",
         usage_group: "sidebar-usage-group",
         symbol: "sidebar-symbol",
@@ -396,7 +399,6 @@ static CSS: CssClassNames = CssClassNames {
         line_badge: "sidebar-line-badge",
         divider: "sidebar-divider",
         footer: "sidebar-footer",
-        badge_relations: "sidebar-badge-relations",
     },
 };
 
@@ -996,6 +998,29 @@ fn build_css_rules() -> Vec<CssRule> {
             &[("color", GRAY_600)],
         ),
         CssRule::new(
+            &format!(".{}", c.sidebar.header_actions),
+            &[
+                ("display", "flex"),
+                ("align-items", "center"),
+                ("gap", "2px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}", c.sidebar.collapse_all),
+            &[
+                ("cursor", "pointer"),
+                ("font-size", "16px"),
+                ("color", GRAY_400),
+                ("border", "none"),
+                ("background", "none"),
+                ("padding", "2px 6px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}:hover", c.sidebar.collapse_all),
+            &[("color", GRAY_600)],
+        ),
+        CssRule::new(
             &format!(".{}", c.sidebar.content),
             &[
                 ("overflow-y", "auto"),
@@ -1015,6 +1040,7 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("align-items", "center"),
                 ("gap", "4px"),
                 ("margin-bottom", "2px"),
+                ("white-space", "nowrap"),
             ],
         ),
         CssRule::new(
@@ -1023,6 +1049,7 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("color", GRAY_400),
                 ("padding-left", "12px"),
                 ("font-size", "11px"),
+                ("white-space", "nowrap"),
             ],
         ),
         CssRule::new(
@@ -1081,16 +1108,6 @@ fn build_css_rules() -> Vec<CssRule> {
             ],
         ),
         CssRule::new(
-            &format!(".{}", c.sidebar.badge_relations),
-            &[
-                ("background", "rgba(136,57,239,0.15)"),
-                ("color", PURPLE),
-                ("padding", "1px 6px"),
-                ("border-radius", "3px"),
-                ("font-size", "10px"),
-            ],
-        ),
-        CssRule::new(
             ".sidebar-node-crate",
             &[
                 ("background", BLUE_100),
@@ -1117,6 +1134,13 @@ fn build_css_rules() -> Vec<CssRule> {
         // Transient sidebar mode (hover preview): hide close button and collapse toggles
         CssRule::new(
             &format!(".{}.sidebar-transient .{}", c.sidebar.root, c.sidebar.close),
+            &[("display", "none")],
+        ),
+        CssRule::new(
+            &format!(
+                ".{}.sidebar-transient .{}",
+                c.sidebar.root, c.sidebar.collapse_all
+            ),
             &[("display", "none")],
         ),
         CssRule::new(
@@ -3283,8 +3307,12 @@ mod tests {
             "CSS should contain .sidebar-footer"
         );
         assert!(
-            css.contains(&format!(".{}", CSS.sidebar.badge_relations)),
-            "CSS should contain .sidebar-badge-relations"
+            css.contains(&format!(".{}", CSS.sidebar.collapse_all)),
+            "CSS should contain .sidebar-collapse-all"
+        );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.header_actions)),
+            "CSS should contain .sidebar-header-actions"
         );
     }
 
@@ -3302,6 +3330,10 @@ mod tests {
         assert!(
             css.contains(".sidebar-root.sidebar-transient .sidebar-toggle"),
             "CSS should contain transient sidebar toggle rule"
+        );
+        assert!(
+            css.contains(".sidebar-root.sidebar-transient .sidebar-collapse-all"),
+            "CSS should contain transient sidebar collapse-all rule"
         );
     }
 
@@ -3323,12 +3355,6 @@ mod tests {
         assert!(
             css.contains(".sidebar-footer"),
             "CSS should contain .sidebar-footer selector"
-        );
-
-        // .sidebar-badge-relations: background mit PURPLE opacity
-        assert!(
-            css.contains(".sidebar-badge-relations"),
-            "CSS should contain .sidebar-badge-relations selector"
         );
     }
 

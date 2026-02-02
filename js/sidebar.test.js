@@ -159,20 +159,6 @@ describe("SidebarLogic", () => {
       expect(html).toContain("Cargo.toml dependency");
     });
 
-    test("overrideData with originalArcs shows badge-relations", () => {
-      const override = {
-        from: "parent",
-        to: "child",
-        usages: [
-          { symbol: "Sym", modulePath: null, locations: [{ file: "a.rs", line: 1 }] },
-        ],
-        originalArcs: ["arc1", "arc2"],
-      };
-      const html = SidebarLogic.buildContent("virt-id", override);
-      expect(html).toContain("sidebar-badge-relations");
-      expect(html).toContain("2 relations");
-    });
-
     test("renders footer with reference and symbol counts", () => {
       const html = SidebarLogic.buildContent("crate_a-crate_b");
       expect(html).toContain("sidebar-footer");
@@ -222,6 +208,38 @@ describe("SidebarLogic", () => {
       const html = SidebarLogic.buildContent("crate_a-crate_b");
       expect(html).toContain('<span class="sidebar-symbol-name">ModuleInfo</span>');
       expect(html).toContain('<span class="sidebar-symbol-name">analyze</span>');
+    });
+
+    test("renders collapse-all button when groups have symbols", () => {
+      const html = SidebarLogic.buildContent("crate_a-crate_b");
+      expect(html).toContain("sidebar-collapse-all");
+      expect(html).toContain("sidebar-header-actions");
+    });
+
+    test("does not render collapse-all for Cargo.toml dependency", () => {
+      const html = SidebarLogic.buildContent("empty_arc");
+      expect(html).not.toContain("sidebar-collapse-all");
+      expect(html).not.toContain("sidebar-header-actions");
+    });
+
+    test("does not render collapse-all when symbols are empty strings", () => {
+      const override = {
+        from: "a", to: "b",
+        usages: [
+          { symbol: "", modulePath: null, locations: [{ file: "a.rs", line: 1 }] },
+        ],
+      };
+      const html = SidebarLogic.buildContent("no-sym-id", override);
+      expect(html).not.toContain("sidebar-collapse-all");
+      expect(html).not.toContain("sidebar-header-actions");
+    });
+
+    test("collapse-all and close button inside header-actions wrapper", () => {
+      const html = SidebarLogic.buildContent("crate_a-crate_b");
+      const actionsMatch = html.match(/<div class="sidebar-header-actions">([\s\S]*?)<\/div>/);
+      expect(actionsMatch).not.toBeNull();
+      expect(actionsMatch[1]).toContain("sidebar-collapse-all");
+      expect(actionsMatch[1]).toContain("sidebar-close");
     });
   });
 
@@ -378,7 +396,7 @@ describe("SidebarLogic", () => {
         get() { return this._innerHTML; },
         set(v) { this._innerHTML = v; },
       });
-      innerDiv.scrollWidth = 0;
+      innerDiv.offsetWidth = 0;
       fakeEl._innerDiv = innerDiv;
       fakeEl.querySelector = () => fakeEl._innerDiv;
       const svgMock = makeSvgMock(0);
@@ -543,14 +561,14 @@ describe("SidebarLogic", () => {
       expect(parseInt(innerDiv.style.height)).toBeLessThanOrEqual(500);
     });
 
-    test("sets dynamic width from scrollWidth", () => {
+    test("sets dynamic width from max-content offsetWidth", () => {
       const fakeEl = createFakeElement("foreignObject");
       const innerDiv = createFakeElement("div");
       Object.defineProperty(innerDiv, "innerHTML", {
         get() { return this._innerHTML || ""; },
         set(v) { this._innerHTML = v; },
       });
-      innerDiv.scrollWidth = 350;
+      innerDiv.offsetWidth = 370;
       fakeEl.querySelector = () => innerDiv;
       const svgMock = {
         getBoundingClientRect() {
@@ -570,7 +588,7 @@ describe("SidebarLogic", () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 800;
       SidebarLogic.show("crate_a-crate_b");
-      // scrollWidth=350 + 20 = 370, max(280, min(370, 1000*0.5)) = 370, +12 shadow pad
+      // offsetWidth=370 (max-content), max(280, min(370, 1000*0.5)) = 370, +12 shadow pad
       expect(parseInt(fakeEl.getAttribute("width"))).toBe(382);
     });
 
@@ -581,7 +599,7 @@ describe("SidebarLogic", () => {
         get() { return this._innerHTML || ""; },
         set(v) { this._innerHTML = v; },
       });
-      innerDiv.scrollWidth = 800;
+      innerDiv.offsetWidth = 800;
       fakeEl.querySelector = () => innerDiv;
       const svgMock = {
         getBoundingClientRect() {
@@ -601,18 +619,18 @@ describe("SidebarLogic", () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 800;
       SidebarLogic.show("crate_a-crate_b");
-      // scrollWidth=800+20=820, max(280, min(820, 1000*0.5=500)) = 500, +12 shadow pad
+      // offsetWidth=800 (max-content), max(280, min(800, 1000*0.5=500)) = 500, +12 shadow pad
       expect(parseInt(fakeEl.getAttribute("width"))).toBe(512);
     });
 
-    test("falls back to 280 when scrollWidth is 0", () => {
+    test("falls back to 280 when offsetWidth is 0", () => {
       const fakeEl = createFakeElement("foreignObject");
       const innerDiv = createFakeElement("div");
       Object.defineProperty(innerDiv, "innerHTML", {
         get() { return this._innerHTML || ""; },
         set(v) { this._innerHTML = v; },
       });
-      innerDiv.scrollWidth = 0;
+      innerDiv.offsetWidth = 0;
       fakeEl.querySelector = () => innerDiv;
       const svgMock = {
         getBoundingClientRect() {
@@ -632,8 +650,128 @@ describe("SidebarLogic", () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 800;
       SidebarLogic.show("crate_a-crate_b");
-      // scrollWidth=0+20=20, max(280, min(20, 500)) = 280, +12 shadow pad
+      // offsetWidth=0 (max-content), max(280, min(0, 500)) = 280, +12 shadow pad
       expect(parseInt(fakeEl.getAttribute("width"))).toBe(292);
+    });
+  });
+
+  describe("collapse-all handler", () => {
+    function makeSymbolEl(collapsed) {
+      const attrs = new Map();
+      const classes = new Set(["sidebar-symbol"]);
+      if (collapsed) attrs.set("data-collapsed", "true");
+      const toggleEl = {
+        _innerHTML: collapsed ? "\u25B8" : "\u25BE",
+        get innerHTML() { return this._innerHTML; },
+        set innerHTML(v) { this._innerHTML = v; },
+      };
+      const locsEl = {
+        style: { display: collapsed ? "none" : "" },
+        classList: { contains(c) { return c === "sidebar-locations"; } },
+      };
+      return {
+        symbolEl: {
+          getAttribute(name) { return attrs.get(name) ?? null; },
+          setAttribute(name, value) { attrs.set(name, value); },
+          removeAttribute(name) { attrs.delete(name); },
+          classList: {
+            contains(c) { return classes.has(c); },
+          },
+          querySelector(sel) { if (sel === ".sidebar-toggle") return toggleEl; return null; },
+          nextElementSibling: locsEl,
+        },
+        locsEl,
+        toggleEl,
+      };
+    }
+
+    function makeHandlerDom(symbolDefs) {
+      const symbols = symbolDefs.map(d => makeSymbolEl(d.collapsed));
+      const symbolEls = symbols.map(s => s.symbolEl);
+      const listeners = new Map();
+      let collapseAllInner = "\u2212";
+      const collapseAllBtn = {
+        get innerHTML() { return collapseAllInner; },
+        set innerHTML(v) { collapseAllInner = v; },
+        addEventListener(evt, fn) {
+          if (!listeners.has("collapseAll")) listeners.set("collapseAll", []);
+          listeners.get("collapseAll").push(fn);
+        },
+      };
+      const content = {
+        querySelectorAll(sel) {
+          if (sel === ".sidebar-symbol") return symbolEls;
+          return [];
+        },
+        addEventListener(evt, fn) {
+          if (!listeners.has("content")) listeners.set("content", []);
+          listeners.get("content").push(fn);
+        },
+      };
+      const root = {
+        querySelector(sel) {
+          if (sel === ".sidebar-content") return content;
+          if (sel === ".sidebar-collapse-all") return collapseAllBtn;
+          return null;
+        },
+      };
+      return { root, symbols, collapseAllBtn, listeners };
+    }
+
+    test("clicking collapse-all collapses all expanded groups", () => {
+      const dom = makeHandlerDom([{ collapsed: false }, { collapsed: false }]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+      // Fire collapse-all click
+      for (const fn of dom.listeners.get("collapseAll")) fn();
+      for (const s of dom.symbols) {
+        expect(s.symbolEl.getAttribute("data-collapsed")).toBe("true");
+        expect(s.locsEl.style.display).toBe("none");
+        expect(s.toggleEl.innerHTML).toBe("\u25B8");
+      }
+      expect(dom.collapseAllBtn.innerHTML).toBe("+");
+    });
+
+    test("clicking twice expands all again", () => {
+      const dom = makeHandlerDom([{ collapsed: false }, { collapsed: false }]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+      const handlers = dom.listeners.get("collapseAll");
+      // First click: collapse all
+      for (const fn of handlers) fn();
+      // Second click: expand all
+      for (const fn of handlers) fn();
+      for (const s of dom.symbols) {
+        expect(s.symbolEl.getAttribute("data-collapsed")).toBeNull();
+        expect(s.locsEl.style.display).toBe("");
+        expect(s.toggleEl.innerHTML).toBe("\u25BE");
+      }
+      expect(dom.collapseAllBtn.innerHTML).toBe("\u2212");
+    });
+
+    test("mixed state: collapses remaining expanded", () => {
+      const dom = makeHandlerDom([{ collapsed: true }, { collapsed: false }]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+      for (const fn of dom.listeners.get("collapseAll")) fn();
+      // Both should be collapsed now
+      for (const s of dom.symbols) {
+        expect(s.symbolEl.getAttribute("data-collapsed")).toBe("true");
+        expect(s.locsEl.style.display).toBe("none");
+      }
+      expect(dom.collapseAllBtn.innerHTML).toBe("+");
+    });
+
+    test("no crash when no collapse-all button", () => {
+      const content = {
+        querySelectorAll() { return []; },
+        addEventListener() {},
+      };
+      const root = {
+        querySelector(sel) {
+          if (sel === ".sidebar-content") return content;
+          return null; // no collapse-all button
+        },
+      };
+      // Should not throw
+      expect(() => SidebarLogic._setupCollapseHandlers(root)).not.toThrow();
     });
   });
 });

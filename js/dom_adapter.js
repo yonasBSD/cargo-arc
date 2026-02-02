@@ -14,6 +14,7 @@ function createFakeElement(tagName) {
     children,
     getAttribute(name) { return attrs.get(name) ?? null; },
     setAttribute(name, value) { attrs.set(name, value); },
+    removeAttribute(name) { attrs.delete(name); },
     classList: {
       add(c) { classes.add(c); },
       remove(c) { classes.delete(c); },
