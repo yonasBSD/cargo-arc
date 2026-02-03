@@ -419,6 +419,49 @@ const SidebarLogic = {
   },
 
   /**
+   * Show sidebar with content for given node (pinned click).
+   * @param {string} nodeId
+   * @param {{ incoming: Array, outgoing: Array }} relations
+   */
+  showNode(nodeId, relations) {
+    const el = this._getElement();
+    if (!el) return;
+    const innerDiv = el.querySelector(".sidebar-root");
+    if (innerDiv) {
+      innerDiv.innerHTML = this.buildNodeContent(nodeId, relations);
+      innerDiv.classList.remove("sidebar-transient");
+      this._setupCollapseHandlers(innerDiv);
+    }
+    el.style.display = "block";
+    this._isTransient = false;
+    clearTimeout(this._debounceTimer);
+    this._cachedX = this._calcX();
+    this.updatePosition();
+  },
+
+  /**
+   * Show sidebar transiently for node hover. Debounced.
+   * @param {string} nodeId
+   * @param {{ incoming: Array, outgoing: Array }} relations
+   */
+  showTransientNode(nodeId, relations) {
+    clearTimeout(this._debounceTimer);
+    this._debounceTimer = setTimeout(() => {
+      const el = this._getElement();
+      if (!el) return;
+      const innerDiv = el.querySelector(".sidebar-root");
+      if (innerDiv) {
+        innerDiv.innerHTML = this.buildNodeContent(nodeId, relations);
+        innerDiv.classList.add("sidebar-transient");
+      }
+      el.style.display = "block";
+      this._isTransient = true;
+      this._cachedX = this._calcX();
+      this.updatePosition();
+    }, 30);
+  },
+
+  /**
    * Hide the sidebar.
    */
   hide() {

@@ -777,6 +777,76 @@ describe("SidebarLogic", () => {
     });
   });
 
+  describe("showNode/showTransientNode", () => {
+    let fakeEl;
+
+    function makeSvgMock(rectTop) {
+      return {
+        getBoundingClientRect() {
+          return { left: 0, top: rectTop ?? 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+      };
+    }
+
+    beforeEach(() => {
+      fakeEl = createFakeElement("foreignObject");
+      fakeEl.innerHTML = "";
+      const innerDiv = createFakeElement("div");
+      innerDiv._innerHTML = "";
+      Object.defineProperty(innerDiv, "innerHTML", {
+        get() { return this._innerHTML; },
+        set(v) { this._innerHTML = v; },
+      });
+      innerDiv.offsetWidth = 0;
+      fakeEl._innerDiv = innerDiv;
+      fakeEl.querySelector = () => fakeEl._innerDiv;
+      const svgMock = makeSvgMock(0);
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === "relation-sidebar") return fakeEl;
+          return null;
+        },
+        getSvgRoot() { return svgMock; },
+        querySelector(sel) { if (sel === "svg") return svgMock; return null; },
+        querySelectorAll() { return []; },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 800;
+      SidebarLogic._isTransient = false;
+      SidebarLogic._debounceTimer = null;
+    });
+
+    test("showNode sets display:block and renders node content", () => {
+      const relations = { incoming: [], outgoing: [] };
+      SidebarLogic.showNode("crate_a", relations);
+      expect(fakeEl.style.display).toBe("block");
+      expect(fakeEl._innerDiv.innerHTML).toContain("sidebar-header");
+      expect(fakeEl._innerDiv.innerHTML).toContain("No relations");
+    });
+
+    test("showNode removes sidebar-transient class", () => {
+      fakeEl._innerDiv.classList.add("sidebar-transient");
+      const relations = { incoming: [], outgoing: [] };
+      SidebarLogic.showNode("crate_a", relations);
+      expect(fakeEl._innerDiv.classList.contains("sidebar-transient")).toBe(false);
+      expect(SidebarLogic._isTransient).toBe(false);
+    });
+
+    test("showTransientNode shows after 30ms debounce", async () => {
+      const relations = { incoming: [], outgoing: [] };
+      SidebarLogic.showTransientNode("crate_a", relations);
+      // Before timer fires
+      expect(fakeEl.style.display).not.toBe("block");
+      // Wait for debounce (30ms + buffer)
+      await new Promise(r => setTimeout(r, 50));
+      expect(fakeEl.style.display).toBe("block");
+      expect(SidebarLogic._isTransient).toBe(true);
+      expect(fakeEl._innerDiv.classList.contains("sidebar-transient")).toBe(true);
+    });
+  });
+
   describe("buildNodeContent", () => {
     // Helper: relations with 2 incoming + 1 outgoing for crate_a
     function makeRelations() {

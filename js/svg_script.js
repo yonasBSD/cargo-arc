@@ -485,13 +485,37 @@ if (typeof document !== 'undefined') {
     } else {
       applyNodeGroupHighlight(nodeId, highlightSet);
     }
+    if (pin) {
+      const relations = collectNodeRelations(nodeId);
+      SidebarLogic.showNode(nodeId, relations);
+    }
+  }
+
+  function collectNodeRelations(nodeId) {
+    const base = StaticData.getNodeRelations(nodeId);
+    for (const [key, usages] of virtualArcUsages) {
+      const [fromId, toId] = key.split('-');
+      const origArcs = virtualArcOriginals.get(key) || [];
+      const weight = usages.reduce((s, g) => s + g.locations.length, 0);
+      const merged = SidebarLogic.mergeSymbolGroups(usages);
+      const entry = { targetId: fromId === nodeId ? toId : fromId,
+                      weight, usages: merged, arcId: key, originalArcs: origArcs };
+      if (fromId === nodeId) base.outgoing.push(entry);
+      else if (toId === nodeId) base.incoming.push(entry);
+    }
+    base.outgoing.sort((a, b) => b.weight - a.weight);
+    base.incoming.sort((a, b) => b.weight - a.weight);
+    return base;
   }
 
   function handleMouseEnter(type, id) {
     if (AppState.getPinned(appState)) return; // Don't preview if something is pinned
     clearHighlights();
-    if (type === 'node') applyNodeHighlight(id);
-    else if (type === 'edge') {
+    if (type === 'node') {
+      applyNodeHighlight(id);
+      const relations = collectNodeRelations(id);
+      SidebarLogic.showTransientNode(id, relations);
+    } else if (type === 'edge') {
       const [from, to] = id.split('-');
       applyEdgeHighlight(from, to);
       SidebarLogic.showTransient(id);
