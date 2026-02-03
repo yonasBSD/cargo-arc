@@ -5,7 +5,9 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
-use crate::analyze::{AnalysisBackend, FeatureConfig, analyze_workspace, normalize_crate_name};
+use crate::analyze::{
+    AnalysisBackend, FeatureConfig, analyze_workspace, collect_crate_exports, normalize_crate_name,
+};
 use crate::graph::build_graph;
 use crate::layout::{build_layout, detect_cycles, topo_sort};
 use crate::render::{RenderConfig, render};
@@ -145,12 +147,22 @@ pub fn run(args: Args) -> Result<()> {
         })
         .collect();
 
+    // 5a2. Collect crate exports for entry-point detection
+    let crate_exports: HashMap<String, HashSet<String>> = crates
+        .iter()
+        .map(|c| {
+            let name = normalize_crate_name(&c.name);
+            let exports = collect_crate_exports(&c.path);
+            (name, exports)
+        })
+        .collect();
+
     // 5b. Analyze modules for each crate
     let modules: Vec<_> = crates
         .iter()
         .filter_map(|c| {
             backend
-                .analyze_modules(c, &workspace_crates, &all_module_paths)
+                .analyze_modules(c, &workspace_crates, &all_module_paths, &crate_exports)
                 .ok()
         })
         .collect();

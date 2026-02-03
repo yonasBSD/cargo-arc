@@ -63,6 +63,14 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
                     &mut module_deps,
                 );
             }
+
+            // Root-Dependencies (lib.rs/main.rs) aufnehmen
+            if !module_tree.root.dependencies.is_empty() {
+                module_deps.push((
+                    module_tree.root.name.clone(),
+                    module_tree.root.dependencies.clone(),
+                ));
+            }
         }
     }
 
@@ -79,7 +87,11 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
 
     // Phase 4: Add ModuleDep edges (aggregate symbols per module target)
     for (from_path, deps) in &module_deps {
-        if let Some(&from_idx) = module_map.get(from_path) {
+        if let Some(&from_idx) = module_map
+            .get(from_path)
+            .or_else(|| crate_map.get(from_path))
+            .or_else(|| crate_map.get(&from_path.replace('_', "-")))
+        {
             // Group deps by module_target to aggregate symbols into one edge
             let mut grouped: HashMap<String, Vec<&DependencyRef>> = HashMap::new();
             for dep in deps {
@@ -90,8 +102,16 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
             sorted_targets.sort_by(|(a, _), (b, _)| a.cmp(b));
 
             for (target, target_deps) in sorted_targets {
-                if let Some(&to_idx) = module_map.get(&target) {
-                    let module_path = target_deps[0].target_module.clone();
+                if let Some(&to_idx) = module_map
+                    .get(&target)
+                    .or_else(|| crate_map.get(&target))
+                    .or_else(|| crate_map.get(&target.replace('_', "-")))
+                {
+                    let module_path = if target_deps[0].target_module.is_empty() {
+                        target.clone()
+                    } else {
+                        target_deps[0].target_module.clone()
+                    };
                     // Collect all symbols from deps at the same location, or create one SourceLocation per line
                     let mut locations_by_line: HashMap<(PathBuf, usize), Vec<String>> =
                         HashMap::new();
@@ -485,5 +505,269 @@ mod tests {
         assert_eq!(crate_dep_count, 1, "expected 1 CrateDep edge");
         assert_eq!(contains_count, 2, "expected 2 Contains edges");
         assert_eq!(module_dep_count, 1, "expected 1 inter-crate ModuleDep edge");
+    }
+
+    /// Test A: Root dependencies (from lib.rs/main.rs) produce ModuleDep edges
+    /// from the Crate node to a Module node.
+    #[test]
+    fn test_root_dependencies_in_module_deps() {
+        use crate::model::ModuleInfo;
+
+        let crates = vec![CrateInfo {
+            name: "crate_a".to_string(),
+            path: PathBuf::from("/path/to/a"),
+            dependencies: vec![],
+        }];
+
+        // Root module has a dependency on child module "gamma"
+        let modules = vec![ModuleTree {
+            root: ModuleInfo {
+                name: "crate_a".to_string(),
+                full_path: "crate_a".to_string(),
+                children: vec![ModuleInfo {
+                    name: "gamma".to_string(),
+                    full_path: "crate_a::gamma".to_string(),
+                    children: vec![],
+                    dependencies: vec![],
+                }],
+                dependencies: vec![DependencyRef {
+                    target_crate: "crate_a".to_string(),
+                    target_module: "gamma".to_string(),
+                    target_item: None,
+                    source_file: PathBuf::from("src/lib.rs"),
+                    line: 5,
+                }],
+            },
+        }];
+
+        let graph = build_graph(&crates, &modules);
+
+        // Should have ModuleDep edge from Crate node to gamma Module node
+        let mut module_dep_count = 0;
+        for edge_idx in graph.edge_indices() {
+            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+                module_dep_count += 1;
+                let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
+                assert!(
+                    matches!(&graph[from], Node::Crate { .. }),
+                    "from should be Crate node"
+                );
+                assert!(
+                    matches!(&graph[to], Node::Module { name, .. } if name == "gamma"),
+                    "to should be gamma Module node"
+                );
+                assert_eq!(locs[0].file, PathBuf::from("src/lib.rs"));
+            }
+        }
+        assert_eq!(module_dep_count, 1, "expected 1 ModuleDep from root");
+    }
+
+    /// Test B: Entry-point dependency (target_module="") from a Module to a Crate node.
+    /// module_path should be the crate name, not empty.
+    #[test]
+    fn test_module_dep_to_crate_node() {
+        use crate::model::ModuleInfo;
+
+        let crates = vec![
+            CrateInfo {
+                name: "crate_a".to_string(),
+                path: PathBuf::from("/path/to/a"),
+                dependencies: vec!["crate_b".to_string()],
+            },
+            CrateInfo {
+                name: "crate_b".to_string(),
+                path: PathBuf::from("/path/to/b"),
+                dependencies: vec![],
+            },
+        ];
+
+        // crate_a::beta depends on crate_b entry-point (target_module="")
+        let modules = vec![
+            ModuleTree {
+                root: ModuleInfo {
+                    name: "crate_a".to_string(),
+                    full_path: "crate_a".to_string(),
+                    children: vec![ModuleInfo {
+                        name: "beta".to_string(),
+                        full_path: "crate_a::beta".to_string(),
+                        children: vec![],
+                        dependencies: vec![DependencyRef {
+                            target_crate: "crate_b".to_string(),
+                            target_module: "".to_string(),
+                            target_item: Some("Widget".to_string()),
+                            source_file: PathBuf::from("src/beta.rs"),
+                            line: 3,
+                        }],
+                    }],
+                    dependencies: vec![],
+                },
+            },
+            ModuleTree {
+                root: ModuleInfo {
+                    name: "crate_b".to_string(),
+                    full_path: "crate_b".to_string(),
+                    children: vec![],
+                    dependencies: vec![],
+                },
+            },
+        ];
+
+        let graph = build_graph(&crates, &modules);
+
+        // Should have ModuleDep edge from beta Module to crate_b Crate node
+        let mut found = false;
+        for edge_idx in graph.edge_indices() {
+            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+                let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
+                if matches!(&graph[from], Node::Module { name, .. } if name == "beta")
+                    && matches!(&graph[to], Node::Crate { name, .. } if name == "crate_b")
+                {
+                    found = true;
+                    assert_eq!(
+                        locs[0].module_path, "crate_b",
+                        "module_path should be crate name, not empty"
+                    );
+                    assert_eq!(locs[0].symbols, vec!["Widget"]);
+                }
+            }
+        }
+        assert!(found, "expected ModuleDep from beta to crate_b Crate node");
+    }
+
+    /// Test C: Root dependency from Crate A to a Module in Crate B.
+    #[test]
+    fn test_root_dep_to_module() {
+        use crate::model::ModuleInfo;
+
+        let crates = vec![
+            CrateInfo {
+                name: "crate_a".to_string(),
+                path: PathBuf::from("/path/to/a"),
+                dependencies: vec!["crate_b".to_string()],
+            },
+            CrateInfo {
+                name: "crate_b".to_string(),
+                path: PathBuf::from("/path/to/b"),
+                dependencies: vec![],
+            },
+        ];
+
+        // crate_a root depends on crate_b::gamma
+        let modules = vec![
+            ModuleTree {
+                root: ModuleInfo {
+                    name: "crate_a".to_string(),
+                    full_path: "crate_a".to_string(),
+                    children: vec![],
+                    dependencies: vec![DependencyRef {
+                        target_crate: "crate_b".to_string(),
+                        target_module: "gamma".to_string(),
+                        target_item: None,
+                        source_file: PathBuf::from("src/lib.rs"),
+                        line: 2,
+                    }],
+                },
+            },
+            ModuleTree {
+                root: ModuleInfo {
+                    name: "crate_b".to_string(),
+                    full_path: "crate_b".to_string(),
+                    children: vec![ModuleInfo {
+                        name: "gamma".to_string(),
+                        full_path: "crate_b::gamma".to_string(),
+                        children: vec![],
+                        dependencies: vec![],
+                    }],
+                    dependencies: vec![],
+                },
+            },
+        ];
+
+        let graph = build_graph(&crates, &modules);
+
+        // Should have ModuleDep from crate_a Crate node to gamma Module node
+        let mut found = false;
+        for edge_idx in graph.edge_indices() {
+            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+                let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
+                if matches!(&graph[from], Node::Crate { name, .. } if name == "crate_a")
+                    && matches!(&graph[to], Node::Module { name, .. } if name == "gamma")
+                {
+                    found = true;
+                    assert_eq!(locs[0].file, PathBuf::from("src/lib.rs"));
+                }
+            }
+        }
+        assert!(found, "expected ModuleDep from crate_a to gamma");
+    }
+
+    /// Test D: Root dependency with entry-point (target_module="") → Crate-to-Crate ModuleDep.
+    /// module_path should be the crate name, not empty.
+    #[test]
+    fn test_root_dep_to_crate_node() {
+        use crate::model::ModuleInfo;
+
+        let crates = vec![
+            CrateInfo {
+                name: "crate_a".to_string(),
+                path: PathBuf::from("/path/to/a"),
+                dependencies: vec!["crate_b".to_string()],
+            },
+            CrateInfo {
+                name: "crate_b".to_string(),
+                path: PathBuf::from("/path/to/b"),
+                dependencies: vec![],
+            },
+        ];
+
+        // crate_a root depends on crate_b entry-point (target_module="")
+        let modules = vec![
+            ModuleTree {
+                root: ModuleInfo {
+                    name: "crate_a".to_string(),
+                    full_path: "crate_a".to_string(),
+                    children: vec![],
+                    dependencies: vec![DependencyRef {
+                        target_crate: "crate_b".to_string(),
+                        target_module: "".to_string(),
+                        target_item: Some("Config".to_string()),
+                        source_file: PathBuf::from("src/lib.rs"),
+                        line: 1,
+                    }],
+                },
+            },
+            ModuleTree {
+                root: ModuleInfo {
+                    name: "crate_b".to_string(),
+                    full_path: "crate_b".to_string(),
+                    children: vec![],
+                    dependencies: vec![],
+                },
+            },
+        ];
+
+        let graph = build_graph(&crates, &modules);
+
+        // Should have ModuleDep from crate_a Crate to crate_b Crate
+        let mut found = false;
+        for edge_idx in graph.edge_indices() {
+            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+                let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
+                if matches!(&graph[from], Node::Crate { name, .. } if name == "crate_a")
+                    && matches!(&graph[to], Node::Crate { name, .. } if name == "crate_b")
+                {
+                    found = true;
+                    assert_eq!(
+                        locs[0].module_path, "crate_b",
+                        "module_path should be crate name"
+                    );
+                    assert_eq!(locs[0].symbols, vec!["Config"]);
+                }
+            }
+        }
+        assert!(
+            found,
+            "expected ModuleDep from crate_a Crate to crate_b Crate"
+        );
     }
 }

@@ -221,6 +221,7 @@ pub fn analyze_modules(
     vfs: &ra_ap_vfs::Vfs,
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    crate_exports: &HashMap<String, HashSet<String>>,
 ) -> Result<ModuleTree> {
     // Find crate in already-loaded workspace
     let krate = find_crate_in_workspace(crate_info, host, vfs)?;
@@ -240,6 +241,7 @@ pub fn analyze_modules(
         crate_name,
         workspace_crates,
         all_module_paths,
+        crate_exports,
     );
 
     Ok(ModuleTree { root })
@@ -256,6 +258,7 @@ fn walk_module(
     crate_name: &str,
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    crate_exports: &HashMap<String, HashSet<String>>,
 ) -> ModuleInfo {
     let (name, full_path) = resolve_module_name_and_path(module, db, parent_path);
 
@@ -268,6 +271,7 @@ fn walk_module(
         crate_name,
         workspace_crates,
         all_module_paths,
+        crate_exports,
     );
 
     let children: Vec<ModuleInfo> = module
@@ -284,6 +288,7 @@ fn walk_module(
                     crate_name,
                     workspace_crates,
                     all_module_paths,
+                    crate_exports,
                 ))
             } else {
                 None
@@ -309,6 +314,7 @@ fn extract_module_dependencies(
     crate_name: &str,
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    crate_exports: &HashMap<String, HashSet<String>>,
 ) -> Vec<DependencyRef> {
     // Get the source file for this module
     let source = module.definition_source(db);
@@ -341,7 +347,7 @@ fn extract_module_dependencies(
         workspace_crates,
         &source_file,
         all_module_paths,
-        &HashMap::new(),
+        crate_exports,
     )
 }
 
@@ -510,8 +516,15 @@ mod hir_tests {
 
             let (host, vfs) = load_workspace_hir(&manifest, &FeatureConfig::default())
                 .expect("should load workspace");
-            let tree = analyze_modules(cargo_arc, &host, &vfs, &workspace_crates, &HashMap::new())
-                .expect("should analyze modules");
+            let tree = analyze_modules(
+                cargo_arc,
+                &host,
+                &vfs,
+                &workspace_crates,
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .expect("should analyze modules");
 
             assert_eq!(tree.root.name, "cargo_arc");
 
@@ -550,8 +563,15 @@ mod hir_tests {
 
             let (host, vfs) = load_workspace_hir(&manifest, &FeatureConfig::default())
                 .expect("should load workspace");
-            let tree = analyze_modules(cargo_arc, &host, &vfs, &workspace_crates, &HashMap::new())
-                .expect("should analyze modules");
+            let tree = analyze_modules(
+                cargo_arc,
+                &host,
+                &vfs,
+                &workspace_crates,
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .expect("should analyze modules");
 
             assert_eq!(tree.root.full_path, "cargo_arc");
 
@@ -576,8 +596,15 @@ mod hir_tests {
 
             let (host, vfs) = load_workspace_hir(&manifest, &FeatureConfig::default())
                 .expect("should load workspace");
-            let tree = analyze_modules(cargo_arc, &host, &vfs, &workspace_crates, &HashMap::new())
-                .expect("should analyze modules");
+            let tree = analyze_modules(
+                cargo_arc,
+                &host,
+                &vfs,
+                &workspace_crates,
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .expect("should analyze modules");
 
             let graph_module = tree
                 .root

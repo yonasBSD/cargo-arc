@@ -71,12 +71,14 @@ impl AnalysisBackend {
         crate_info: &CrateInfo,
         workspace_crates: &HashSet<String>,
         all_module_paths: &HashMap<String, HashSet<String>>,
+        crate_exports: &HashMap<String, HashSet<String>>,
     ) -> Result<ModuleTree> {
         match self {
             Self::Syn { include_cfg_test } => analyze_modules_syn(
                 crate_info,
                 workspace_crates,
                 all_module_paths,
+                crate_exports,
                 *include_cfg_test,
             ),
             #[cfg(feature = "hir")]
@@ -86,6 +88,7 @@ impl AnalysisBackend {
                 vfs,
                 workspace_crates,
                 all_module_paths,
+                crate_exports,
             ),
         }
     }

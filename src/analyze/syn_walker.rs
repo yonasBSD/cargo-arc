@@ -188,7 +188,6 @@ pub(crate) fn collect_syn_module_paths(
 
 /// Extract the leaf name(s) from a `UseTree`.
 /// Handles simple paths, aliases, and groups — but NOT globs.
-#[allow(dead_code)] // Used in Phase 3 when crate_exports is wired through
 fn collect_use_tree_names(tree: &syn::UseTree, names: &mut HashSet<String>) {
     match tree {
         syn::UseTree::Path(p) => collect_use_tree_names(&p.tree, names),
@@ -208,7 +207,6 @@ fn collect_use_tree_names(tree: &syn::UseTree, names: &mut HashSet<String>) {
 }
 
 /// Returns whether a `syn::Visibility` is `pub` (not `pub(crate)`, `pub(super)`, etc.).
-#[allow(dead_code)] // Used in Phase 3 when crate_exports is wired through
 fn is_pub(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
@@ -221,7 +219,6 @@ fn is_pub(vis: &syn::Visibility) -> bool {
 ///
 /// Ignores `pub mod` declarations (module structure, not exports).
 /// Returns an empty set on any error (no entry file, parse failure).
-#[allow(dead_code)] // Used in Phase 3 when crate_exports is wired through
 pub(crate) fn collect_crate_exports(crate_root: &Path) -> HashSet<String> {
     let root_file = match find_crate_root_file(crate_root) {
         Ok(f) => f,
@@ -287,6 +284,7 @@ fn walk_module_syn(
     crate_root: &Path,
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    crate_exports: &HashMap<String, HashSet<String>>,
     include_cfg_test: bool,
 ) -> ModuleInfo {
     let full_path = if parent_path == module_name {
@@ -315,7 +313,7 @@ fn walk_module_syn(
         workspace_crates,
         &source_file,
         all_module_paths,
-        &HashMap::new(),
+        crate_exports,
     );
 
     // Discover children
@@ -342,6 +340,7 @@ fn walk_module_syn(
                     crate_root,
                     workspace_crates,
                     all_module_paths,
+                    crate_exports,
                     include_cfg_test,
                 )
             })
@@ -362,6 +361,7 @@ pub(crate) fn analyze_modules_syn(
     crate_info: &CrateInfo,
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    crate_exports: &HashMap<String, HashSet<String>>,
     include_cfg_test: bool,
 ) -> Result<ModuleTree> {
     let root_file = find_crate_root_file(&crate_info.path)?;
@@ -375,6 +375,7 @@ pub(crate) fn analyze_modules_syn(
         &crate_info.path,
         workspace_crates,
         all_module_paths,
+        crate_exports,
         include_cfg_test,
     );
 
@@ -775,8 +776,14 @@ mod tests {
             let workspace_crates: HashSet<String> =
                 ["cargo-arc"].iter().map(|s| s.to_string()).collect();
 
-            let tree = analyze_modules_syn(&crate_info, &workspace_crates, &HashMap::new(), false)
-                .expect("should analyze");
+            let tree = analyze_modules_syn(
+                &crate_info,
+                &workspace_crates,
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .expect("should analyze");
 
             assert_eq!(tree.root.name, "cargo_arc");
             assert_eq!(tree.root.full_path, "cargo_arc");
@@ -830,9 +837,14 @@ mod tests {
             let paths = collect_syn_module_paths(crate_root, "cargo_arc", false);
             all_module_paths.insert("cargo_arc".to_string(), paths);
 
-            let tree =
-                analyze_modules_syn(&crate_info, &workspace_crates, &all_module_paths, false)
-                    .expect("should analyze");
+            let tree = analyze_modules_syn(
+                &crate_info,
+                &workspace_crates,
+                &all_module_paths,
+                &HashMap::new(),
+                false,
+            )
+            .expect("should analyze");
 
             let graph_mod = tree
                 .root
