@@ -183,6 +183,94 @@ pub(crate) fn collect_syn_module_paths(
 }
 
 // ---------------------------------------------------------------------------
+// Public API: collect_crate_exports
+// ---------------------------------------------------------------------------
+
+/// Extract the leaf name(s) from a `UseTree`.
+/// Handles simple paths, aliases, and groups — but NOT globs.
+fn collect_use_tree_names(tree: &syn::UseTree, names: &mut HashSet<String>) {
+    match tree {
+        syn::UseTree::Path(p) => collect_use_tree_names(&p.tree, names),
+        syn::UseTree::Name(n) => {
+            names.insert(n.ident.to_string());
+        }
+        syn::UseTree::Rename(r) => {
+            names.insert(r.rename.to_string());
+        }
+        syn::UseTree::Group(g) => {
+            for item in &g.items {
+                collect_use_tree_names(item, names);
+            }
+        }
+        syn::UseTree::Glob(_) => {} // out of scope
+    }
+}
+
+/// Returns whether a `syn::Visibility` is `pub` (not `pub(crate)`, `pub(super)`, etc.).
+fn is_pub(vis: &syn::Visibility) -> bool {
+    matches!(vis, syn::Visibility::Public(_))
+}
+
+/// Collect publicly exported symbol names from a crate's entry point (lib.rs/main.rs).
+///
+/// Includes:
+/// - `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub const`, `pub static`, `pub type`
+/// - `pub use` re-exports (simple, aliased, grouped — NOT glob)
+///
+/// Ignores `pub mod` declarations (module structure, not exports).
+/// Returns an empty set on any error (no entry file, parse failure).
+pub(crate) fn collect_crate_exports(crate_root: &Path) -> HashSet<String> {
+    let root_file = match find_crate_root_file(crate_root) {
+        Ok(f) => f,
+        Err(_) => return HashSet::new(),
+    };
+
+    let source = match std::fs::read_to_string(&root_file) {
+        Ok(s) => s,
+        Err(_) => return HashSet::new(),
+    };
+
+    let syntax = match syn::parse_file(&source) {
+        Ok(f) => f,
+        Err(_) => return HashSet::new(),
+    };
+
+    let mut exports = HashSet::new();
+
+    for item in &syntax.items {
+        match item {
+            syn::Item::Fn(i) if is_pub(&i.vis) => {
+                exports.insert(i.sig.ident.to_string());
+            }
+            syn::Item::Struct(i) if is_pub(&i.vis) => {
+                exports.insert(i.ident.to_string());
+            }
+            syn::Item::Enum(i) if is_pub(&i.vis) => {
+                exports.insert(i.ident.to_string());
+            }
+            syn::Item::Trait(i) if is_pub(&i.vis) => {
+                exports.insert(i.ident.to_string());
+            }
+            syn::Item::Const(i) if is_pub(&i.vis) => {
+                exports.insert(i.ident.to_string());
+            }
+            syn::Item::Static(i) if is_pub(&i.vis) => {
+                exports.insert(i.ident.to_string());
+            }
+            syn::Item::Type(i) if is_pub(&i.vis) => {
+                exports.insert(i.ident.to_string());
+            }
+            syn::Item::Use(i) if is_pub(&i.vis) => {
+                collect_use_tree_names(&i.tree, &mut exports);
+            }
+            _ => {}
+        }
+    }
+
+    exports
+}
+
+// ---------------------------------------------------------------------------
 // Public API: analyze_modules_syn
 // ---------------------------------------------------------------------------
 
@@ -537,6 +625,135 @@ mod tests {
 
             let paths = collect_syn_module_paths(tmp.path(), "empty", false);
             assert!(paths.is_empty(), "expected empty set, found: {paths:?}");
+        }
+    }
+
+    mod collect_exports {
+        use super::*;
+
+        #[test]
+        fn test_collect_exports_pub_items() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(
+                src.join("lib.rs"),
+                r#"
+                    pub fn helper() {}
+                    pub struct MyStruct;
+                    pub enum MyEnum { A, B }
+                    pub trait MyTrait {}
+                    pub const MAX: usize = 10;
+                    pub static GLOBAL: i32 = 0;
+                    pub type Alias = i32;
+                "#,
+            )
+            .unwrap();
+
+            let exports = collect_crate_exports(tmp.path());
+            for name in [
+                "helper", "MyStruct", "MyEnum", "MyTrait", "MAX", "GLOBAL", "Alias",
+            ] {
+                assert!(
+                    exports.contains(name),
+                    "should contain '{name}', found: {exports:?}"
+                );
+            }
+            assert_eq!(exports.len(), 7);
+        }
+
+        #[test]
+        fn test_collect_exports_reexports() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(src.join("lib.rs"), "pub use some_crate::Widget;\n").unwrap();
+
+            let exports = collect_crate_exports(tmp.path());
+            assert!(exports.contains("Widget"), "found: {exports:?}");
+            assert_eq!(exports.len(), 1);
+        }
+
+        #[test]
+        fn test_collect_exports_alias_reexport() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(
+                src.join("lib.rs"),
+                "pub use some_crate::Original as Alias;\n",
+            )
+            .unwrap();
+
+            let exports = collect_crate_exports(tmp.path());
+            assert!(exports.contains("Alias"), "found: {exports:?}");
+            assert!(!exports.contains("Original"), "should not contain Original");
+            assert_eq!(exports.len(), 1);
+        }
+
+        #[test]
+        fn test_collect_exports_multi_reexport() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(src.join("lib.rs"), "pub use some_crate::{Alpha, Beta};\n").unwrap();
+
+            let exports = collect_crate_exports(tmp.path());
+            assert!(exports.contains("Alpha"), "found: {exports:?}");
+            assert!(exports.contains("Beta"), "found: {exports:?}");
+            assert_eq!(exports.len(), 2);
+        }
+
+        #[test]
+        fn test_collect_exports_non_pub_ignored() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(
+                src.join("lib.rs"),
+                r#"
+                    fn private_fn() {}
+                    struct PrivateStruct;
+                    pub fn public_fn() {}
+                    pub(crate) fn crate_fn() {}
+                "#,
+            )
+            .unwrap();
+
+            let exports = collect_crate_exports(tmp.path());
+            assert!(exports.contains("public_fn"), "found: {exports:?}");
+            assert!(!exports.contains("private_fn"));
+            assert!(!exports.contains("PrivateStruct"));
+            assert!(!exports.contains("crate_fn"));
+            assert_eq!(exports.len(), 1);
+        }
+
+        #[test]
+        fn test_collect_exports_mod_ignored() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(
+                src.join("lib.rs"),
+                "pub mod foo;\npub fn real_export() {}\n",
+            )
+            .unwrap();
+
+            let exports = collect_crate_exports(tmp.path());
+            assert!(exports.contains("real_export"), "found: {exports:?}");
+            assert!(!exports.contains("foo"), "pub mod should not be an export");
+            assert_eq!(exports.len(), 1);
+        }
+
+        #[test]
+        fn test_collect_exports_no_entry_file() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            // No lib.rs or main.rs
+
+            let exports = collect_crate_exports(tmp.path());
+            assert!(exports.is_empty(), "found: {exports:?}");
         }
     }
 

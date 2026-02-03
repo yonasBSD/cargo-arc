@@ -22,16 +22,26 @@ pub struct DependencyRef {
 
 impl DependencyRef {
     /// Returns full target path: "crate::module::item" or "crate::module" if no item.
+    /// For empty target_module (entry-point): "crate::item" or just "crate".
     pub fn full_target(&self) -> String {
-        match &self.target_item {
-            Some(item) => format!("{}::{}::{}", self.target_crate, self.target_module, item),
-            None => format!("{}::{}", self.target_crate, self.target_module),
+        match (&self.target_item, self.target_module.is_empty()) {
+            (Some(item), true) => format!("{}::{}", self.target_crate, item),
+            (Some(item), false) => {
+                format!("{}::{}::{}", self.target_crate, self.target_module, item)
+            }
+            (None, true) => self.target_crate.clone(),
+            (None, false) => format!("{}::{}", self.target_crate, self.target_module),
         }
     }
 
     /// Returns module-level target: "crate::module" (ignores item).
+    /// For empty target_module (entry-point): just "crate".
     pub fn module_target(&self) -> String {
-        format!("{}::{}", self.target_crate, self.target_module)
+        if self.target_module.is_empty() {
+            self.target_crate.clone()
+        } else {
+            format!("{}::{}", self.target_crate, self.target_module)
+        }
     }
 }
 
@@ -103,6 +113,42 @@ mod tests {
             line: 1,
         };
         assert_eq!(dep.full_target(), "crate::graph");
+    }
+
+    #[test]
+    fn test_module_target_empty_module() {
+        let dep = DependencyRef {
+            target_crate: "crate_b".to_string(),
+            target_module: "".to_string(),
+            target_item: None,
+            source_file: PathBuf::new(),
+            line: 1,
+        };
+        assert_eq!(dep.module_target(), "crate_b");
+    }
+
+    #[test]
+    fn test_full_target_empty_module_with_item() {
+        let dep = DependencyRef {
+            target_crate: "crate_b".to_string(),
+            target_module: "".to_string(),
+            target_item: Some("Symbol".to_string()),
+            source_file: PathBuf::new(),
+            line: 1,
+        };
+        assert_eq!(dep.full_target(), "crate_b::Symbol");
+    }
+
+    #[test]
+    fn test_full_target_empty_module_no_item() {
+        let dep = DependencyRef {
+            target_crate: "crate_b".to_string(),
+            target_module: "".to_string(),
+            target_item: None,
+            source_file: PathBuf::new(),
+            line: 1,
+        };
+        assert_eq!(dep.full_target(), "crate_b");
     }
 
     #[test]
