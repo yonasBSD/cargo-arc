@@ -269,6 +269,8 @@ const SidebarLogic = {
   _cachedX: null,
   /** Original SVG viewBox height — stored to restore after sidebar close. */
   _originalViewBoxHeight: null,
+  /** Original SVG viewBox width — stored to restore after sidebar close. */
+  _originalViewBoxWidth: null,
 
   /**
    * Calculate sidebar x in SVG coordinates (right of widest visible arc).
@@ -476,14 +478,21 @@ const SidebarLogic = {
     this._isTransient = false;
     clearTimeout(this._debounceTimer);
 
-    // Restore original SVG canvas height
-    if (this._originalViewBoxHeight !== null) {
+    // Restore original SVG canvas dimensions
+    if (this._originalViewBoxHeight !== null || this._originalViewBoxWidth !== null) {
       const svg = DomAdapter.getSvgRoot();
       if (svg) {
-        svg.viewBox.baseVal.height = this._originalViewBoxHeight;
-        svg.setAttribute("height", String(this._originalViewBoxHeight));
+        if (this._originalViewBoxHeight !== null) {
+          svg.viewBox.baseVal.height = this._originalViewBoxHeight;
+          svg.setAttribute("height", String(this._originalViewBoxHeight));
+        }
+        if (this._originalViewBoxWidth !== null) {
+          svg.viewBox.baseVal.width = this._originalViewBoxWidth;
+          svg.setAttribute("width", String(this._originalViewBoxWidth));
+        }
       }
       this._originalViewBoxHeight = null;
+      this._originalViewBoxWidth = null;
     }
   },
 
@@ -533,10 +542,22 @@ const SidebarLogic = {
         this._originalViewBoxHeight = vb.height;
       }
       const sidebarBottom = pos.y + pos.height + SIDEBAR_SHADOW_PAD;
-      const needed = Math.max(this._originalViewBoxHeight, sidebarBottom);
-      if (vb.height !== needed) {
-        vb.height = needed;
-        svg.setAttribute("height", String(needed));
+      const neededH = Math.max(this._originalViewBoxHeight, sidebarBottom);
+      if (vb.height !== neededH) {
+        vb.height = neededH;
+        svg.setAttribute("height", String(neededH));
+      }
+
+      // Also expand width when sidebar extends beyond viewBox
+      if (this._originalViewBoxWidth === null) {
+        this._originalViewBoxWidth = vb.width;
+      }
+      const sidebarX = this._cachedX != null ? this._cachedX : this._calcX();
+      const sidebarRight = sidebarX + Math.round(width) + SIDEBAR_SHADOW_PAD;
+      const neededW = Math.max(this._originalViewBoxWidth, sidebarRight);
+      if (vb.width !== neededW) {
+        vb.width = neededW;
+        svg.setAttribute("width", String(neededW));
       }
     }
   },
