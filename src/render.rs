@@ -680,7 +680,11 @@ fn build_css_rules() -> Vec<CssRule> {
         ),
         CssRule::new(
             &format!(".{}", c.nodes.label),
-            &[("font-family", "monospace"), ("font-size", "12px")],
+            &[
+                ("font-family", "monospace"),
+                ("font-size", "12px"),
+                ("pointer-events", "none"),
+            ],
         ),
         CssRule::new(
             &format!(".{}", c.nodes.tree_line),
