@@ -419,25 +419,23 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
         }
     }
 
-    // Build set of crate pairs that have ModuleDep edges between them
+    // Build set of crate pairs that have ModuleDep edges between them.
+    // Entry-point imports create ModuleDep edges where one or both endpoints
+    // are Node::Crate (not just Node::Module), so we handle all combinations.
+    let crate_of = |node_idx: NodeIndex| -> NodeIndex {
+        match &graph[node_idx] {
+            Node::Module { crate_idx, .. } => *crate_idx,
+            Node::Crate { .. } => node_idx,
+        }
+    };
     let mut crates_with_module_deps: HashSet<(NodeIndex, NodeIndex)> = HashSet::new();
     for edge_idx in graph.edge_indices() {
         if let Edge::ModuleDep(_) = &graph[edge_idx] {
             let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
-            // Get crate_idx for both modules
-            if let (
-                Node::Module {
-                    crate_idx: src_crate,
-                    ..
-                },
-                Node::Module {
-                    crate_idx: dst_crate,
-                    ..
-                },
-            ) = (&graph[src], &graph[dst])
-                && src_crate != dst_crate
-            {
-                crates_with_module_deps.insert((*src_crate, *dst_crate));
+            let src_crate = crate_of(src);
+            let dst_crate = crate_of(dst);
+            if src_crate != dst_crate {
+                crates_with_module_deps.insert((src_crate, dst_crate));
             }
         }
     }
@@ -1262,6 +1260,181 @@ mod tests {
             pos_beta < pos_alpha,
             "beta should come before alpha (beta depends on alpha). Labels: {:?}",
             labels
+        );
+    }
+
+    #[test]
+    fn test_crate_dep_suppressed_for_entry_point_module_dep() {
+        use std::path::PathBuf;
+
+        // Setup: Crate A has module mod_a that imports from Crate B's entry point.
+        // This creates a ModuleDep from mod_a (Node::Module) to crate_b (Node::Crate).
+        // The CrateDep between crate_a and crate_b should be suppressed.
+        let mut graph = ArcGraph::new();
+
+        let crate_a = graph.add_node(Node::Crate {
+            name: "crate_a".to_string(),
+            path: PathBuf::from("/path/a"),
+        });
+        let mod_a = graph.add_node(Node::Module {
+            name: "mod_a".to_string(),
+            crate_idx: crate_a,
+        });
+        let crate_b = graph.add_node(Node::Crate {
+            name: "crate_b".to_string(),
+            path: PathBuf::from("/path/b"),
+        });
+
+        // Hierarchy
+        graph.add_edge(crate_a, mod_a, Edge::Contains);
+
+        // CrateDep: crate_a -> crate_b
+        graph.add_edge(crate_a, crate_b, Edge::CrateDep);
+
+        // ModuleDep: mod_a -> crate_b (entry-point import)
+        graph.add_edge(
+            mod_a,
+            crate_b,
+            Edge::ModuleDep(vec![SourceLocation {
+                file: PathBuf::from("src/mod_a.rs"),
+                line: 1,
+                symbols: vec!["Helper".to_string()],
+                module_path: "crate_b".to_string(),
+            }]),
+        );
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        // Should have 3 items (2 crates + 1 module)
+        assert_eq!(ir.items.len(), 3);
+
+        // CrateDep should be suppressed — only the ModuleDep edge should remain
+        assert_eq!(
+            ir.edges.len(),
+            1,
+            "CrateDep should be suppressed when ModuleDep exists. Edges: {:?}",
+            ir.edges
+                .iter()
+                .map(|e| format!(
+                    "{}->{} locs={}",
+                    ir.items[e.from].label,
+                    ir.items[e.to].label,
+                    e.source_locations.len()
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        // The remaining edge should be the ModuleDep (has source_locations)
+        assert!(
+            !ir.edges[0].source_locations.is_empty(),
+            "Remaining edge should be ModuleDep with source_locations"
+        );
+    }
+
+    #[test]
+    fn test_crate_dep_suppressed_for_crate_to_crate_module_dep() {
+        use std::path::PathBuf;
+
+        // Setup: Crate A's root (lib.rs) imports from Crate B's entry point.
+        // This creates a ModuleDep from crate_a (Node::Crate) to crate_b (Node::Crate).
+        // The CrateDep between crate_a and crate_b should be suppressed.
+        let mut graph = ArcGraph::new();
+
+        let crate_a = graph.add_node(Node::Crate {
+            name: "crate_a".to_string(),
+            path: PathBuf::from("/path/a"),
+        });
+        let crate_b = graph.add_node(Node::Crate {
+            name: "crate_b".to_string(),
+            path: PathBuf::from("/path/b"),
+        });
+
+        // CrateDep: crate_a -> crate_b
+        graph.add_edge(crate_a, crate_b, Edge::CrateDep);
+
+        // ModuleDep: crate_a -> crate_b (root-to-entry-point)
+        graph.add_edge(
+            crate_a,
+            crate_b,
+            Edge::ModuleDep(vec![SourceLocation {
+                file: PathBuf::from("src/lib.rs"),
+                line: 3,
+                symbols: vec!["Config".to_string()],
+                module_path: "crate_b".to_string(),
+            }]),
+        );
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        // CrateDep should be suppressed
+        assert_eq!(
+            ir.edges.len(),
+            1,
+            "CrateDep should be suppressed for Crate→Crate ModuleDep"
+        );
+        assert!(
+            !ir.edges[0].source_locations.is_empty(),
+            "Remaining edge should be ModuleDep"
+        );
+    }
+
+    #[test]
+    fn test_crate_dep_suppressed_for_crate_to_module_module_dep() {
+        use std::path::PathBuf;
+
+        // Setup: Crate A's root imports from Crate B's module (not entry point).
+        // ModuleDep from crate_a (Node::Crate) to mod_b (Node::Module).
+        // CrateDep should be suppressed.
+        let mut graph = ArcGraph::new();
+
+        let crate_a = graph.add_node(Node::Crate {
+            name: "crate_a".to_string(),
+            path: PathBuf::from("/path/a"),
+        });
+        let crate_b = graph.add_node(Node::Crate {
+            name: "crate_b".to_string(),
+            path: PathBuf::from("/path/b"),
+        });
+        let mod_b = graph.add_node(Node::Module {
+            name: "mod_b".to_string(),
+            crate_idx: crate_b,
+        });
+
+        // Hierarchy
+        graph.add_edge(crate_b, mod_b, Edge::Contains);
+
+        // CrateDep: crate_a -> crate_b
+        graph.add_edge(crate_a, crate_b, Edge::CrateDep);
+
+        // ModuleDep: crate_a -> mod_b (root imports from module)
+        graph.add_edge(
+            crate_a,
+            mod_b,
+            Edge::ModuleDep(vec![SourceLocation {
+                file: PathBuf::from("src/lib.rs"),
+                line: 5,
+                symbols: vec!["parse".to_string()],
+                module_path: "mod_b".to_string(),
+            }]),
+        );
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        // CrateDep should be suppressed
+        assert_eq!(
+            ir.edges.len(),
+            1,
+            "CrateDep should be suppressed for Crate→Module ModuleDep"
+        );
+        assert!(
+            !ir.edges[0].source_locations.is_empty(),
+            "Remaining edge should be ModuleDep"
         );
     }
 

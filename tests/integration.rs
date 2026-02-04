@@ -148,3 +148,51 @@ fn test_cfg_test_included_with_flag() {
         "test_utils should be visible with --cfg test"
     );
 }
+
+#[test]
+fn test_entry_point_imports() {
+    let fixture_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/entry_point/Cargo.toml");
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let args = Args {
+        output: Some(temp.path().to_path_buf()),
+        manifest_path: fixture_path,
+        features: vec![],
+        all_features: false,
+        no_default_features: false,
+        cfg: vec![],
+        debug: false,
+        volatility: false,
+        no_volatility: false,
+        volatility_months: 6,
+        volatility_low: 2,
+        volatility_high: 10,
+        #[cfg(feature = "hir")]
+        hir: false,
+    };
+
+    let result = run(args);
+    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+
+    let svg = std::fs::read_to_string(temp.path()).unwrap();
+
+    // Valid SVG structure
+    assert!(svg.contains("<svg"), "should have svg element");
+
+    // Both crates visible
+    assert!(svg.contains("crate_a"), "should show crate_a");
+    assert!(svg.contains("crate_b"), "should show crate_b");
+
+    // Modules visible
+    assert!(svg.contains("sub"), "should show sub module in crate_a");
+    assert!(svg.contains("mod_b"), "should show mod_b module in crate_b");
+
+    // Entry-point imports should create arcs with source locations (shown in STATIC_DATA).
+    // Helper is imported from crate_a's entry point in crate_b's lib.rs,
+    // Exported is imported from crate_a's entry point in crate_b's mod_b.rs.
+    assert!(
+        svg.contains("Helper") || svg.contains("Exported"),
+        "SVG should contain entry-point symbol names in STATIC_DATA usages"
+    );
+}
