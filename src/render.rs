@@ -876,7 +876,7 @@ fn build_css_rules() -> Vec<CssRule> {
         ),
         CssRule::new(
             &format!(".{}.{}", c.labels.arc_count, c.relation.dimmed),
-            &[("opacity", "0.3")],
+            &[("opacity", "0.3"), ("fill", r.dimmed)],
         ),
         CssRule::new(
             &format!(".{}", c.nodes.child_count),
