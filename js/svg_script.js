@@ -496,6 +496,9 @@ if (typeof document !== 'undefined') {
 
   function collectNodeRelations(nodeId) {
     const base = StaticData.getNodeRelations(nodeId);
+    // Filter base arcs to hidden nodes — virtual arcs already represent them
+    base.outgoing = base.outgoing.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
+    base.incoming = base.incoming.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
     for (const [key, usages] of virtualArcUsages) {
       const [fromId, toId] = key.split('-');
       const origArcs = virtualArcOriginals.get(key) || [];
