@@ -36,12 +36,17 @@ pub(super) fn is_workspace_member<S: AsRef<str>>(
 }
 
 /// Extract the use path from a line like `use crate::module;` → `crate::module`
+/// Also handles `pub use`, `pub(crate) use`, `pub(super) use`, `pub(in path) use`.
 fn extract_use_path(line: &str) -> Option<&str> {
     let line = line.trim();
-    if !line.starts_with("use ") {
+    let use_pos = line.find("use ")?;
+    let before = line[..use_pos].trim();
+    // Only accept if nothing before `use` or a pub-modifier
+    if !before.is_empty() && !before.starts_with("pub") {
         return None;
     }
-    Some(line.strip_prefix("use ")?.trim_end_matches(';').trim())
+    let after = &line[use_pos + 4..];
+    Some(after.trim_end_matches(';').trim())
 }
 
 /// Extract an item from path parts at given index, handling trailing `{` and empty strings.
@@ -78,6 +83,41 @@ fn parse_crate_local_import(
     let module_paths = all_module_paths
         .get(&normalize_crate_name(current_crate))
         .unwrap_or(&empty_set);
+    let (target_module, prefix_len) = find_longest_module_prefix(&parts, module_paths);
+
+    Some(DependencyRef {
+        target_crate: normalize_crate_name(current_crate),
+        target_module,
+        target_item: extract_item_from_parts(&parts, prefix_len),
+        source_file: source_file.to_path_buf(),
+        line: line_num,
+    })
+}
+
+/// Parse bare module imports: `use cli::Args` where `cli` is a known module of the current crate.
+/// Rust 2018+ resolves bare paths from any file, not just the crate root.
+fn parse_bare_module_import(
+    path: &str,
+    current_crate: &str,
+    source_file: &Path,
+    line_num: usize,
+    all_module_paths: &HashMap<String, HashSet<String>>,
+) -> Option<DependencyRef> {
+    let parts: Vec<&str> = path.split("::").collect();
+    let first = parts.first()?.trim_end_matches('{').trim();
+    if first.is_empty() {
+        return None;
+    }
+
+    let empty_set = HashSet::new();
+    let module_paths = all_module_paths
+        .get(&normalize_crate_name(current_crate))
+        .unwrap_or(&empty_set);
+
+    if !module_paths.contains(first) {
+        return None;
+    }
+
     let (target_module, prefix_len) = find_longest_module_prefix(&parts, module_paths);
 
     Some(DependencyRef {
@@ -164,8 +204,11 @@ fn process_use_statement(
 ) -> Option<DependencyRef> {
     let path = extract_use_path(line)?;
 
-    parse_crate_local_import(path, current_crate, source_file, line_num, all_module_paths).or_else(
-        || {
+    parse_crate_local_import(path, current_crate, source_file, line_num, all_module_paths)
+        .or_else(|| {
+            parse_bare_module_import(path, current_crate, source_file, line_num, all_module_paths)
+        })
+        .or_else(|| {
             parse_workspace_import(
                 path,
                 workspace_crates,
@@ -174,8 +217,7 @@ fn process_use_statement(
                 all_module_paths,
                 crate_exports,
             )
-        },
-    )
+        })
 }
 
 /// Process a use statement that may contain multiple symbols (`{A, B, C}`) or glob (`*`).
@@ -293,9 +335,18 @@ fn parse_base_path(
         return Some((normalize_crate_name(current_crate), module));
     }
 
-    // Handle workspace crate imports
+    // Handle bare module paths: `cli` or `cli::sub` where `cli` is own module
     let parts: Vec<&str> = base_path.split("::").collect();
+    let first = parts[0].trim();
+    let module_paths = all_module_paths
+        .get(&normalize_crate_name(current_crate))
+        .unwrap_or(&empty_set);
+    if !first.is_empty() && module_paths.contains(first) {
+        let (module, _) = find_longest_module_prefix(&parts, module_paths);
+        return Some((normalize_crate_name(current_crate), module));
+    }
 
+    // Handle workspace crate imports
     // Crate-root imports: `use other_crate::{Foo, Bar}` or `use other_crate::*`
     // base_path is just "other_crate" (no :: after crate name)
     if parts.len() == 1 {
@@ -855,6 +906,316 @@ use crate::graph;
             assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
             assert_eq!(deps[0].target_item, Some("*".to_string()));
             assert_eq!(deps[0].target_module, "analyze");
+        }
+    }
+
+    mod integration_tests {
+        use super::*;
+
+        #[test]
+        fn test_bare_module_pub_use_integration() {
+            let source = r#"
+pub use cli::{Args, Cargo, run};
+use crate::graph::build;
+pub(crate) use model::Node;
+use other_crate::utils;
+use serde::Serialize;
+"#;
+            let ws: HashSet<String> = HashSet::from(["my_crate".into(), "other_crate".into()]);
+            let mp: HashMap<String, HashSet<String>> = HashMap::from([(
+                "my_crate".to_string(),
+                HashSet::from(["cli".into(), "graph".into(), "model".into()]),
+            )]);
+            let deps = parse_workspace_dependencies(
+                source,
+                "my_crate",
+                &ws,
+                Path::new("src/lib.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+
+            // Expected: 6 DependencyRefs
+            // - cli::Args, cli::Cargo, cli::run (bare module, pub use multi)
+            // - graph::build (crate:: prefix)
+            // - model::Node (bare module, pub(crate))
+            // - other_crate::utils (workspace crate)
+            assert_eq!(deps.len(), 6, "expected 6 deps, got: {:?}", deps);
+
+            // Bare module multi-import (pub use)
+            assert!(
+                deps.iter().any(|d| d.target_crate == "my_crate"
+                    && d.target_module == "cli"
+                    && d.target_item == Some("Args".to_string())),
+                "missing cli::Args"
+            );
+            assert!(
+                deps.iter().any(|d| d.target_crate == "my_crate"
+                    && d.target_module == "cli"
+                    && d.target_item == Some("Cargo".to_string())),
+                "missing cli::Cargo"
+            );
+            assert!(
+                deps.iter().any(|d| d.target_crate == "my_crate"
+                    && d.target_module == "cli"
+                    && d.target_item == Some("run".to_string())),
+                "missing cli::run"
+            );
+
+            // crate:: prefix
+            assert!(
+                deps.iter().any(|d| d.target_crate == "my_crate"
+                    && d.target_module == "graph"
+                    && d.target_item == Some("build".to_string())),
+                "missing graph::build"
+            );
+
+            // Bare module pub(crate)
+            assert!(
+                deps.iter().any(|d| d.target_crate == "my_crate"
+                    && d.target_module == "model"
+                    && d.target_item == Some("Node".to_string())),
+                "missing model::Node"
+            );
+
+            // Workspace crate
+            assert!(
+                deps.iter()
+                    .any(|d| d.target_crate == "other_crate" && d.target_module == "utils"),
+                "missing other_crate::utils"
+            );
+        }
+    }
+
+    mod visibility_tests {
+        use super::*;
+
+        #[test]
+        fn test_extract_use_path_pub_use() {
+            assert_eq!(extract_use_path("pub use crate::cli;"), Some("crate::cli"));
+        }
+
+        #[test]
+        fn test_extract_use_path_pub_crate_use() {
+            assert_eq!(
+                extract_use_path("pub(crate) use cli::Args;"),
+                Some("cli::Args")
+            );
+        }
+
+        #[test]
+        fn test_extract_use_path_pub_super_use() {
+            assert_eq!(
+                extract_use_path("pub(super) use cli::Args;"),
+                Some("cli::Args")
+            );
+        }
+
+        #[test]
+        fn test_extract_use_path_pub_in_use() {
+            assert_eq!(
+                extract_use_path("pub(in crate::foo) use cli::Args;"),
+                Some("cli::Args")
+            );
+        }
+
+        #[test]
+        fn test_extract_use_path_plain_use_still_works() {
+            assert_eq!(extract_use_path("use crate::graph;"), Some("crate::graph"));
+        }
+
+        #[test]
+        fn test_extract_use_path_not_use() {
+            assert_eq!(extract_use_path("let x = 5;"), None);
+        }
+
+        #[test]
+        fn test_extract_use_path_comment_with_use() {
+            assert_eq!(extract_use_path("// use crate::foo;"), None);
+        }
+    }
+
+    mod bare_module_tests {
+        use super::*;
+
+        #[test]
+        fn test_bare_module_simple() {
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let dep =
+                parse_bare_module_import("cli::Args", "my_crate", Path::new("src/lib.rs"), 1, &mp);
+            let dep = dep.expect("should parse bare module import");
+            assert_eq!(dep.target_crate, "my_crate");
+            assert_eq!(dep.target_module, "cli");
+            assert_eq!(dep.target_item, Some("Args".to_string()));
+        }
+
+        #[test]
+        fn test_bare_module_no_match() {
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let dep = parse_bare_module_import(
+                "serde::Serialize",
+                "my_crate",
+                Path::new("src/lib.rs"),
+                1,
+                &mp,
+            );
+            assert!(dep.is_none(), "external crate should not match");
+        }
+
+        #[test]
+        fn test_bare_module_deep_path() {
+            let mp: HashMap<String, HashSet<String>> = HashMap::from([(
+                "my_crate".to_string(),
+                HashSet::from(["analyze".into(), "analyze::use_parser".into()]),
+            )]);
+            let dep = parse_bare_module_import(
+                "analyze::use_parser::normalize",
+                "my_crate",
+                Path::new("src/lib.rs"),
+                1,
+                &mp,
+            );
+            let dep = dep.expect("should parse deep bare module import");
+            assert_eq!(dep.target_crate, "my_crate");
+            assert_eq!(dep.target_module, "analyze::use_parser");
+            assert_eq!(dep.target_item, Some("normalize".to_string()));
+        }
+
+        #[test]
+        fn test_bare_module_module_only() {
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let dep = parse_bare_module_import("cli", "my_crate", Path::new("src/lib.rs"), 1, &mp);
+            let dep = dep.expect("should parse module-only bare import");
+            assert_eq!(dep.target_crate, "my_crate");
+            assert_eq!(dep.target_module, "cli");
+            assert!(dep.target_item.is_none());
+        }
+
+        #[test]
+        fn test_bare_module_via_process_use_statement() {
+            let ws: HashSet<String> = HashSet::new();
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let dep = process_use_statement(
+                "use cli::Args;",
+                1,
+                "my_crate",
+                &ws,
+                Path::new("src/lib.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+            let dep = dep.expect("should parse bare module via process_use_statement");
+            assert_eq!(dep.target_crate, "my_crate");
+            assert_eq!(dep.target_module, "cli");
+            assert_eq!(dep.target_item, Some("Args".to_string()));
+        }
+
+        #[test]
+        fn test_bare_module_pub_use_via_process_use_statement() {
+            let ws: HashSet<String> = HashSet::new();
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let dep = process_use_statement(
+                "pub(crate) use cli::Args;",
+                1,
+                "my_crate",
+                &ws,
+                Path::new("src/lib.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+            let dep = dep.expect("should parse pub(crate) bare module import");
+            assert_eq!(dep.target_crate, "my_crate");
+            assert_eq!(dep.target_module, "cli");
+            assert_eq!(dep.target_item, Some("Args".to_string()));
+        }
+
+        #[test]
+        fn test_parse_base_path_bare_module() {
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let ws: HashSet<String> = HashSet::new();
+            let result = parse_base_path("cli", "my_crate", &ws, &mp, &HashMap::new());
+            assert_eq!(result, Some(("my_crate".to_string(), "cli".to_string())));
+        }
+
+        #[test]
+        fn test_parse_base_path_bare_module_deep() {
+            let mp: HashMap<String, HashSet<String>> = HashMap::from([(
+                "my_crate".to_string(),
+                HashSet::from(["analyze".into(), "analyze::use_parser".into()]),
+            )]);
+            let ws: HashSet<String> = HashSet::new();
+            let result =
+                parse_base_path("analyze::use_parser", "my_crate", &ws, &mp, &HashMap::new());
+            assert_eq!(
+                result,
+                Some(("my_crate".to_string(), "analyze::use_parser".to_string()))
+            );
+        }
+
+        #[test]
+        fn test_parse_base_path_bare_no_match() {
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let ws: HashSet<String> = HashSet::new();
+            let result = parse_base_path("serde", "my_crate", &ws, &mp, &HashMap::new());
+            assert!(result.is_none(), "non-module should not match");
+        }
+
+        #[test]
+        fn test_bare_module_multi_import() {
+            let ws: HashSet<String> = HashSet::new();
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let deps = process_use_statement_multi(
+                "use cli::{Args, Cargo, run};",
+                1,
+                "my_crate",
+                &ws,
+                Path::new("src/lib.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+            assert_eq!(deps.len(), 3, "should return 3 deps: {:?}", deps);
+            assert!(deps.iter().all(|d| d.target_crate == "my_crate"));
+            assert!(deps.iter().all(|d| d.target_module == "cli"));
+            assert!(
+                deps.iter()
+                    .any(|d| d.target_item == Some("Args".to_string()))
+            );
+            assert!(
+                deps.iter()
+                    .any(|d| d.target_item == Some("Cargo".to_string()))
+            );
+            assert!(
+                deps.iter()
+                    .any(|d| d.target_item == Some("run".to_string()))
+            );
+        }
+
+        #[test]
+        fn test_bare_module_glob_import() {
+            let ws: HashSet<String> = HashSet::new();
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
+            let deps = process_use_statement_multi(
+                "use cli::*;",
+                1,
+                "my_crate",
+                &ws,
+                Path::new("src/lib.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+            assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
+            assert_eq!(deps[0].target_crate, "my_crate");
+            assert_eq!(deps[0].target_module, "cli");
+            assert_eq!(deps[0].target_item, Some("*".to_string()));
         }
     }
 
