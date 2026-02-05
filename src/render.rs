@@ -783,6 +783,13 @@ fn build_css_rules() -> Vec<CssRule> {
             &format!("polygon.{}", c.relation.dimmed),
             &[("fill", r.dimmed)],
         ),
+        CssRule::new(
+            &format!(
+                "polygon.{}.{}",
+                c.direction.virtual_arrow, c.relation.dimmed
+            ),
+            &[("fill", r.dimmed)],
+        ),
         // Cursor
         CssRule::new(
             &format!(

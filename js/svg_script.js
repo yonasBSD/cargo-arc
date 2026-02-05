@@ -132,6 +132,9 @@ if (typeof document !== 'undefined') {
   function createShadowPath(arc, relationType, arcId, originalArcWidth) {
     if (!arc) return;
     const shadow = arc.cloneNode(false);
+    // Drop direction classes inherited from cloned arc — their CSS rules
+    // (.dep-arc.downward) would override the glow color we set below.
+    shadow.classList.remove(C.downward, C.upward);
     shadow.classList.add(C.shadowPath);
     shadow.classList.add(relationType === 'dep' ? C.glowIncoming : C.glowOutgoing);
     shadow.removeAttribute('id');
