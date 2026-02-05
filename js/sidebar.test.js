@@ -535,6 +535,42 @@ describe("SidebarLogic", () => {
       expect(fakeEl.getAttribute("x")).toBe("1704");
     });
 
+    test("re-clamps X with actual width when wider than SIDEBAR_MIN_WIDTH (ca-0141)", () => {
+      const fakeEl = createFakeElement("foreignObject");
+      const innerDiv = createFakeElement("div");
+      Object.defineProperty(innerDiv, "innerHTML", {
+        get() { return this._innerHTML || ""; },
+        set(v) { this._innerHTML = v; },
+      });
+      innerDiv.offsetWidth = 400;
+      fakeEl.querySelector = () => innerDiv;
+      const svgMock = {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+        setAttribute() {},
+      };
+      const fakeArc = { style: { display: '' }, getBBox() { return { x: 1800, width: 100 }; } };
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === "relation-sidebar") return fakeEl;
+          return null;
+        },
+        getSvgRoot() { return svgMock; },
+        querySelectorAll() { return [fakeArc]; },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 800;
+      SidebarLogic.show("crate_a-crate_b");
+      // _calcX: maxArcRight=1900, x=1924, viewportRight=2000
+      // 1924+280>2000 → x=2000-280-16=1704 (cached with MIN_WIDTH)
+      // updatePosition: naturalW=400, width=400
+      // Re-clamp: 1704+400+16=2120>2000 → x=2000-400-16=1584
+      expect(fakeEl.getAttribute("x")).toBe("1584");
+    });
+
     test("height is capped at MAX_HEIGHT", () => {
       const fakeEl = createFakeElement("foreignObject");
       const innerDiv = createFakeElement("div");

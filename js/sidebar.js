@@ -528,14 +528,28 @@ const SidebarLogic = {
     const vpWidth = window.innerWidth;
     const width = Math.max(SIDEBAR_MIN_WIDTH, Math.min(naturalW, vpWidth * 0.5));
 
+    // Re-clamp X with actual width — _calcX() clamps with SIDEBAR_MIN_WIDTH
+    // but actual width can be larger, pushing the sidebar beyond viewport (ca-0141)
+    let x = this._cachedX != null ? this._cachedX : this._calcX();
+    const svg = DomAdapter.getSvgRoot();
+    if (svg) {
+      const svgRect = svg.getBoundingClientRect();
+      const vb = svg.viewBox.baseVal;
+      const scaleX = vb.width / svgRect.width;
+      const viewportRight = (window.innerWidth - svgRect.left) * scaleX;
+      if (x + width + SIDEBAR_MARGIN_RIGHT > viewportRight) {
+        x = Math.max(0, Math.round(viewportRight - width - SIDEBAR_MARGIN_RIGHT));
+      }
+    }
+    x = Math.round(x);
+
     el.setAttribute("width", String(Math.round(width) + SIDEBAR_SHADOW_PAD));
-    el.setAttribute("x", String(this._cachedX != null ? this._cachedX : this._calcX()));
+    el.setAttribute("x", String(x));
     el.setAttribute("y", String(pos.y));
     el.setAttribute("height", String(pos.height + SIDEBAR_SHADOW_PAD));
     if (innerDiv) innerDiv.style.height = pos.height + 'px';
 
     // Expand SVG canvas if sidebar extends beyond viewBox
-    const svg = DomAdapter.getSvgRoot();
     if (svg) {
       const vb = svg.viewBox.baseVal;
       if (this._originalViewBoxHeight === null) {
@@ -552,8 +566,7 @@ const SidebarLogic = {
       if (this._originalViewBoxWidth === null) {
         this._originalViewBoxWidth = vb.width;
       }
-      const sidebarX = this._cachedX != null ? this._cachedX : this._calcX();
-      const sidebarRight = sidebarX + Math.round(width) + SIDEBAR_SHADOW_PAD;
+      const sidebarRight = x + Math.round(width) + SIDEBAR_SHADOW_PAD;
       const neededW = Math.max(this._originalViewBoxWidth, sidebarRight);
       if (vb.width !== neededW) {
         vb.width = neededW;
