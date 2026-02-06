@@ -1,0 +1,11 @@
+[package]
+name = "my_bin"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+a = ["my_lib"]
+
+[dependencies]
+my_lib = { path = "../my_lib", optional = true }
