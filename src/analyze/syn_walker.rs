@@ -1048,7 +1048,7 @@ fn main() {
                 path: tmp.path().to_path_buf(),
                 dependencies: vec![],
             };
-            let tree = analyze_modules_syn(&crate_info, &ws, &mp, &HashMap::new())
+            let tree = analyze_modules_syn(&crate_info, &ws, &mp, &HashMap::new(), false)
                 .expect("should analyze");
 
             // Path expressions should be detected as dependencies
@@ -1087,7 +1087,7 @@ fn main() {
                 path: tmp.path().to_path_buf(),
                 dependencies: vec![],
             };
-            let tree = analyze_modules_syn(&crate_info, &ws, &mp, &HashMap::new())
+            let tree = analyze_modules_syn(&crate_info, &ws, &mp, &HashMap::new(), false)
                 .expect("should analyze");
 
             // Should have exactly 1 dep for other_crate::module::Item (deduped)
