@@ -70,20 +70,6 @@ describe('HighlightLogic', () => {
     });
   });
 
-  describe('determineRelationType', () => {
-    test('returns dep when from matches selected (outgoing)', () => {
-      expect(HighlightLogic.determineRelationType('nodeA', 'nodeB', 'nodeA')).toBe('dep');
-    });
-
-    test('returns reverse when to matches selected (incoming)', () => {
-      expect(HighlightLogic.determineRelationType('nodeA', 'nodeB', 'nodeB')).toBe('reverse');
-    });
-
-    test('returns reverse when selected is unrelated', () => {
-      expect(HighlightLogic.determineRelationType('nodeA', 'nodeB', 'nodeC')).toBe('reverse');
-    });
-  });
-
   describe('calculateVirtualArrowScale', () => {
     test('divides stroke width by 1.5', () => {
       expect(HighlightLogic.calculateVirtualArrowScale(1.5)).toBe(1.0);

@@ -71,14 +71,8 @@ const VirtualEdgeLogic = {
 
       if (!fromPos || !toPos) return;
 
-      // Calculate positions (right edge of node, vertical center with offset)
-      const fromX = fromPos.x + fromPos.width;
-      const fromY = fromPos.y + fromPos.height / 2 + 3;
-      const toX = toPos.x + toPos.width;
-      const toY = toPos.y + toPos.height / 2 - 3;
-
-      // Calculate arc path
-      const arc = arcLogic.calculateArcPath(fromX, fromY, toX, toY, maxRight, rowHeight);
+      // Calculate arc path from position objects
+      const arc = arcLogic.calculateArcPathFromPositions(fromPos, toPos, 3, maxRight, rowHeight);
 
       // Calculate stroke width from aggregated locations
       const totalLocations = data.hiddenEdgeData.reduce(

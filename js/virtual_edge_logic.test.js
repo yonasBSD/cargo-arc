@@ -111,6 +111,13 @@ describe("VirtualEdgeLogic.prepareVirtualEdgeData", () => {
     calculateArcPath(fromX, fromY, toX, toY, maxRight, rowHeight) {
       return { path: `M ${fromX},${fromY} Q ${maxRight},${(fromY+toY)/2} ${toX},${toY}`, toX, toY, ctrlX: maxRight + 35, midY: (fromY + toY) / 2 };
     },
+    calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight, rowHeight) {
+      const fromX = fromPos.x + fromPos.width;
+      const fromY = fromPos.y + fromPos.height / 2 + yOffset;
+      const toX = toPos.x + toPos.width;
+      const toY = toPos.y + toPos.height / 2 - yOffset;
+      return this.calculateArcPath(fromX, fromY, toX, toY, maxRight, rowHeight);
+    },
     countLocations(locs) {
       return locs ? locs.split('|').length : 0;
     },

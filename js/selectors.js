@@ -11,12 +11,11 @@ const Selectors = {
   countId: (id) => `count-${id}`,
 
   // CSS Selectors
-  visibleArc: (arcId) => { const c = STATIC_DATA.classes; return `.${c.depArc}[data-arc-id="${arcId}"], .${c.cycleArc}[data-arc-id="${arcId}"]`; },
+  baseArc: (arcId) => { const c = STATIC_DATA.classes; return `.${c.depArc}[data-arc-id="${arcId}"], .${c.cycleArc}[data-arc-id="${arcId}"]`; },
   hitarea: (arcId) => `.${STATIC_DATA.classes.arcHitarea}[data-arc-id="${arcId}"]`,
-  arrows: (arcId) => `[data-edge="${arcId}"]`,
+  arrows: (arcId) => `polygon[data-edge="${arcId}"]`,
   virtualArrows: (arcId) => `[data-vedge="${arcId}"]:not(.${STATIC_DATA.classes.arcCount})`,
   virtualArc: (from, to) => `.${STATIC_DATA.classes.virtualArc}[data-from="${from}"][data-to="${to}"]`,
-  connectedHitareas: (nodeId) => { const c = STATIC_DATA.classes; return `.${c.arcHitarea}[data-from="${nodeId}"], .${c.arcHitarea}[data-to="${nodeId}"]`; },
   labelGroup: (arcId) => `.${STATIC_DATA.classes.arcCountGroup}[data-vedge="${arcId}"]`,
 
   // Identity selectors (parametrized)
@@ -31,16 +30,7 @@ const Selectors = {
   allBaseArrows: () => { const c = STATIC_DATA.classes; return `.${c.depArrow}, .${c.cycleArrow}`; },
   allArcPaths: () => { const c = STATIC_DATA.classes; return `.${c.depArc}, .${c.cycleArc}, .${c.virtualArc}`; },
 
-  // Layer selectors (for clearHighlights)
-  highlightedArcs: () => '#highlight-arcs-layer > *',
-  highlightedLabels: () => '#highlight-labels-layer > *',
-  highlightedHitareas: () => '#highlight-hitareas-layer > *',
 };
-
-// Export for Browser
-if (typeof window !== "undefined") {
-  window.Selectors = Selectors;
-}
 
 // Export for Bun/Node
 if (typeof module !== "undefined" && module.exports) {

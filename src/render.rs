@@ -267,6 +267,7 @@ pub(crate) struct RelationClasses {
     pub dep_node: &'static str,
     pub dependent_node: &'static str,
     pub dimmed: &'static str,
+    pub has_highlight: &'static str,
     pub shadow_path: &'static str,
     pub glow_incoming: &'static str,
     pub glow_outgoing: &'static str,
@@ -360,6 +361,7 @@ static CSS: CssClassNames = CssClassNames {
         dep_node: "dep-node",
         dependent_node: "dependent-node",
         dimmed: "dimmed",
+        has_highlight: "has-highlight",
         shadow_path: "shadow-path",
         glow_incoming: "glow-incoming",
         glow_outgoing: "glow-outgoing",
@@ -789,6 +791,70 @@ fn build_css_rules() -> Vec<CssRule> {
                 c.direction.virtual_arrow, c.relation.dimmed
             ),
             &[("fill", r.dimmed)],
+        ),
+        // CSS-only dimming via has-highlight on SVG root (leaf elements only)
+        CssRule::new(
+            &format!(
+                "svg.{} rect:not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{})",
+                c.relation.has_highlight,
+                c.node_selection.selected_crate,
+                c.node_selection.selected_module,
+                c.relation.dep_node,
+                c.relation.dependent_node,
+                c.toolbar.btn,
+                c.labels.arc_count_bg
+            ),
+            &[("opacity", "0.3"), ("pointer-events", "none")],
+        ),
+        CssRule::new(
+            &format!(
+                "svg.{} path:not(.{}):not(.{}):not(.{}):not(.{})",
+                c.relation.has_highlight,
+                c.relation.highlighted_arc,
+                c.direction.arc_hitarea,
+                c.direction.virtual_hitarea,
+                c.relation.shadow_path
+            ),
+            &[
+                ("opacity", "0.3"),
+                ("pointer-events", "none"),
+                ("stroke", r.dimmed),
+            ],
+        ),
+        CssRule::new(
+            &format!(
+                "svg.{} polygon:not(.{})",
+                c.relation.has_highlight, c.relation.highlighted_arrow
+            ),
+            &[
+                ("opacity", "0.3"),
+                ("pointer-events", "none"),
+                ("fill", r.dimmed),
+            ],
+        ),
+        CssRule::new(
+            &format!(
+                "svg.{} text.{}:not(.{})",
+                c.relation.has_highlight, c.labels.arc_count, c.relation.highlighted_label
+            ),
+            &[("opacity", "0.3"), ("fill", r.dimmed)],
+        ),
+        CssRule::new(
+            &format!("svg.{} line", c.relation.has_highlight),
+            &[("opacity", "0.3"), ("pointer-events", "none")],
+        ),
+        // Toolbar exception: elements inside .view-options never dim
+        CssRule::new(
+            &format!(
+                "svg.{0} .{1} rect, svg.{0} .{1} text, svg.{0} .{1} line",
+                c.relation.has_highlight, c.toolbar.view_options
+            ),
+            &[("opacity", "1"), ("pointer-events", "auto")],
+        ),
+        // Sidebar exception: elements inside sidebar never dim
+        CssRule::new(
+            &format!("svg.{} .{} *", c.relation.has_highlight, c.sidebar.root),
+            &[("opacity", "1"), ("pointer-events", "auto")],
         ),
         // Cursor
         CssRule::new(
@@ -1451,6 +1517,10 @@ fn generate_static_data(
         CSS.relation.dependent_node
     ));
     lines.push(format!("    dimmed: \"{}\",", CSS.relation.dimmed));
+    lines.push(format!(
+        "    hasHighlight: \"{}\",",
+        CSS.relation.has_highlight
+    ));
     lines.push(format!("    shadowPath: \"{}\",", CSS.relation.shadow_path));
     lines.push(format!(
         "    glowIncoming: \"{}\",",
@@ -2262,7 +2332,7 @@ mod tests {
         );
         // highlightEdge uses AppState.togglePinned for toggle-deselect
         assert!(
-            svg.contains("AppState.togglePinned(appState, 'edge', edgeId)"),
+            svg.contains("AppState.togglePinned(appState, 'arc', edgeId)"),
             "highlightEdge should use AppState.togglePinned"
         );
     }

@@ -48,6 +48,24 @@ const ArcLogic = {
     return strokeWidth / 1.5; // 1.5 was the original base stroke-width
   },
 
+  /**
+   * Scale existing arrows by updating their points attribute.
+   * Convenience wrapper around parseTipFromPoints + getArrowPoints.
+   * @param {Object} dom - DomAdapter instance
+   * @param {string} edgeId - Arc identifier
+   * @param {number} strokeWidth - Stroke width to scale to
+   */
+  scaleArrow(dom, edgeId, strokeWidth) {
+    const scale = this.scaleFromStrokeWidth(strokeWidth);
+    dom.getVisibleArrows(edgeId).forEach(arrow => {
+      const points = arrow.getAttribute('points');
+      const tip = this.parseTipFromPoints(points);
+      if (tip) {
+        arrow.setAttribute('points', this.getArrowPoints(tip, scale));
+      }
+    });
+  },
+
   // Expose constants for testing
   ARROW_LENGTH,
   ARROW_HALF_WIDTH,
@@ -61,28 +79,6 @@ const ArcLogic = {
    */
   getArcOffset(hops) {
     return 20 + (hops * 15);
-  },
-
-  /**
-   * Transform mouse event coordinates to SVG coordinates (scroll-aware)
-   * Uses getBoundingClientRect() instead of getScreenCTM() to handle scrollable containers.
-   * See: WebKit Bug #44083, D3.js Issue #1164
-   * @param {number} clientX - Mouse clientX from event
-   * @param {number} clientY - Mouse clientY from event
-   * @param {{left: number, top: number, width: number, height: number}} svgRect - SVG bounding rect
-   * @param {{x: number, y: number, width: number, height: number}|null} viewBox - SVG viewBox or null
-   * @returns {{x: number, y: number}} - Coordinates in SVG coordinate space
-   */
-  getSvgCoords(clientX, clientY, svgRect, viewBox) {
-    let x = clientX - svgRect.left;
-    let y = clientY - svgRect.top;
-
-    if (viewBox && viewBox.width > 0) {
-      x = x * (viewBox.width / svgRect.width) + viewBox.x;
-      y = y * (viewBox.height / svgRect.height) + viewBox.y;
-    }
-
-    return { x, y };
   },
 
   /**
@@ -108,6 +104,24 @@ const ArcLogic = {
       ctrlX,
       midY
     };
+  },
+
+  /**
+   * Calculate arc path from position objects (convenience wrapper).
+   * Converts position rects + yOffset to raw coordinates, then delegates to calculateArcPath.
+   * @param {{x: number, y: number, width: number, height: number}} fromPos
+   * @param {{x: number, y: number, width: number, height: number}} toPos
+   * @param {number} yOffset - Y offset for arc endpoints
+   * @param {number} maxRight - Rightmost X coordinate
+   * @param {number} rowHeight - Row height for arc offset calculation
+   * @returns {{path: string, toX: number, toY: number, ctrlX: number, midY: number}}
+   */
+  calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight, rowHeight) {
+    const fromX = fromPos.x + fromPos.width;
+    const fromY = fromPos.y + fromPos.height / 2 + yOffset;
+    const toX = toPos.x + toPos.width;
+    const toY = toPos.y + toPos.height / 2 - yOffset;
+    return this.calculateArcPath(fromX, fromY, toX, toY, maxRight, rowHeight);
   },
 
   /**

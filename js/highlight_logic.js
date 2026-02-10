@@ -59,17 +59,6 @@ const HighlightLogic = {
   },
 
   /**
-   * Determine relation type for highlight coloring.
-   * @param {string} fromId - Source node ID
-   * @param {string} toId - Target node ID
-   * @param {string} selectedId - Currently selected node ID
-   * @returns {'dep'|'reverse'} - 'dep' if outgoing (from=selected), 'reverse' if incoming
-   */
-  determineRelationType(fromId, toId, selectedId) {
-    return fromId === selectedId ? 'dep' : 'reverse';
-  },
-
-  /**
    * Calculate arrow scale for virtual arrows based on stroke width.
    * Virtual arrows use stroke-based scaling (strokeWidth / 1.5).
    * @param {number} strokeWidth - Current stroke width

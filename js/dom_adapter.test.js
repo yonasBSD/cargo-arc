@@ -90,12 +90,12 @@ describe("Convenience methods", () => {
     expect(mock._getCalls("getElementById")).toContainEqual(["node-foo"]);
   });
 
-  test("getVisibleArc uses Selectors.visibleArc", () => {
+  test("getVisibleArc uses Selectors.baseArc", () => {
     const mock = createMockDomAdapter();
     const el = createFakeElement("path");
-    mock._registerSelector(Selectors.visibleArc("a-b"), el);
+    mock._registerSelector(Selectors.baseArc("a-b"), el);
     expect(mock.getVisibleArc("a-b")).toBe(el);
-    expect(mock._getCalls("querySelector")).toContainEqual([Selectors.visibleArc("a-b")]);
+    expect(mock._getCalls("querySelector")).toContainEqual([Selectors.baseArc("a-b")]);
   });
 
   test("getHitarea uses Selectors.hitarea", () => {
@@ -119,13 +119,6 @@ describe("Convenience methods", () => {
     const arrows = [createFakeElement("polygon")];
     mock._registerSelector(Selectors.virtualArrows("v-id"), arrows);
     expect(mock.getVirtualArrows("v-id")).toEqual(arrows);
-  });
-
-  test("getConnectedHitareas uses Selectors.connectedHitareas", () => {
-    const mock = createMockDomAdapter();
-    const hitareas = [createFakeElement("path"), createFakeElement("path")];
-    mock._registerSelector(Selectors.connectedHitareas("node1"), hitareas);
-    expect(mock.getConnectedHitareas("node1")).toEqual(hitareas);
   });
 
   test("getLabelGroup uses Selectors.labelGroup", () => {

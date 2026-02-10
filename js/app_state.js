@@ -4,19 +4,27 @@
 // app_state.js - Unified application state management
 // Consolidates CollapseState and HighlightState into single state object
 // No DOM dependencies - pure state operations
+//
+// Selection model: two independent slots (clickSelection, hoverSelection).
+// clickSelection is persistent (survives hover changes), hoverSelection is transient.
+// getActiveSelection() returns click-priority-over-hover semantics.
 
 const AppState = {
   /**
    * Create new AppState
    * @returns {{
    *   collapsed: Set<string>,
-   *   selection: { mode: 'none'|'hover'|'click', type: 'node'|'arc'|null, id: string|null }
+   *   clickSelection: { type: 'node'|'arc'|null, id: string|null },
+   *   hoverSelection: { type: 'node'|'arc'|null, id: string|null },
+   *   hiddenArcIds: Set<string>
    * }}
    */
   create() {
     return {
       collapsed: new Set(),
-      selection: { mode: 'none', type: null, id: null }
+      clickSelection: { type: null, id: null },
+      hoverSelection: { type: null, id: null },
+      hiddenArcIds: new Set(),
     };
   },
 
@@ -61,67 +69,91 @@ const AppState = {
   // === Selection Operations ===
 
   /**
-   * Get current selection
+   * Resolve the active selection with click-priority-over-hover semantics.
+   * Returns clickSelection if present, otherwise hoverSelection, otherwise none.
    * @param {Object} state
-   * @returns {{ mode: string, type: string|null, id: string|null }}
+   * @returns {{ mode: 'click'|'hover'|'none', type: string|null, id: string|null }}
    */
-  getSelection(state) {
-    return state.selection;
+  getActiveSelection(state) {
+    if (state.clickSelection.type !== null) {
+      return { mode: 'click', type: state.clickSelection.type, id: state.clickSelection.id };
+    }
+    if (state.hoverSelection.type !== null) {
+      return { mode: 'hover', type: state.hoverSelection.type, id: state.hoverSelection.id };
+    }
+    return { mode: 'none', type: null, id: null };
   },
 
   /**
-   * Set selection (pinned/clicked)
+   * Get current active selection (delegates to getActiveSelection).
+   * Returns the same { mode, type, id } shape as the old single-slot model.
+   * @param {Object} state
+   * @returns {{ mode: 'click'|'hover'|'none', type: string|null, id: string|null }}
+   */
+  getSelection(state) {
+    return this.getActiveSelection(state);
+  },
+
+  /**
+   * Set click selection (persistent, survives hover changes)
    * @param {Object} state
    * @param {'node'|'arc'} type
    * @param {string} id
    */
   setSelection(state, type, id) {
-    state.selection = { mode: 'click', type, id };
+    state.clickSelection = { type, id };
   },
 
   /**
-   * Set hover selection (temporary, not pinned)
+   * Set hover selection (transient, does NOT touch clickSelection)
    * @param {Object} state
    * @param {'node'|'arc'} type
    * @param {string} id
    */
   setHover(state, type, id) {
-    state.selection = { mode: 'hover', type, id };
+    state.hoverSelection = { type, id };
   },
 
   /**
-   * Clear selection
+   * Clear click selection only (hover selection is unaffected)
    * @param {Object} state
    */
   clearSelection(state) {
-    state.selection = { mode: 'none', type: null, id: null };
+    state.clickSelection = { type: null, id: null };
   },
 
   /**
-   * Check if specific element is selected (pinned)
+   * Clear hover selection only (click selection is unaffected)
+   * @param {Object} state
+   */
+  clearHover(state) {
+    state.hoverSelection = { type: null, id: null };
+  },
+
+  /**
+   * Check if specific element is click-selected (pinned)
    * @param {Object} state
    * @param {'node'|'arc'} type
    * @param {string} id
    * @returns {boolean}
    */
   isSelected(state, type, id) {
-    return state.selection.mode === 'click' &&
-           state.selection.type === type &&
-           state.selection.id === id;
+    return state.clickSelection.type === type &&
+           state.clickSelection.id === id;
   },
 
   /**
-   * Check if anything is pinned (clicked selection)
+   * Check if anything is pinned (has a click selection)
    * @param {Object} state
    * @returns {boolean}
    */
   hasPinnedSelection(state) {
-    return state.selection.mode === 'click';
+    return state.clickSelection.type !== null;
   },
 
   /**
-   * Toggle selection for element
-   * If same element is selected, deselects. Otherwise selects new element.
+   * Toggle click selection for element.
+   * If same element is click-selected, deselects. Otherwise selects new element.
    * @param {Object} state
    * @param {'node'|'arc'} type
    * @param {string} id
@@ -136,23 +168,53 @@ const AppState = {
     return true;
   },
 
+  // === Arc Filter Operations ===
+
+  /**
+   * Mark arc as hidden by filter
+   * @param {Object} state
+   * @param {string} arcId
+   */
+  hideArc(state, arcId) {
+    state.hiddenArcIds.add(arcId);
+  },
+
+  /**
+   * Mark arc as visible (remove from hidden set)
+   * @param {Object} state
+   * @param {string} arcId
+   */
+  showArc(state, arcId) {
+    state.hiddenArcIds.delete(arcId);
+  },
+
+  /**
+   * Check if arc is hidden by filter
+   * @param {Object} state
+   * @param {string} arcId
+   * @returns {boolean}
+   */
+  isArcHidden(state, arcId) {
+    return state.hiddenArcIds.has(arcId);
+  },
+
   // === Legacy Compatibility ===
   // These mirror HighlightState API for easier migration
 
   /**
-   * Get pinned selection (legacy API)
+   * Get pinned (click) selection (legacy API)
    * @param {Object} state
    * @returns {null|{type: string, id: string}}
    */
   getPinned(state) {
-    if (state.selection.mode !== 'click') return null;
-    return { type: state.selection.type, id: state.selection.id };
+    if (state.clickSelection.type === null) return null;
+    return { type: state.clickSelection.type, id: state.clickSelection.id };
   },
 
   /**
-   * Toggle pinned state (legacy API)
+   * Toggle pinned state (legacy API, delegates to toggleSelection)
    * @param {Object} state
-   * @param {'node'|'edge'} type
+   * @param {'node'|'arc'} type
    * @param {string} id
    * @returns {boolean} - true if newly pinned, false if unpinned
    */
@@ -161,7 +223,7 @@ const AppState = {
   },
 
   /**
-   * Clear pinned selection (legacy API)
+   * Clear pinned selection (legacy API, delegates to clearSelection)
    * @param {Object} state
    */
   clearPinned(state) {

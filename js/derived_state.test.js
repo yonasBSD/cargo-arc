@@ -1,8 +1,15 @@
 import { test, expect, describe, beforeEach } from "bun:test";
 import { TreeLogic } from "./tree_logic.js";
+import { ArcLogic, ArrowLogic } from "./arc_logic.js";
+import { HighlightLogic } from "./highlight_logic.js";
+import { AppState } from "./app_state.js";
 
-// Set TreeLogic globally (simulating browser environment where it's loaded before derived_state.js)
+// Set globals (simulating browser environment where modules are loaded before derived_state.js)
 global.TreeLogic = TreeLogic;
+global.ArcLogic = ArcLogic;
+global.ArrowLogic = ArrowLogic;
+global.HighlightLogic = HighlightLogic;
+global.AppState = AppState;
 
 import { DerivedState } from "./derived_state.js";
 
@@ -41,7 +48,6 @@ function createMockStaticData(data = TEST_STATIC_DATA) {
   return {
     getNode: (id) => data.nodes[id],
     getArc: (id) => data.arcs[id],
-    getParent: (nodeId) => data.nodes[nodeId]?.parent ?? null,
     getOriginalPosition: (nodeId) => {
       const node = data.nodes[nodeId];
       return node ? { x: node.x, y: node.y, width: node.width, height: node.height } : null;
@@ -49,6 +55,12 @@ function createMockStaticData(data = TEST_STATIC_DATA) {
     getAllNodeIds: () => Object.keys(data.nodes),
     getAllArcIds: () => Object.keys(data.arcs),
     hasChildren: (nodeId) => data.nodes[nodeId]?.hasChildren ?? false,
+    getArcStrokeWidth: (arcId) => {
+      const arc = data.arcs[arcId];
+      if (!arc || !arc.usages) return ArcLogic.calculateStrokeWidth(0);
+      const count = arc.usages.reduce((sum, g) => sum + g.locations.length, 0);
+      return ArcLogic.calculateStrokeWidth(count);
+    },
     buildParentMap: () => {
       const parentMap = new Map();
       for (const [nodeId, node] of Object.entries(data.nodes)) {
@@ -66,93 +78,6 @@ describe("DerivedState", () => {
 
   beforeEach(() => {
     staticData = createMockStaticData();
-  });
-
-  describe("deriveHighlights", () => {
-    test("mode='none' returns empty Maps/Sets", () => {
-      const selection = { mode: "none", type: null, id: null };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.nodeRoles.size).toBe(0);
-      expect(result.highlightedArcs.size).toBe(0);
-    });
-
-    test("node selection: selected node is 'current'", () => {
-      const selection = { mode: "click", type: "node", id: "fn_1" };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.nodeRoles.get("fn_1")).toBe("current");
-    });
-
-    test("node selection: outgoing arc targets are 'dependency'", () => {
-      // fn_1 has outgoing arcs to fn_2 and fn_3
-      const selection = { mode: "click", type: "node", id: "fn_1" };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.nodeRoles.get("fn_2")).toBe("dependency");
-      expect(result.nodeRoles.get("fn_3")).toBe("dependency");
-    });
-
-    test("node selection: incoming arc sources are 'dependent'", () => {
-      // fn_2 has incoming arc from fn_1
-      const selection = { mode: "click", type: "node", id: "fn_2" };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.nodeRoles.get("fn_2")).toBe("current");
-      expect(result.nodeRoles.get("fn_1")).toBe("dependent");
-    });
-
-    test("node selection: related arcs are highlighted", () => {
-      const selection = { mode: "click", type: "node", id: "fn_1" };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.highlightedArcs.has("fn_1-fn_2")).toBe(true);
-      expect(result.highlightedArcs.has("fn_1-fn_3")).toBe(true);
-      expect(result.highlightedArcs.has("mod_b-mod_a")).toBe(false);
-    });
-
-    test("arc selection: from node is 'dependent', to node is 'dependency'", () => {
-      const selection = { mode: "click", type: "arc", id: "fn_1-fn_3" };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.nodeRoles.get("fn_1")).toBe("dependent");
-      expect(result.nodeRoles.get("fn_3")).toBe("dependency");
-    });
-
-    test("arc selection: selected arc is highlighted", () => {
-      const selection = { mode: "click", type: "arc", id: "fn_1-fn_2" };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.highlightedArcs.has("fn_1-fn_2")).toBe(true);
-      expect(result.highlightedArcs.size).toBe(1);
-    });
-
-    test("node without connections: only 'current', no other roles", () => {
-      // Use modified data with isolated node
-      const isolatedData = {
-        nodes: {
-          ...TEST_STATIC_DATA.nodes,
-          isolated: { type: "function", parent: "crate", x: 100, y: 100, hasChildren: false }
-        },
-        arcs: TEST_STATIC_DATA.arcs
-      };
-      const sd = createMockStaticData(isolatedData);
-
-      const selection = { mode: "click", type: "node", id: "isolated" };
-      const result = DerivedState.deriveHighlights(selection, sd);
-
-      expect(result.nodeRoles.get("isolated")).toBe("current");
-      expect(result.nodeRoles.size).toBe(1);
-      expect(result.highlightedArcs.size).toBe(0);
-    });
-
-    test("hover mode works same as click mode", () => {
-      const selection = { mode: "hover", type: "node", id: "fn_1" };
-      const result = DerivedState.deriveHighlights(selection, staticData);
-
-      expect(result.nodeRoles.get("fn_1")).toBe("current");
-      expect(result.nodeRoles.get("fn_2")).toBe("dependency");
-    });
   });
 
   describe("deriveNodeVisibility", () => {
@@ -204,45 +129,6 @@ describe("DerivedState", () => {
       expect(result.has("fn_2")).toBe(false);
       expect(result.has("fn_3")).toBe(false);
       expect(result.size).toBe(1);
-    });
-  });
-
-  describe("deriveArcVisibility", () => {
-    test("both endpoints visible: arc visible", () => {
-      const visibleNodes = new Set(["fn_1", "fn_2", "fn_3", "mod_a", "mod_b", "crate"]);
-      const result = DerivedState.deriveArcVisibility(visibleNodes, staticData);
-
-      expect(result.has("fn_1-fn_2")).toBe(true);
-      expect(result.has("fn_1-fn_3")).toBe(true);
-      expect(result.has("mod_b-mod_a")).toBe(true);
-    });
-
-    test("from node hidden: arc hidden", () => {
-      const visibleNodes = new Set(["fn_2", "fn_3", "mod_a", "mod_b", "crate"]);
-      const result = DerivedState.deriveArcVisibility(visibleNodes, staticData);
-
-      // fn_1 is hidden, so fn_1-fn_2 and fn_1-fn_3 are hidden
-      expect(result.has("fn_1-fn_2")).toBe(false);
-      expect(result.has("fn_1-fn_3")).toBe(false);
-      // mod_b-mod_a still visible
-      expect(result.has("mod_b-mod_a")).toBe(true);
-    });
-
-    test("to node hidden: arc hidden", () => {
-      const visibleNodes = new Set(["fn_1", "fn_3", "mod_a", "mod_b", "crate"]);
-      const result = DerivedState.deriveArcVisibility(visibleNodes, staticData);
-
-      // fn_2 is hidden, so fn_1-fn_2 is hidden
-      expect(result.has("fn_1-fn_2")).toBe(false);
-      // fn_1-fn_3 still visible
-      expect(result.has("fn_1-fn_3")).toBe(true);
-    });
-
-    test("empty visible nodes: no arcs visible", () => {
-      const visibleNodes = new Set();
-      const result = DerivedState.deriveArcVisibility(visibleNodes, staticData);
-
-      expect(result.size).toBe(0);
     });
   });
 
@@ -380,6 +266,220 @@ describe("DerivedState", () => {
 
       expect(result.size).toBe(1);
       expect(result.has("fn_1")).toBe(true);
+    });
+  });
+
+  describe("deriveHighlightState", () => {
+    const ROW_HEIGHT = 30;
+    let appState;
+    let positions;
+    let emptyVirtualArcs;
+    let emptyHidden;
+
+    beforeEach(() => {
+      appState = AppState.create();
+      // Build positions for all nodes
+      positions = new Map([
+        ["crate", { x: 0, y: 60, width: 100, height: 24 }],
+        ["mod_a", { x: 20, y: 90, width: 100, height: 20 }],
+        ["mod_b", { x: 20, y: 120, width: 100, height: 20 }],
+        ["fn_1", { x: 40, y: 150, width: 100, height: 20 }],
+        ["fn_2", { x: 40, y: 180, width: 100, height: 20 }],
+        ["fn_3", { x: 40, y: 210, width: 100, height: 20 }],
+      ]);
+      emptyVirtualArcs = new Map();
+      emptyHidden = new Set();
+    });
+
+    test("no selection returns null", () => {
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+      expect(result).toBeNull();
+    });
+
+    test("node click: selected node has 'current' role", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.nodeHighlights.get("fn_1")).toEqual({
+        role: 'current', cssClass: 'selectedModule'
+      });
+    });
+
+    test("node click: connected arcs in arcHighlights", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      // fn_1 has outgoing arcs to fn_2 and fn_3
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
+      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(true);
+      expect(result.arcHighlights.has("mod_b-mod_a")).toBe(false);
+    });
+
+    test("node click: arc entries have correct structure", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      const arcEntry = result.arcHighlights.get("fn_1-fn_2");
+      expect(arcEntry.highlightWidth).toBeGreaterThan(0);
+      expect(arcEntry.arrowScale).toBeGreaterThan(0);
+      expect(arcEntry.relationType).toBeDefined();
+      expect(arcEntry.isVirtual).toBe(false);
+    });
+
+    test("node click: endpoint nodes get dependency/dependent roles", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      // fn_2 and fn_3 are targets of outgoing arcs
+      expect(result.nodeHighlights.has("fn_2")).toBe(true);
+      expect(result.nodeHighlights.has("fn_3")).toBe(true);
+    });
+
+    test("node click: crate type gets selectedCrate class", () => {
+      AppState.setSelection(appState, 'node', 'crate');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result.nodeHighlights.get("crate")).toEqual({
+        role: 'current', cssClass: 'selectedCrate'
+      });
+    });
+
+    test("node click: shadow data generated for arcs with positions", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      // fn_1-fn_2 has both endpoints in positions → shadow generated
+      expect(result.shadowData.has("fn_1-fn_2")).toBe(true);
+      const shadow = result.shadowData.get("fn_1-fn_2");
+      expect(shadow.shadowWidth).toBeGreaterThan(0);
+      expect(shadow.visibleLength).toBeGreaterThanOrEqual(0);
+      expect(shadow.glowClass).toBeDefined();
+    });
+
+    test("node click: regular arcs promoted to hitareas", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result.promotedHitareas.has("fn_1-fn_2")).toBe(true);
+      expect(result.promotedHitareas.has("fn_1-fn_3")).toBe(true);
+    });
+
+    test("group highlight: expanded parent includes descendants", () => {
+      // mod_a is expanded → highlight set = {mod_a, fn_1, fn_2}
+      AppState.setSelection(appState, 'node', 'mod_a');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // mod_a is current
+      expect(result.nodeHighlights.get("mod_a").role).toBe("current");
+      // fn_1-fn_3 is connected (fn_1 is in highlight set, fn_3 is outside)
+      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(true);
+      // fn_1-fn_2 is internal to highlight set
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
+    });
+
+    test("hover vs click: click takes priority", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      AppState.setHover(appState, 'node', 'fn_3');
+
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      // Should use click selection (fn_1), not hover (fn_3)
+      expect(result.nodeHighlights.get("fn_1").role).toBe("current");
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
+    });
+
+    test("hover only: hover selection used when no click", () => {
+      AppState.setHover(appState, 'node', 'fn_3');
+
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.nodeHighlights.get("fn_3").role).toBe("current");
+    });
+
+    test("hiddenByFilter: filtered arcs excluded", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const hidden = new Set(["fn_1-fn_2"]);
+
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, hidden, positions, ROW_HEIGHT
+      );
+
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(false);
+      // fn_1-fn_3 should still be present
+      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(true);
+    });
+
+    test("arc selection: both endpoints get roles", () => {
+      AppState.setSelection(appState, 'arc', 'fn_1-fn_3');
+
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.nodeHighlights.get("fn_1").cssClass).toBe("dependentNode");
+      expect(result.nodeHighlights.get("fn_3").cssClass).toBe("depNode");
+      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(true);
+    });
+
+    test("virtual arcs included when connected to highlight set", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const virtualArcUsages = new Map([
+        ["fn_1-fn_3", [
+          { symbol: "virt", modulePath: null, locations: [{ file: "v.rs", line: 1 }] }
+        ]]
+      ]);
+
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, virtualArcUsages, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      // Virtual arc keyed with "v:" prefix
+      expect(result.arcHighlights.has("v:fn_1-fn_3")).toBe(true);
+      const vArc = result.arcHighlights.get("v:fn_1-fn_3");
+      expect(vArc.isVirtual).toBe(true);
+    });
+
+    test("virtual arcs not promoted to hitareas", () => {
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const virtualArcUsages = new Map([
+        ["fn_1-fn_3", [
+          { symbol: "virt", modulePath: null, locations: [{ file: "v.rs", line: 1 }] }
+        ]]
+      ]);
+
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, virtualArcUsages, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      // Virtual arcs should NOT be in promotedHitareas
+      expect(result.promotedHitareas.has("fn_1-fn_3")).toBe(true);  // regular
+      expect(result.promotedHitareas.has("v:fn_1-fn_3")).toBe(false); // virtual not promoted
     });
   });
 });

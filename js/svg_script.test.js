@@ -63,54 +63,6 @@ describe("ArcLogic", () => {
     });
   });
 
-  describe("getSvgCoords", () => {
-    test("transforms client coords to SVG coords without viewBox", () => {
-      const svgRect = { left: 100, top: 50, width: 800, height: 600 };
-      const result = ArcLogic.getSvgCoords(150, 100, svgRect, null);
-      expect(result.x).toBe(50);  // 150 - 100
-      expect(result.y).toBe(50);  // 100 - 50
-    });
-
-    test("transforms client coords with viewBox scaling", () => {
-      const svgRect = { left: 0, top: 0, width: 400, height: 300 };
-      const viewBox = { x: 0, y: 0, width: 800, height: 600 };
-      const result = ArcLogic.getSvgCoords(200, 150, svgRect, viewBox);
-      // x = 200 * (800/400) + 0 = 400
-      // y = 150 * (600/300) + 0 = 300
-      expect(result.x).toBe(400);
-      expect(result.y).toBe(300);
-    });
-
-    test("handles viewBox with offset", () => {
-      const svgRect = { left: 0, top: 0, width: 400, height: 300 };
-      const viewBox = { x: 100, y: 50, width: 400, height: 300 };
-      const result = ArcLogic.getSvgCoords(200, 150, svgRect, viewBox);
-      // x = 200 * (400/400) + 100 = 300
-      // y = 150 * (300/300) + 50 = 200
-      expect(result.x).toBe(300);
-      expect(result.y).toBe(200);
-    });
-
-    test("handles scroll offset via svgRect", () => {
-      // When SVG is scrolled, getBoundingClientRect returns negative left/top
-      const svgRect = { left: -200, top: -100, width: 800, height: 600 };
-      const result = ArcLogic.getSvgCoords(100, 150, svgRect, null);
-      // x = 100 - (-200) = 300
-      // y = 150 - (-100) = 250
-      expect(result.x).toBe(300);
-      expect(result.y).toBe(250);
-    });
-
-    test("handles viewBox with zero width gracefully", () => {
-      const svgRect = { left: 0, top: 0, width: 400, height: 300 };
-      const viewBox = { x: 0, y: 0, width: 0, height: 0 };
-      const result = ArcLogic.getSvgCoords(200, 150, svgRect, viewBox);
-      // Should skip viewBox transform when width is 0
-      expect(result.x).toBe(200);
-      expect(result.y).toBe(150);
-    });
-  });
-
   describe("estimatePathLength", () => {
     test("returns 100 for empty/null path", () => {
       expect(ArcLogic.estimatePathLength("")).toBe(100);

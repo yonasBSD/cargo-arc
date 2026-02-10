@@ -110,15 +110,18 @@ describe("LayerManager", () => {
   });
 
   describe("clearLayer", () => {
-    test("clears layer innerHTML", () => {
+    test("clears all children from layer", () => {
       const mock = createMockDomAdapter();
       const layer = createFakeElement("g");
-      layer.innerHTML = "<path/><path/>";
+      layer.appendChild(createFakeElement("path"));
+      layer.appendChild(createFakeElement("path"));
+      expect(layer.children.length).toBe(2);
       mock._registerElement("highlight-shadows", layer);
 
       LayerManager.clearLayer("highlight-shadows", mock);
 
-      expect(layer.innerHTML).toBe("");
+      expect(layer.children.length).toBe(0);
+      expect(layer.firstChild).toBeNull();
     });
 
     test("does nothing for non-existent layer", () => {
@@ -150,29 +153,4 @@ describe("LayerManager", () => {
     });
   });
 
-  describe("moveToBaseLayer", () => {
-    test("moves arc to base-arcs-layer", () => {
-      const mock = createMockDomAdapter();
-      const layer = createFakeElement("g");
-      const arc = createFakeElement("path");
-      arc.classList.add("cycle-arc");
-      mock._registerElement("base-arcs-layer", layer);
-
-      LayerManager.moveToBaseLayer(arc, mock);
-
-      expect(layer.children).toContain(arc);
-    });
-
-    test("moves label to base-labels-layer", () => {
-      const mock = createMockDomAdapter();
-      const layer = createFakeElement("g");
-      const label = createFakeElement("g");
-      label.classList.add("arc-count-group");
-      mock._registerElement("base-labels-layer", layer);
-
-      LayerManager.moveToBaseLayer(label, mock);
-
-      expect(layer.children).toContain(label);
-    });
-  });
 });

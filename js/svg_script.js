@@ -1,5 +1,5 @@
 // @module SvgScript
-// @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightLogic, VirtualEdgeLogic, TextMetrics, SidebarLogic
+// @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightRenderer, VirtualEdgeLogic, TextMetrics, SidebarLogic
 // @config ROW_HEIGHT, MARGIN, TOOLBAR_HEIGHT
 // svg_script.js - DOM code for interactive SVG
 // ArcLogic is loaded from arc_logic.js before this file
@@ -7,1201 +7,720 @@
 
 // IIFE for SVG embedding (DOM-code) - only runs in browser with placeholders replaced
 if (typeof document !== 'undefined') {
-(function() {
-  const ROW_HEIGHT = __ROW_HEIGHT__;
-  const MARGIN = __MARGIN__;
-  const TOOLBAR_HEIGHT = __TOOLBAR_HEIGHT__;
-  const TOGGLE_OFFSET = 14;
-  const C = STATIC_DATA.classes;
+  (function () {
+    const ROW_HEIGHT = __ROW_HEIGHT__;
+    const MARGIN = __MARGIN__;
+    const TOOLBAR_HEIGHT = __TOOLBAR_HEIGHT__;
+    const TOGGLE_OFFSET = 14;
+    const C = STATIC_DATA.classes;
 
-  // === Arc weight scaling ===
+    // === Arc weight scaling ===
 
-  /**
-   * Scale existing arrows by updating their points attribute.
-   * Parses current tip position from existing points.
-   */
-  function scaleArrow(edgeId, strokeWidth) {
-    const scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
-    DomAdapter.getVisibleArrows(edgeId).forEach(arrow => {
-      const points = arrow.getAttribute('points');
-      const tip = ArcLogic.parseTipFromPoints(points);
-      if (tip) {
-        arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, scale));
-      }
-    });
-  }
-
-  function applyInitialArcWeights() {
-    // Apply stroke-width from StaticData (no state storage needed - values are calculated on demand)
-    for (const arcId of StaticData.getAllArcIds()) {
-      const width = StaticData.getArcStrokeWidth(arcId);
-      const visibleArc = DomAdapter.getVisibleArc(arcId);
-      if (visibleArc) visibleArc.style.strokeWidth = width + 'px';
-      scaleArrow(arcId, width);
-    }
-  }
-
-  // Runtime map for virtual arc usages (structured objects, no DOM serialization)
-  const virtualArcUsages = new Map();
-  const virtualArcOriginals = new Map();
-
-  // === Highlight functionality ===
-  // Use AppState module for unified state management
-  const appState = AppState.create();
-
-  /**
-   * Reset arc and arrows to original styling.
-   * @param {string} arcId - Arc identifier
-   * @param {boolean} isVirtual - True for virtual arcs (aggregated), false for regular
-   */
-  function resetArcToOriginal(arcId, isVirtual) {
-    // Determine strokeWidth and scale from StaticData (no stored state needed)
-    let strokeWidth, scale;
-    if (isVirtual) {
-      // Virtual arcs: calculate from runtime Map
-      const usages = virtualArcUsages.get(arcId) || [];
-      const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
-      strokeWidth = ArcLogic.calculateStrokeWidth(count);
-      scale = strokeWidth / 1.5;
-    } else {
-      // Regular arcs: calculate from StaticData
-      strokeWidth = StaticData.getArcStrokeWidth(arcId);
-      scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
-    }
-
-    // Reset arc stroke-width
-    const arcSelector = isVirtual ? `.${C.virtualArc}[data-arc-id="${arcId}"]` : null;
-    if (isVirtual) {
-      DomAdapter.querySelectorAll(arcSelector).forEach(arc => {
-        arc.style.strokeWidth = strokeWidth + 'px';
-      });
-    } else {
-      const visibleArc = DomAdapter.getVisibleArc(arcId);
-      if (visibleArc) visibleArc.style.strokeWidth = strokeWidth + 'px';
-    }
-
-    // Reset arrow scale (keep current position)
-    const arrows = isVirtual
-      ? DomAdapter.querySelectorAll(`.${C.virtualArrow}[data-vedge="${arcId}"]`)
-      : DomAdapter.getVisibleArrows(arcId);
-    arrows.forEach(arrow => {
-      const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
-      if (tip) {
-        arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, scale));
-      }
-    });
-  }
-
-  function clearHighlights() {
-    // Clear shadow paths
-    LayerManager.clearLayer(LayerManager.LAYERS.SHADOWS, DomAdapter);
-
-    // Move highlighted elements back to base layers
-    DomAdapter.querySelectorAll(Selectors.highlightedArcs()).forEach(el => {
-      LayerManager.moveToBaseLayer(el, DomAdapter);
-    });
-    DomAdapter.querySelectorAll(Selectors.highlightedLabels()).forEach(el => {
-      LayerManager.moveToBaseLayer(el, DomAdapter);
-    });
-    DomAdapter.querySelectorAll(Selectors.highlightedHitareas()).forEach(el => {
-      LayerManager.moveToBaseLayer(el, DomAdapter);
-    });
-
-    // Reset regular arcs to original size
-    DomAdapter.querySelectorAll(`.${C.arcHitarea}:not(.${C.virtualHitarea})`).forEach(hitarea => {
-      resetArcToOriginal(hitarea.dataset.arcId, false);
-    });
-
-    // Reset virtual arcs to original size (recalculated from runtime Map)
-    DomAdapter.querySelectorAll(`.${C.virtualHitarea}`).forEach(hitarea => {
-      resetArcToOriginal(hitarea.dataset.arcId, true);
-    });
-
-    // Remove CSS classes
-    DomAdapter.querySelectorAll(`.${C.selectedCrate}, .${C.selectedModule}, .${C.depNode}, .${C.dependentNode}, .${C.highlightedArc}, .${C.highlightedArrow}, .${C.highlightedLabel}, .${C.dimmed}`)
-      .forEach(el => el.classList.remove(C.selectedCrate, C.selectedModule, C.depNode, C.dependentNode, C.highlightedArc, C.highlightedArrow, C.highlightedLabel, C.dimmed));
-
-    // Hide sidebar unless a pin is still active
-    if (!AppState.hasPinnedSelection(appState)) SidebarLogic.hide();
-  }
-
-  // Create shadow path for glow effect
-  // relationType: 'dep' (incoming) or 'reverse' (outgoing)
-  // arcId: used to look up original width
-  // originalArcWidth: un-highlighted arc width (before calculateHighlightWidth)
-  function createShadowPath(arc, relationType, arcId, originalArcWidth) {
-    if (!arc) return;
-    const shadow = arc.cloneNode(false);
-    // Drop direction classes inherited from cloned arc — their CSS rules
-    // (.dep-arc.downward) would override the glow color we set below.
-    shadow.classList.remove(C.downward, C.upward);
-    shadow.classList.add(C.shadowPath);
-    shadow.classList.add(relationType === 'dep' ? C.glowIncoming : C.glowOutgoing);
-    shadow.removeAttribute('id');
-
-    // Use provided original width (prevents shadow growth on repeated hover)
-    // Estimate path length from path data (no DOM read)
-    const pathLength = ArcLogic.estimatePathLength(arc.getAttribute('d'));
-    const shadowData = HighlightLogic.calculateShadowData(originalArcWidth, pathLength);
-
-    shadow.style.strokeWidth = shadowData.shadowWidth + 'px';
-    shadow.setAttribute('opacity', '0.25');
-    shadow.style.strokeLinecap = 'round';
-    shadow.style.strokeDasharray = shadowData.visibleLength + ' ' + pathLength;
-    shadow.style.strokeDashoffset = shadowData.dashOffset + 'px';
-
-    const shadowLayer = DomAdapter.getElementById(LayerManager.LAYERS.SHADOWS);
-    if (shadowLayer) shadowLayer.appendChild(shadow);
-  }
-
-  /**
-   * Highlight a single arc element with correct sequencing.
-   * CRITICAL: Calculates original width from source data to prevent growth bug.
-   * @param {Element} arc - Arc DOM element
-   * @param {string} arcId - Arc identifier (from-to)
-   * @param {string} relationType - 'dep' (outgoing) or 'reverse' (incoming)
-   * @returns {number} highlightWidth - For arrow scaling
-   */
-  function highlightArcElement(arc, arcId, relationType) {
-    // 1. Calculate ORIGINAL width from source data (not from DOM to prevent growth bug)
-    let arcWidth;
-    if (arc.classList.contains(C.virtualArc)) {
-      // Virtual arc: calculate from runtime Map
-      const usages = virtualArcUsages.get(arcId) || [];
-      const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
-      arcWidth = ArcLogic.calculateStrokeWidth(count);
-    } else {
-      // Regular arc: use StaticData
-      arcWidth = StaticData.getArcStrokeWidth(arcId);
-    }
-
-    const highlightWidth = HighlightLogic.calculateHighlightWidth(arcWidth);
-
-    // 2. Apply highlighting
-    arc.classList.add(C.highlightedArc);
-    arc.style.strokeWidth = highlightWidth + 'px';
-
-    // 3. Create shadow using ORIGINAL width
-    createShadowPath(arc, relationType, arcId, arcWidth);
-
-    return highlightWidth;
-  }
-
-  // Dim all non-highlighted elements (except toolbar and hitareas)
-  function dimNonHighlighted() {
-    DomAdapter.querySelectorAll(
-      `rect:not(.${C.selectedCrate}):not(.${C.selectedModule}):not(.${C.depNode}):not(.${C.dependentNode}):not(.${C.toolbarBtn}):not(.${C.toolbarCheckbox}):not(.${C.arcCountBg}), ` +
-      `path:not(.${C.highlightedArc}):not(.${C.arcHitarea}):not(.${C.virtualHitarea}), ` +
-      `polygon:not(.${C.highlightedArrow}), ` +
-      `text.${C.arcCount}:not(.${C.highlightedLabel})`
-    ).forEach(el => {
-      if (!el.closest(`.${C.viewOptions}`)) el.classList.add(C.dimmed);
-    });
-  }
-
-  function applyEdgeHighlight(from, to) {
-    const arcId = from + '-' + to;
-    const arc = DomAdapter.getVisibleArc(arcId);
-
-    // Check if arc is filtered out (user checkbox) - skip completely
-    if (arc?.classList.contains(C.hiddenByFilter)) return;
-
-    // Node borders (always apply)
-    DomAdapter.getNode(from)?.classList.add(C.dependentNode);
-    DomAdapter.getNode(to)?.classList.add(C.depNode);
-
-    // Regular arc highlighting (skip if collapsed)
-    const isCollapsed = arc?.style.display === 'none';
-    if (!isCollapsed && arc) {
-      const highlightWidth = highlightArcElement(arc, arcId, 'dep');
-      scaleArrow(arcId, highlightWidth);
-
-      // Regular arrows
-      DomAdapter.getVisibleArrows(arcId)
-        .forEach(el => el.classList.add(C.highlightedArrow));
-    }
-
-    // Virtual arcs (exist when regular arc is collapsed)
-    DomAdapter.querySelectorAll(Selectors.virtualArc(from, to))
-      .forEach(el => {
-        const vHighlightWidth = highlightArcElement(el, arcId, 'dep');
-
-        // Scale virtual arrows (use virtual arc width, not regular arc width)
-        DomAdapter.querySelectorAll(`.${C.virtualArrow}[data-vedge="${arcId}"]`).forEach(arrow => {
-          arrow.classList.add(C.highlightedArrow);
-          const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
-          if (tip) {
-            arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(vHighlightWidth)));
-          }
-        });
-      });
-
-    // Arc-count labels
-    DomAdapter.querySelectorAll(`.${C.arcCount}[data-vedge="` + arcId + `"]`)
-      .forEach(el => el.classList.add(C.highlightedLabel));
-
-    // Move highlighted elements to highlight layers
-    LayerManager.moveToHighlightLayer(arc, DomAdapter);
-    LayerManager.moveToHighlightLayer(DomAdapter.querySelector(`.${C.virtualArc}[data-arc-id="${arcId}"]`), DomAdapter);
-    LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
-    // Arrows (only visible ones)
-    DomAdapter.getVisibleArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
-    DomAdapter.getVirtualArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
-
-    // Move hitarea to highlight layer (higher z-order) so it receives events over dimmed hitareas
-    const hitarea = DomAdapter.getHitarea(arcId);
-    LayerManager.moveToLayer(hitarea, LayerManager.LAYERS.HIGHLIGHT_HITAREAS, DomAdapter);
-
-    dimNonHighlighted();
-  }
-
-  function applyNodeHighlight(nodeId) {
-    // Selected node: saturated original color
-    const selectedNode = DomAdapter.getNode(nodeId);
-    if (selectedNode) {
-      if (selectedNode.classList.contains(C.crateNode)) {
-        selectedNode.classList.add(C.selectedCrate);
-      } else if (selectedNode.classList.contains(C.module)) {
-        selectedNode.classList.add(C.selectedModule);
-      }
-    }
-
-    // Regular arcs via hitareas
-    DomAdapter.getConnectedHitareas(nodeId)
-      .forEach(hitarea => {
-        // Skip hitareas filtered out by user (e.g., CrateDeps checkbox)
-        // Note: We check visibleArc for display:none (collapsed), not hitarea
-        if (hitarea.classList.contains(C.hiddenByFilter)) return;
-
-        const arcId = hitarea.dataset.arcId;
+    function applyInitialArcWeights() {
+      for (const arcId of StaticData.getAllArcIds()) {
+        const width = StaticData.getArcStrokeWidth(arcId);
         const visibleArc = DomAdapter.getVisibleArc(arcId);
-
-        // Skip if arc is hidden (endpoints are collapsed)
-        if (visibleArc?.style.display === 'none') return;
-
-        const from = hitarea.dataset.from;
-        const to = hitarea.dataset.to;
-        const relationType = HighlightLogic.determineRelationType(from, to, nodeId);
-
-        // Only proceed if arc exists and is visible (getVisibleArc returns null for hidden arcs)
-        if (!visibleArc) return;
-
-        const highlightWidth = highlightArcElement(visibleArc, arcId, relationType);
-        if (highlightWidth > 0) scaleArrow(from + '-' + to, highlightWidth);
-
-        // Connected nodes (border only)
-        const otherNodeId = relationType === 'dep' ? to : from;
-        DomAdapter.getNode(otherNodeId)?.classList.add(relationType === 'dep' ? C.depNode : C.dependentNode);
-
-        // Arrows: marker class (keeps direction color)
-        DomAdapter.getVisibleArrows(from + '-' + to)
-          .forEach(arr => arr.classList.add(C.highlightedArrow));
-
-        // Move to highlight layers
-        LayerManager.moveToHighlightLayer(visibleArc, DomAdapter);
-        LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
-        DomAdapter.getVisibleArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
-      });
-
-    // Virtual arcs
-    DomAdapter.querySelectorAll(`.${C.virtualArc}[data-from="` + nodeId + `"], .${C.virtualArc}[data-to="` + nodeId + `"]`)
-      .forEach(arc => {
-        const from = arc.dataset.from;
-        const to = arc.dataset.to;
-        const arcId = from + '-' + to;
-        const relationType = HighlightLogic.determineRelationType(from, to, nodeId);
-
-        const highlightWidth = highlightArcElement(arc, arcId, relationType);
-
-        // Scale virtual arrows
-        DomAdapter.querySelectorAll(`.${C.virtualArrow}[data-vedge="${arcId}"]`).forEach(arrow => {
-          const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
-          if (tip) {
-            arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
-          }
-        });
-
-        // Connected nodes (border only)
-        const otherNodeId = relationType === 'dep' ? to : from;
-        DomAdapter.getNode(otherNodeId)?.classList.add(relationType === 'dep' ? C.depNode : C.dependentNode);
-
-        // Arrows: marker class (keeps direction color)
-        DomAdapter.getVirtualArrows(arcId)
-          .forEach(arr => arr.classList.add(C.highlightedArrow));
-
-        // Arc-count labels
-        DomAdapter.querySelectorAll(`.${C.arcCount}[data-vedge="` + arcId + `"]`)
-          .forEach(el => el.classList.add(C.highlightedLabel));
-
-        // Move to highlight layers
-        LayerManager.moveToHighlightLayer(arc, DomAdapter);
-        LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
-        DomAdapter.getVirtualArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
-      });
-
-    // Move connected hitareas to highlight layer (higher z-order)
-    DomAdapter.getConnectedHitareas(nodeId)
-      .forEach(h => LayerManager.moveToLayer(h, LayerManager.LAYERS.HIGHLIGHT_HITAREAS, DomAdapter));
-
-    dimNonHighlighted();
-  }
-
-  /**
-   * Highlight a group of nodes (primary + descendants) and their connected arcs.
-   * Used when a pinned node is expanded — all visible descendants get highlighted too.
-   * @param {string} primaryNodeId - The pinned node
-   * @param {Set<string>} highlightSet - Set of node IDs to highlight (primary + descendants)
-   */
-  function applyNodeGroupHighlight(primaryNodeId, highlightSet) {
-    // Primary node: saturated original color
-    const selectedNode = DomAdapter.getNode(primaryNodeId);
-    if (selectedNode) {
-      if (selectedNode.classList.contains(C.crateNode)) {
-        selectedNode.classList.add(C.selectedCrate);
-      } else if (selectedNode.classList.contains(C.module)) {
-        selectedNode.classList.add(C.selectedModule);
+        if (visibleArc) visibleArc.style.strokeWidth = width + 'px';
+        ArcLogic.scaleArrow(DomAdapter, arcId, width);
       }
     }
 
-    const processedArcs = new Set();
+    // Runtime map for virtual arc usages (structured objects, no DOM serialization)
+    const virtualArcUsages = new Map();
+    const virtualArcOriginals = new Map();
 
-    // For each node in the highlight set, process connected arcs
-    for (const nodeId of highlightSet) {
-      // Regular arcs via hitareas
-      DomAdapter.getConnectedHitareas(nodeId)
-        .forEach(hitarea => {
-          if (hitarea.classList.contains(C.hiddenByFilter)) return;
+    // === Highlight functionality ===
+    // Use AppState module for unified state management
+    const appState = AppState.create();
 
-          const arcId = hitarea.dataset.arcId;
-          if (processedArcs.has(arcId)) return;
-          processedArcs.add(arcId);
-
-          const visibleArc = DomAdapter.getVisibleArc(arcId);
-          if (visibleArc?.style.display === 'none') return;
-          if (!visibleArc) return;
-
-          const from = hitarea.dataset.from;
-          const to = hitarea.dataset.to;
-
-          // Determine relation type relative to the SET
-          const fromInSet = highlightSet.has(from);
-          const toInSet = highlightSet.has(to);
-          const relationType = fromInSet && !toInSet ? 'dep'
-            : !fromInSet && toInSet ? 'reverse'
-            : 'dep'; // both in set → internal, use dep convention
-
-          const highlightWidth = highlightArcElement(visibleArc, arcId, relationType);
-          if (highlightWidth > 0) scaleArrow(from + '-' + to, highlightWidth);
-
-          // External nodes (not in set) get border
-          if (!fromInSet) {
-            DomAdapter.getNode(from)?.classList.add(C.dependentNode);
-          }
-          if (!toInSet) {
-            DomAdapter.getNode(to)?.classList.add(C.depNode);
-          }
-
-          DomAdapter.getVisibleArrows(from + '-' + to)
-            .forEach(arr => arr.classList.add(C.highlightedArrow));
-
-          LayerManager.moveToHighlightLayer(visibleArc, DomAdapter);
-          LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
-          DomAdapter.getVisibleArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
-        });
-
-      // Virtual arcs
-      DomAdapter.querySelectorAll(`.${C.virtualArc}[data-from="` + nodeId + `"], .${C.virtualArc}[data-to="` + nodeId + `"]`)
-        .forEach(arc => {
-          const from = arc.dataset.from;
-          const to = arc.dataset.to;
-          const arcId = from + '-' + to;
-          if (processedArcs.has('v:' + arcId)) return;
-          processedArcs.add('v:' + arcId);
-
-          const fromInSet = highlightSet.has(from);
-          const toInSet = highlightSet.has(to);
-          const relationType = fromInSet && !toInSet ? 'dep'
-            : !fromInSet && toInSet ? 'reverse'
-            : 'dep';
-
-          const highlightWidth = highlightArcElement(arc, arcId, relationType);
-
-          DomAdapter.querySelectorAll(`.${C.virtualArrow}[data-vedge="${arcId}"]`).forEach(arrow => {
-            const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
-            if (tip) {
-              arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
-            }
-          });
-
-          if (!fromInSet) {
-            DomAdapter.getNode(from)?.classList.add(C.dependentNode);
-          }
-          if (!toInSet) {
-            DomAdapter.getNode(to)?.classList.add(C.depNode);
-          }
-
-          DomAdapter.getVirtualArrows(arcId)
-            .forEach(arr => arr.classList.add(C.highlightedArrow));
-
-          DomAdapter.querySelectorAll(`.${C.arcCount}[data-vedge="` + arcId + `"]`)
-            .forEach(el => el.classList.add(C.highlightedLabel));
-
-          LayerManager.moveToHighlightLayer(arc, DomAdapter);
-          LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(arcId), DomAdapter);
-          DomAdapter.getVirtualArrows(arcId).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
-        });
-
-      // Move connected hitareas to highlight layer
-      DomAdapter.getConnectedHitareas(nodeId)
-        .forEach(h => LayerManager.moveToLayer(h, LayerManager.LAYERS.HIGHLIGHT_HITAREAS, DomAdapter));
+    /**
+     * Central highlight rerender: derive state from AppState, apply via HighlightRenderer.
+     * Single entry point for all highlight updates (click, hover, collapse, filter toggle).
+     */
+    function rerenderHighlights() {
+      const widthOverrides = new Map();
+      for (const nodeId of appState.collapsed) {
+        const rect = DomAdapter.getNode(nodeId);
+        if (rect) {
+          widthOverrides.set(nodeId, parseFloat(rect.getAttribute('width')));
+        }
+      }
+      const positions = DerivedState.computeCurrentPositions(
+        appState.collapsed, StaticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT, widthOverrides
+      );
+      const state = DerivedState.deriveHighlightState(
+        appState, StaticData, virtualArcUsages, appState.hiddenArcIds, positions, ROW_HEIGHT
+      );
+      HighlightRenderer.apply(DomAdapter, StaticData, virtualArcUsages, state);
     }
 
-    dimNonHighlighted();
-  }
-
-  function highlightEdge(from, to, pin) {
-    const edgeId = from + '-' + to;
-    if (pin) {
-      // Toggle: if same edge is already pinned, deselect
-      const isPinned = AppState.togglePinned(appState, 'edge', edgeId);
-      clearHighlights();
-      if (!isPinned) return; // Was not pinned (toggled off), done
-    } else {
-      clearHighlights();
+    function highlightEdge(from, to) {
+      const edgeId = from + '-' + to;
+      const isPinned = AppState.togglePinned(appState, 'arc', edgeId);
+      rerenderHighlights();
+      if (!isPinned) {
+        SidebarLogic.hide();
+        return;
+      }
+      SidebarLogic.show(edgeId);
     }
-    applyEdgeHighlight(from, to);
-    if (pin) SidebarLogic.show(edgeId);
-  }
 
-  function highlightNode(nodeId, pin) {
-    if (pin) {
-      // Toggle: if same node is already pinned, deselect
+    function highlightNode(nodeId) {
       const isPinned = AppState.togglePinned(appState, 'node', nodeId);
-      clearHighlights();
-      if (!isPinned) return; // Was not pinned (toggled off), done
-    } else {
-      clearHighlights();
-    }
-    const highlightSet = DerivedState.deriveHighlightSet(nodeId, appState.collapsed, StaticData);
-    if (highlightSet.size === 1) {
-      applyNodeHighlight(nodeId);
-    } else {
-      applyNodeGroupHighlight(nodeId, highlightSet);
-    }
-    if (pin) {
+      rerenderHighlights();
+      if (!isPinned) {
+        SidebarLogic.hide();
+        return;
+      }
       const relations = collectNodeRelations(nodeId);
       SidebarLogic.showNode(nodeId, relations);
     }
-  }
 
-  function collectNodeRelations(nodeId) {
-    const base = StaticData.getNodeRelations(nodeId);
-    // Filter base arcs to hidden nodes — virtual arcs already represent them
-    base.outgoing = base.outgoing.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
-    base.incoming = base.incoming.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
-    for (const [key, usages] of virtualArcUsages) {
-      const [fromId, toId] = key.split('-');
-      const origArcs = virtualArcOriginals.get(key) || [];
-      const weight = usages.reduce((s, g) => s + g.locations.length, 0);
-      const merged = SidebarLogic.mergeSymbolGroups(usages);
-      const entry = { targetId: fromId === nodeId ? toId : fromId,
-                      weight, usages: merged, arcId: key, originalArcs: origArcs };
-      if (fromId === nodeId) base.outgoing.push(entry);
-      else if (toId === nodeId) base.incoming.push(entry);
+    function collectNodeRelations(nodeId) {
+      const base = StaticData.getNodeRelations(nodeId);
+      // Filter base arcs to hidden nodes — virtual arcs already represent them
+      base.outgoing = base.outgoing.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
+      base.incoming = base.incoming.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
+      for (const [key, usages] of virtualArcUsages) {
+        const [fromId, toId] = key.split('-');
+        const origArcs = virtualArcOriginals.get(key) || [];
+        const weight = usages.reduce((s, g) => s + g.locations.length, 0);
+        const merged = SidebarLogic.mergeSymbolGroups(usages);
+        const entry = {
+          targetId: fromId === nodeId ? toId : fromId,
+          weight, usages: merged, arcId: key, originalArcs: origArcs
+        };
+        if (fromId === nodeId) base.outgoing.push(entry);
+        else if (toId === nodeId) base.incoming.push(entry);
+      }
+      base.outgoing.sort((a, b) => b.weight - a.weight);
+      base.incoming.sort((a, b) => b.weight - a.weight);
+      return base;
     }
-    base.outgoing.sort((a, b) => b.weight - a.weight);
-    base.incoming.sort((a, b) => b.weight - a.weight);
-    return base;
-  }
 
-  function handleMouseEnter(type, id) {
-    if (AppState.getPinned(appState)) return; // Don't preview if something is pinned
-    clearHighlights();
-    if (type === 'node') {
-      applyNodeHighlight(id);
-      const relations = collectNodeRelations(id);
-      SidebarLogic.showTransientNode(id, relations);
-    } else if (type === 'edge') {
-      const [from, to] = id.split('-');
-      applyEdgeHighlight(from, to);
-      SidebarLogic.showTransient(id);
+    function handleMouseEnter(type, id) {
+      if (AppState.hasPinnedSelection(appState)) return;
+      AppState.setHover(appState, type, id);
+      rerenderHighlights();
+      if (type === 'node') {
+        const relations = collectNodeRelations(id);
+        SidebarLogic.showTransientNode(id, relations);
+      } else if (type === 'arc') {
+        SidebarLogic.showTransient(id);
+      }
     }
-  }
 
-  function handleMouseLeave() {
-    if (AppState.getPinned(appState)) return; // Keep pinned highlight
-    clearHighlights();
-    SidebarLogic.hideTransient();
-  }
+    function handleMouseLeave() {
+      if (AppState.hasPinnedSelection(appState)) return;
+      AppState.clearHover(appState);
+      rerenderHighlights();
+      SidebarLogic.hideTransient();
+    }
 
-  function handleVirtualMouseEnter(arcId, fromId, toId) {
-    if (AppState.getPinned(appState)) return;
-    clearHighlights();
-    const [from, to] = arcId.split('-');
-    applyEdgeHighlight(from, to);
-    const usages = virtualArcUsages.get(arcId) || [];
-    const originalArcs = virtualArcOriginals.get(arcId) || [];
-    const mergedUsages = SidebarLogic.mergeSymbolGroups(usages);
-    SidebarLogic.showTransient(arcId, { from: fromId, to: toId, usages: mergedUsages, originalArcs });
-  }
+    function handleVirtualMouseEnter(arcId, fromId, toId) {
+      if (AppState.hasPinnedSelection(appState)) return;
+      AppState.setHover(appState, 'arc', arcId);
+      rerenderHighlights();
+      const usages = virtualArcUsages.get(arcId) || [];
+      const originalArcs = virtualArcOriginals.get(arcId) || [];
+      const mergedUsages = SidebarLogic.mergeSymbolGroups(usages);
+      SidebarLogic.showTransient(arcId, { from: fromId, to: toId, usages: mergedUsages, originalArcs });
+    }
 
-  // === Collapse functionality ===
-  // Build parentMap from STATIC_DATA (no DOM read needed)
-  const parentMap = StaticData.buildParentMap();
+    // === Collapse functionality ===
+    // Build parentMap from STATIC_DATA (no DOM read needed)
+    const parentMap = StaticData.buildParentMap();
 
-  // Note: Original positions now come from STATIC_DATA, no need to store them
+    // Note: Original positions now come from STATIC_DATA, no need to store them
 
-  // Wrapper functions for TreeLogic (use parentMap from closure)
-  function getDescendants(nodeId) {
-    return TreeLogic.getDescendants(nodeId, parentMap);
-  }
+    // Wrapper functions for TreeLogic (use parentMap from closure)
+    function getDescendants(nodeId) {
+      return TreeLogic.getDescendants(nodeId, parentMap);
+    }
 
-  function getVisibleAncestor(nodeId) {
-    return TreeLogic.getVisibleAncestor(nodeId, appState.collapsed, parentMap);
-  }
+    function getVisibleAncestor(nodeId) {
+      return TreeLogic.getVisibleAncestor(nodeId, appState.collapsed, parentMap);
+    }
 
-  function countDescendants(nodeId) {
-    return TreeLogic.countDescendants(nodeId, parentMap);
-  }
+    function countDescendants(nodeId) {
+      return TreeLogic.countDescendants(nodeId, parentMap);
+    }
 
-  // Update tree lines for a node at new Y position
-  function updateTreeLines(nodeId, newY, nodeHeight) {
-    // Update lines where this node is the child
-    DomAdapter.getTreeLines(nodeId, 'child').forEach(line => {
-      const midY = newY + nodeHeight / 2;
-      if (line.getAttribute('x1') === line.getAttribute('x2')) {
-        // Vertical line - update y2
-        line.setAttribute('y2', midY);
-      } else {
-        // Horizontal line - update both y1 and y2
-        line.setAttribute('y1', midY);
-        line.setAttribute('y2', midY);
-      }
-    });
-
-    // Update lines where this node is the parent (vertical line y1)
-    DomAdapter.getTreeLines(nodeId, 'parent').forEach(line => {
-      if (line.getAttribute('x1') === line.getAttribute('x2')) {
-        // Vertical line - update y1 (parent bottom)
-        line.setAttribute('y1', newY + nodeHeight);
-      }
-    });
-  }
-
-  // Relayout visible nodes
-  function relayout() {
-    let currentY = MARGIN + TOOLBAR_HEIGHT;
-
-    // Get all node IDs sorted by original Y position (no DOM query for list)
-    const sortedIds = StaticData.getAllNodeIds()
-      .sort((a, b) => {
-        const posA = StaticData.getOriginalPosition(a);
-        const posB = StaticData.getOriginalPosition(b);
-        return posA.y - posB.y;
-      });
-
-    sortedIds.forEach(nodeId => {
-      const node = DomAdapter.getNode(nodeId);
-      if (!node) return;
-      if (node.classList.contains(C.collapsed)) return;
-      if (node.classList.contains(C.hiddenByFilter)) return;
-
-      // Get height from StaticData (no DOM read)
-      const height = StaticData.getOriginalPosition(nodeId).height;
-
-      // Update rect position
-      node.setAttribute('y', currentY);
-
-      // Update label position (next text sibling)
-      const label = node.nextElementSibling;
-      if (label && label.tagName === 'text' && label.classList.contains(C.label)) {
-        label.setAttribute('y', currentY + height / 2 + 4);
-      }
-
-      // Update toggle icon position (if exists)
-      const toggle = DomAdapter.getCollapseToggle(nodeId);
-      if (toggle) {
-        toggle.setAttribute('y', currentY + height / 2 + 4);
-        const nodeX = parseFloat(node.getAttribute('x'));
-        const nodeW = parseFloat(node.getAttribute('width'));
-        toggle.setAttribute('x', nodeX + nodeW - TOGGLE_OFFSET);
-      }
-
-      // Update tree lines
-      updateTreeLines(nodeId, currentY, height);
-
-      currentY += ROW_HEIGHT;
-    });
-
-    recalculateVirtualEdges();
-
-    // Re-apply pinned highlight after edges were recreated
-    const pinned = AppState.getPinned(appState);
-    if (pinned) {
-      clearHighlights();  // Remove stale shadow paths from deleted virtual arcs
-      if (pinned.type === 'node') {
-        const highlightSet = DerivedState.deriveHighlightSet(pinned.id, appState.collapsed, StaticData);
-        if (highlightSet.size === 1) {
-          applyNodeHighlight(pinned.id);
+    // Update tree lines for a node at new Y position
+    function updateTreeLines(nodeId, newY, nodeHeight) {
+      // Update lines where this node is the child
+      DomAdapter.getTreeLines(nodeId, 'child').forEach(line => {
+        const midY = newY + nodeHeight / 2;
+        if (line.getAttribute('x1') === line.getAttribute('x2')) {
+          // Vertical line - update y2
+          line.setAttribute('y2', midY);
         } else {
-          applyNodeGroupHighlight(pinned.id, highlightSet);
+          // Horizontal line - update both y1 and y2
+          line.setAttribute('y1', midY);
+          line.setAttribute('y2', midY);
         }
-      } else if (pinned.type === 'edge') {
-        const [from, to] = pinned.id.split('-');
-        applyEdgeHighlight(from, to);
+      });
+
+      // Update lines where this node is the parent (vertical line y1)
+      DomAdapter.getTreeLines(nodeId, 'parent').forEach(line => {
+        if (line.getAttribute('x1') === line.getAttribute('x2')) {
+          // Vertical line - update y1 (parent bottom)
+          line.setAttribute('y1', newY + nodeHeight);
+        }
+      });
+    }
+
+    // Relayout visible nodes
+    function relayout() {
+      let currentY = MARGIN + TOOLBAR_HEIGHT;
+
+      // Get all node IDs sorted by original Y position (no DOM query for list)
+      const sortedIds = StaticData.getAllNodeIds()
+        .sort((a, b) => {
+          const posA = StaticData.getOriginalPosition(a);
+          const posB = StaticData.getOriginalPosition(b);
+          return posA.y - posB.y;
+        });
+
+      sortedIds.forEach(nodeId => {
+        const node = DomAdapter.getNode(nodeId);
+        if (!node) return;
+        if (node.classList.contains(C.collapsed)) return;
+        if (node.classList.contains(C.hiddenByFilter)) return;
+
+        // Get height from StaticData (no DOM read)
+        const height = StaticData.getOriginalPosition(nodeId).height;
+
+        // Update rect position
+        node.setAttribute('y', currentY);
+
+        // Update label position (next text sibling)
+        const label = node.nextElementSibling;
+        if (label && label.tagName === 'text' && label.classList.contains(C.label)) {
+          label.setAttribute('y', currentY + height / 2 + 4);
+        }
+
+        // Update toggle icon position (if exists)
+        const toggle = DomAdapter.getCollapseToggle(nodeId);
+        if (toggle) {
+          toggle.setAttribute('y', currentY + height / 2 + 4);
+          const nodeX = parseFloat(node.getAttribute('x'));
+          const nodeW = parseFloat(node.getAttribute('width'));
+          toggle.setAttribute('x', nodeX + nodeW - TOGGLE_OFFSET);
+        }
+
+        // Update tree lines
+        updateTreeLines(nodeId, currentY, height);
+
+        currentY += ROW_HEIGHT;
+      });
+
+      recalculateVirtualEdges();
+
+      // Re-apply highlights after edges were recreated
+      rerenderHighlights();
+
+      // Update sidebar position after layout changed arc positions
+      if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
+    }
+
+    // Helper: Calculate arc path from position objects (no DOM read)
+    function calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight) {
+      return ArcLogic.calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight, ROW_HEIGHT);
+    }
+
+    // Helper: Extract edge data from DOM hitareas to pure objects
+    // Uses DerivedState for visibility instead of per-edge getVisibleAncestor calls
+    function extractEdgeData(hitareas, visibleNodes) {
+      const edges = [];
+      hitareas.forEach(hitarea => {
+        const fromId = hitarea.dataset.from;
+        const toId = hitarea.dataset.to;
+
+        // A node is hidden if it's not in the visibleNodes set
+        // (computed once via DerivedState.deriveNodeVisibility)
+        const fromIsHidden = !visibleNodes.has(fromId);
+        const toIsHidden = !visibleNodes.has(toId);
+
+        const arcId = hitarea.dataset.arcId;
+        edges.push({
+          hitarea,
+          arcId,
+          fromId,
+          toId,
+          fromHidden: fromIsHidden,
+          toHidden: toIsHidden,
+          sourceLocations: StaticData.getArcUsages(arcId),
+          // Compute direction from hierarchy (no DOM read)
+          direction: DerivedState._determineDirection(fromId, toId, parentMap)
+        });
+      });
+      return edges;
+    }
+
+    // Remove virtual elements and reset original edge display
+    function cleanupVirtualElements() {
+      DomAdapter.querySelectorAll(Selectors.allVirtualElements()).forEach(el => el.remove());
+      DomAdapter.querySelectorAll(Selectors.allBaseEdges()).forEach(edge => {
+        edge.style.display = '';
+      });
+      DomAdapter.querySelectorAll(Selectors.allBaseArrows()).forEach(arrow => {
+        arrow.style.display = '';
+      });
+      virtualArcUsages.clear();
+      virtualArcOriginals.clear();
+    }
+
+    // Hide original elements when from/to hidden, update visible arc paths
+    function updateOriginalEdges(edgeData, currentPositions, maxRight) {
+      edgeData.forEach(edge => {
+        const { hitarea, arcId, fromId, toId, fromHidden, toHidden } = edge;
+
+        if (window.DEBUG_ARCS) {
+          console.log(`Arc ${arcId}: from=${fromId}(${fromHidden ? 'hidden' : 'visible'}), to=${toId}(${toHidden ? 'hidden' : 'visible'})`);
+        }
+
+        if (fromHidden || toHidden) {
+          // Hide original elements
+          hitarea.style.display = 'none';
+          const visibleArc = DomAdapter.getVisibleArc(arcId);
+          if (visibleArc) visibleArc.style.display = 'none';
+          DomAdapter.getArrows(fromId + '-' + toId)
+            .forEach(arr => arr.style.display = 'none');
+        } else {
+          // Update visible arc paths using computed positions (no DOM read)
+          const fromPos = currentPositions.get(fromId);
+          const toPos = currentPositions.get(toId);
+          if (fromPos && toPos) {
+            const arc = calculateArcPathFromPositions(fromPos, toPos, 3, maxRight);
+            hitarea.setAttribute('d', arc.path);
+            const visibleArc = DomAdapter.getVisibleArc(arcId);
+            if (visibleArc) visibleArc.setAttribute('d', arc.path);
+
+            const strokeWidth = StaticData.getArcStrokeWidth(arcId);
+            const scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
+            // Update ALL arrow positions (even hidden ones) so they have correct position when shown
+            DomAdapter.getArrows(fromId + '-' + toId).forEach(arrow => {
+              arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
+            });
+          }
+        }
+      });
+    }
+
+    // Recalculate and show virtual edges for collapsed nodes
+    function recalculateVirtualEdges() {
+      cleanupVirtualElements();
+
+      const visibleNodes = DerivedState.deriveNodeVisibility(appState.collapsed, StaticData);
+      // Read current DOM widths for collapsed nodes whose boxes were expanded
+      const widthOverrides = new Map();
+      for (const nodeId of appState.collapsed) {
+        const rect = DomAdapter.getNode(nodeId);
+        if (rect) {
+          widthOverrides.set(nodeId, parseFloat(rect.getAttribute('width')));
+        }
+      }
+      const currentPositions = DerivedState.computeCurrentPositions(
+        appState.collapsed, StaticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT, widthOverrides
+      );
+      const maxRight = DerivedState.computeMaxRight(currentPositions);
+
+      const hitareas = DomAdapter.getAllHitareas();
+      const edgeData = extractEdgeData(hitareas, visibleNodes);
+
+      updateOriginalEdges(edgeData, currentPositions, maxRight);
+
+      const virtualEdges = VirtualEdgeLogic.aggregateHiddenEdges(edgeData, getVisibleAncestor);
+      const mergedEdges = VirtualEdgeLogic.prepareVirtualEdgeData(
+        virtualEdges, currentPositions, maxRight, ArcLogic, ROW_HEIGHT
+      );
+
+      const layers = {
+        baseArcs: DomAdapter.getElementById(LayerManager.LAYERS.BASE_ARCS),
+        baseLabels: DomAdapter.getElementById(LayerManager.LAYERS.BASE_LABELS),
+        hitareas: DomAdapter.getElementById(LayerManager.LAYERS.HITAREAS)
+      };
+      renderVirtualElements(mergedEdges, layers);
+    }
+
+    // Create virtual arc elements (arcs, arrows, labels, hitareas)
+    function renderVirtualElements(mergedEdges, layers) {
+      // Pass 1: Arcs + Arrows (bottom layer)
+      mergedEdges.forEach((data, key) => {
+        const { fromId, toId, arc, strokeWidth, direction } = data;
+        const arcId = fromId + '-' + toId;
+
+        // Visible path (styled, no pointer events)
+        const path = DomAdapter.createSvgElement('path');
+        path.setAttribute('class', `${C.virtualArc} ${direction}`);
+        path.setAttribute('d', arc.path);
+        path.setAttribute('data-arc-id', arcId);
+        path.setAttribute('data-from', fromId);
+        path.setAttribute('data-to', toId);
+        path.style.strokeWidth = strokeWidth + 'px';
+        layers.baseArcs.appendChild(path);
+
+        // Arrow (scaled to match stroke width)
+        const scale = strokeWidth / 1.5;
+        const arrow = DomAdapter.createSvgElement('polygon');
+        arrow.setAttribute('class', `${C.virtualArrow} ${direction}`);
+        arrow.setAttribute('data-vedge', arcId);
+        arrow.setAttribute('data-from', fromId);
+        arrow.setAttribute('data-to', toId);
+        arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
+        arrow.addEventListener('click', e => {
+          e.stopPropagation();
+          highlightVirtualEdge(fromId, toId);
+        });
+        layers.baseArcs.appendChild(arrow);
+      });
+
+      // Pass 2: Labels (middle layer, above arcs)
+      mergedEdges.forEach((data, key) => {
+        const { fromId, toId, arc, count } = data;
+
+        if (count > 1) {
+          const labelGroup = DomAdapter.createSvgElement('g');
+          labelGroup.setAttribute('class', C.arcCountGroup);
+          labelGroup.setAttribute('data-vedge', fromId + '-' + toId);
+          labelGroup.setAttribute('data-from', fromId);
+          labelGroup.setAttribute('data-to', toId);
+          const text = '(' + count + ')';
+          const x = arc.ctrlX + 5;
+          const y = arc.midY + 3;
+
+          // Background rect (2-3px padding)
+          const padding = 2;
+          const textWidth = text.length * 6; // ~6px per char at 10px font
+          const bg = DomAdapter.createSvgElement('rect');
+          bg.setAttribute('class', C.arcCountBg);
+          bg.setAttribute('x', x - textWidth / 2 - padding);
+          bg.setAttribute('y', y - 8 - padding);
+          bg.setAttribute('width', textWidth + padding * 2);
+          bg.setAttribute('height', 12 + padding * 2);
+          bg.setAttribute('rx', '2');
+
+          // Text label
+          const countLabel = DomAdapter.createSvgElement('text');
+          countLabel.setAttribute('class', C.arcCount);
+          countLabel.setAttribute('data-vedge', fromId + '-' + toId);
+          countLabel.setAttribute('x', x);
+          countLabel.setAttribute('y', y);
+          countLabel.textContent = text;
+
+          labelGroup.appendChild(bg);
+          labelGroup.appendChild(countLabel);
+          labelGroup.style.cursor = 'pointer';
+          labelGroup.addEventListener('click', e => {
+            e.stopPropagation();
+            highlightVirtualEdge(fromId, toId);
+          });
+          labelGroup.addEventListener('mouseenter', () => handleMouseEnter('arc', fromId + '-' + toId));
+          labelGroup.addEventListener('mouseleave', handleMouseLeave);
+
+          layers.baseLabels.appendChild(labelGroup);
+        }
+      });
+
+      // Pass 3: Hitareas (hitareas layer, always on top)
+      mergedEdges.forEach((data, key) => {
+        const { fromId, toId, arc, hiddenEdgeData, count, originalArcs } = data;
+        const arcId = fromId + '-' + toId;
+
+        const hitarea = DomAdapter.createSvgElement('path');
+        hitarea.setAttribute('class', `${C.virtualHitarea} ${C.arcHitarea}`);
+        hitarea.setAttribute('d', arc.path);
+        hitarea.setAttribute('data-arc-id', arcId);
+        hitarea.setAttribute('data-from', fromId);
+        hitarea.setAttribute('data-to', toId);
+        // Store structured usages and originalArcs in runtime Map (not DOM attribute)
+        if (hiddenEdgeData.length > 0) {
+          const allUsages = hiddenEdgeData.flat();
+          virtualArcUsages.set(arcId, allUsages);
+        }
+        if (originalArcs && originalArcs.length > 0) {
+          virtualArcOriginals.set(arcId, originalArcs);
+        }
+        hitarea.addEventListener('click', e => {
+          e.stopPropagation();
+          highlightVirtualEdge(fromId, toId);
+        });
+        hitarea.addEventListener('mouseenter', () => handleVirtualMouseEnter(arcId, fromId, toId));
+        hitarea.addEventListener('mouseleave', () => {
+          handleMouseLeave();
+        });
+        layers.hitareas.appendChild(hitarea);
+      });
+    }
+
+    // Highlight virtual (aggregated) edge — thin wrapper
+    function highlightVirtualEdge(fromId, toId) {
+      const edgeId = fromId + '-' + toId;
+      const isPinned = AppState.togglePinned(appState, 'arc', edgeId);
+      rerenderHighlights();
+      if (!isPinned) {
+        SidebarLogic.hide();
+        return;
+      }
+      const usages = virtualArcUsages.get(edgeId) || [];
+      const originalArcs = virtualArcOriginals.get(edgeId) || [];
+      const mergedUsages = SidebarLogic.mergeSymbolGroups(usages);
+      SidebarLogic.show(edgeId, { from: fromId, to: toId, usages: mergedUsages, originalArcs });
+    }
+
+    // --- Collapse helpers ---
+
+    function updateDescendantVisibility(descId, collapsed) {
+      const node = DomAdapter.getNode(descId);
+      const label = node?.nextElementSibling;
+      const toggle = DomAdapter.getCollapseToggle(descId);
+      if (collapsed) {
+        node?.classList.add(C.collapsed);
+        label?.classList.add(C.collapsed);
+        toggle?.classList.add(C.collapsed);
+      } else {
+        node?.classList.remove(C.collapsed);
+        label?.classList.remove(C.collapsed);
+        toggle?.classList.remove(C.collapsed);
+      }
+      DomAdapter.getTreeLines(descId, 'child').forEach(line => {
+        if (collapsed) {
+          line.classList.add(C.collapsed);
+        } else if (!node?.classList.contains(C.collapsed)) {
+          line.classList.remove(C.collapsed);
+        }
+      });
+    }
+
+    function hasCollapsedAncestor(descId, excludeNodeId) {
+      let checkId = descId;
+      while (true) {
+        const parentId = parentMap.get(checkId);
+        if (!parentId) return false;
+        if (AppState.isCollapsed(appState, parentId) && parentId !== excludeNodeId) {
+          return true;
+        }
+        checkId = parentId;
       }
     }
 
-    // Update sidebar position after layout changed arc positions
-    if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
-  }
-
-  // Helper: Calculate arc path from position objects (no DOM read)
-  function calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight) {
-    const fromX = fromPos.x + fromPos.width;
-    const fromY = fromPos.y + fromPos.height / 2 + yOffset;
-    const toX = toPos.x + toPos.width;
-    const toY = toPos.y + toPos.height / 2 - yOffset;
-    return ArcLogic.calculateArcPath(fromX, fromY, toX, toY, maxRight, ROW_HEIGHT);
-  }
-
-  // Helper: Extract edge data from DOM hitareas to pure objects
-  // Uses DerivedState for visibility instead of per-edge getVisibleAncestor calls
-  function extractEdgeData(hitareas, visibleNodes) {
-    const edges = [];
-    hitareas.forEach(hitarea => {
-      const fromId = hitarea.dataset.from;
-      const toId = hitarea.dataset.to;
-      const fromNode = DomAdapter.getNode(fromId);
-      const toNode = DomAdapter.getNode(toId);
-
-      // A node is hidden if it's not in the visibleNodes set
-      // (computed once via DerivedState.deriveNodeVisibility)
-      const fromIsHidden = !visibleNodes.has(fromId);
-      const toIsHidden = !visibleNodes.has(toId);
-
-      const arcId = hitarea.dataset.arcId;
-      edges.push({
-        hitarea,
-        arcId,
-        fromId,
-        toId,
-        fromNode,
-        toNode,
-        fromHidden: fromIsHidden,
-        toHidden: toIsHidden,
-        sourceLocations: StaticData.getArcUsages(arcId),
-        // Compute direction from hierarchy (no DOM read)
-        direction: DerivedState._determineDirection(fromId, toId, parentMap)
-      });
-    });
-    return edges;
-  }
-
-  // Remove virtual elements and reset original edge display
-  function cleanupVirtualElements() {
-    DomAdapter.querySelectorAll(Selectors.allVirtualElements()).forEach(el => el.remove());
-    DomAdapter.querySelectorAll(Selectors.allBaseEdges()).forEach(edge => {
-      edge.style.display = '';
-    });
-    DomAdapter.querySelectorAll(Selectors.allBaseArrows()).forEach(arrow => {
-      arrow.style.display = '';
-    });
-    virtualArcUsages.clear();
-    virtualArcOriginals.clear();
-  }
-
-  // Hide original elements when from/to hidden, update visible arc paths
-  function updateOriginalEdges(edgeData, currentPositions, maxRight) {
-    edgeData.forEach(edge => {
-      const { hitarea, arcId, fromId, toId, fromHidden, toHidden } = edge;
-
-      if (window.DEBUG_ARCS) {
-        console.log(`Arc ${arcId}: from=${fromId}(${fromHidden ? 'hidden' : 'visible'}), to=${toId}(${toHidden ? 'hidden' : 'visible'})`);
+    function updateParentNodeUI(nodeId, collapsed) {
+      const toggleIcon = DomAdapter.getCollapseToggle(nodeId);
+      if (toggleIcon) {
+        toggleIcon.textContent = collapsed ? '+' : '−';
       }
-
-      if (fromHidden || toHidden) {
-        // Hide original elements
-        hitarea.style.display = 'none';
-        const visibleArc = DomAdapter.getVisibleArc(arcId);
-        if (visibleArc) visibleArc.style.display = 'none';
-        DomAdapter.getArrows(fromId + '-' + toId)
-          .forEach(arr => arr.style.display = 'none');
+      const countLabel = DomAdapter.getCountLabel(nodeId);
+      if (!countLabel) return;
+      const nodeRect = DomAdapter.getNode(nodeId);
+      if (!nodeRect) return;
+      if (!nodeRect.hasAttribute('data-original-width')) {
+        nodeRect.setAttribute('data-original-width', nodeRect.getAttribute('width'));
+      }
+      if (collapsed) {
+        countLabel.textContent = ' (+' + countDescendants(nodeId) + ')';
+        const labelText = countLabel.parentElement;
+        if (labelText) {
+          const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
+          const padding = 20;
+          const neededWidth = textWidth + padding;
+          const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
+          const newWidth = Math.max(originalWidth, neededWidth);
+          nodeRect.setAttribute('width', newWidth);
+          // Reposition toggle icon to right edge of expanded box
+          if (toggleIcon) {
+            const nodeX = parseFloat(nodeRect.getAttribute('x'));
+            toggleIcon.setAttribute('x', nodeX + newWidth - TOGGLE_OFFSET);
+          }
+        }
       } else {
-        // Update visible arc paths using computed positions (no DOM read)
-        const fromPos = currentPositions.get(fromId);
-        const toPos = currentPositions.get(toId);
-        if (fromPos && toPos) {
-          const arc = calculateArcPathFromPositions(fromPos, toPos, 3, maxRight);
-          hitarea.setAttribute('d', arc.path);
-          const visibleArc = DomAdapter.getVisibleArc(arcId);
-          if (visibleArc) visibleArc.setAttribute('d', arc.path);
+        countLabel.textContent = '';
+        const originalWidth = nodeRect.getAttribute('data-original-width');
+        if (originalWidth) {
+          nodeRect.setAttribute('width', originalWidth);
+          // Restore toggle icon to original position
+          if (toggleIcon) {
+            const nodeX = parseFloat(nodeRect.getAttribute('x'));
+            toggleIcon.setAttribute('x', nodeX + parseFloat(originalWidth) - TOGGLE_OFFSET);
+          }
+        }
+      }
+    }
 
-          const strokeWidth = visibleArc ? parseFloat(visibleArc.style.strokeWidth) || 0.5 : 0.5;
-          const scale = strokeWidth / 1.5;
-          // Update ALL arrow positions (even hidden ones) so they have correct position when shown
-          DomAdapter.getArrows(fromId + '-' + toId).forEach(arrow => {
-            arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
+    // Toggle collapse state
+    function toggleCollapse(nodeId) {
+      const collapsed = AppState.toggleCollapsed(appState, nodeId);
+
+      getDescendants(nodeId).forEach(descId => {
+        if (collapsed || !hasCollapsedAncestor(descId, nodeId)) {
+          updateDescendantVisibility(descId, collapsed);
+        }
+      });
+
+      updateParentNodeUI(nodeId, collapsed);
+      relayout();
+    }
+
+    // Toggle collapse/expand all parent nodes
+    function toggleCollapseAll() {
+      const parentNodeIds = StaticData.getAllNodeIds().filter(id => StaticData.hasChildren(id));
+      const allExpanded = parentNodeIds.every(id => !AppState.isCollapsed(appState, id));
+      const collapsed = allExpanded;
+
+      parentNodeIds.forEach(nodeId => {
+        AppState.setCollapsed(appState, nodeId, collapsed);
+        getDescendants(nodeId).forEach(descId => {
+          updateDescendantVisibility(descId, collapsed);
+        });
+        updateParentNodeUI(nodeId, collapsed);
+      });
+
+      const label = DomAdapter.getElementById('collapse-toggle-label');
+      if (label) label.textContent = collapsed ? 'Expand All' : 'Collapse All';
+
+      relayout();
+    }
+
+    // Toggle visibility of crate-to-crate dependency arcs
+    function toggleCrateDepVisibility() {
+      const checkbox = DomAdapter.querySelector('#crate-dep-checkbox');
+      if (!checkbox) return;
+
+      const isChecked = checkbox.classList.toggle(C.checked);
+
+      DomAdapter.querySelectorAll(`.${C.crateDepArc}`).forEach(arc => {
+        if (isChecked) {
+          arc.classList.remove(C.hiddenByFilter);
+        } else {
+          arc.classList.add(C.hiddenByFilter);
+        }
+      });
+
+      // Also hide/show associated hitareas and arrows, track in AppState
+      DomAdapter.querySelectorAll(`.${C.arcHitarea}:not(.${C.virtualHitarea})`).forEach(hitarea => {
+        const arcId = hitarea.dataset.arcId;
+        const visibleArc = DomAdapter.querySelector(`.${C.crateDepArc}[data-arc-id="${arcId}"]`);
+        if (visibleArc) {
+          if (isChecked) {
+            hitarea.classList.remove(C.hiddenByFilter);
+            AppState.showArc(appState, arcId);
+          } else {
+            hitarea.classList.add(C.hiddenByFilter);
+            AppState.hideArc(appState, arcId);
+          }
+          DomAdapter.getArrows(arcId).forEach(arrow => {
+            if (isChecked) {
+              arrow.classList.remove(C.hiddenByFilter);
+            } else {
+              arrow.classList.add(C.hiddenByFilter);
+            }
           });
         }
-      }
-    });
-  }
-
-  // Recalculate and show virtual edges for collapsed nodes
-  function recalculateVirtualEdges() {
-    cleanupVirtualElements();
-
-    const visibleNodes = DerivedState.deriveNodeVisibility(appState.collapsed, StaticData);
-    // Read current DOM widths for collapsed nodes whose boxes were expanded
-    const widthOverrides = new Map();
-    for (const nodeId of appState.collapsed) {
-      const rect = DomAdapter.getNode(nodeId);
-      if (rect) {
-        widthOverrides.set(nodeId, parseFloat(rect.getAttribute('width')));
-      }
-    }
-    const currentPositions = DerivedState.computeCurrentPositions(
-      appState.collapsed, StaticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT, widthOverrides
-    );
-    const maxRight = DerivedState.computeMaxRight(currentPositions);
-
-    const hitareas = DomAdapter.getAllHitareas();
-    const edgeData = extractEdgeData(hitareas, visibleNodes);
-
-    updateOriginalEdges(edgeData, currentPositions, maxRight);
-
-    const virtualEdges = VirtualEdgeLogic.aggregateHiddenEdges(edgeData, getVisibleAncestor);
-    const mergedEdges = VirtualEdgeLogic.prepareVirtualEdgeData(
-      virtualEdges, currentPositions, maxRight, ArcLogic, ROW_HEIGHT
-    );
-
-    const layers = {
-      baseArcs: DomAdapter.getElementById(LayerManager.LAYERS.BASE_ARCS),
-      baseLabels: DomAdapter.getElementById(LayerManager.LAYERS.BASE_LABELS),
-      hitareas: DomAdapter.getElementById(LayerManager.LAYERS.HITAREAS)
-    };
-    renderVirtualElements(mergedEdges, layers);
-  }
-
-  // Create virtual arc elements (arcs, arrows, labels, hitareas)
-  function renderVirtualElements(mergedEdges, layers) {
-    // Pass 1: Arcs + Arrows (bottom layer)
-    mergedEdges.forEach((data, key) => {
-      const { fromId, toId, arc, strokeWidth, direction } = data;
-      const arcId = fromId + '-' + toId;
-
-      // Visible path (styled, no pointer events)
-      const path = DomAdapter.createSvgElement('path');
-      path.setAttribute('class', `${C.virtualArc} ${direction}`);
-      path.setAttribute('d', arc.path);
-      path.setAttribute('data-arc-id', arcId);
-      path.setAttribute('data-from', fromId);
-      path.setAttribute('data-to', toId);
-      path.style.strokeWidth = strokeWidth + 'px';
-      layers.baseArcs.appendChild(path);
-
-      // Arrow (scaled to match stroke width)
-      const scale = strokeWidth / 1.5;
-      const arrow = DomAdapter.createSvgElement('polygon');
-      arrow.setAttribute('class', `${C.virtualArrow} ${direction}`);
-      arrow.setAttribute('data-vedge', arcId);
-      arrow.setAttribute('data-from', fromId);
-      arrow.setAttribute('data-to', toId);
-      arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
-      arrow.addEventListener('click', e => {
-        e.stopPropagation();
-        highlightVirtualEdge(fromId, toId, data.count);
       });
-      layers.baseArcs.appendChild(arrow);
-    });
 
-    // Pass 2: Labels (middle layer, above arcs)
-    mergedEdges.forEach((data, key) => {
-      const { fromId, toId, arc, count } = data;
+      rerenderHighlights();
+    }
 
-      if (count > 1) {
-        const labelGroup = DomAdapter.createSvgElement('g');
-        labelGroup.setAttribute('class', C.arcCountGroup);
-        labelGroup.setAttribute('data-vedge', fromId + '-' + toId);
-        labelGroup.setAttribute('data-from', fromId);
-        labelGroup.setAttribute('data-to', toId);
-        const text = '(' + count + ')';
-        const x = arc.ctrlX + 5;
-        const y = arc.midY + 3;
+    // Update toolbar position to stay at top when scrolling
+    function updateToolbarPosition() {
+      const toolbar = DomAdapter.querySelector(`.${C.viewOptions}`);
+      const svg = DomAdapter.getSvgRoot();
+      if (!toolbar || !svg) return;
 
-        // Background rect (2-3px padding)
-        const padding = 2;
-        const textWidth = text.length * 6; // ~6px per char at 10px font
-        const bg = DomAdapter.createSvgElement('rect');
-        bg.setAttribute('class', C.arcCountBg);
-        bg.setAttribute('x', x - textWidth / 2 - padding);
-        bg.setAttribute('y', y - 8 - padding);
-        bg.setAttribute('width', textWidth + padding * 2);
-        bg.setAttribute('height', 12 + padding * 2);
-        bg.setAttribute('rx', '2');
+      const rect = svg.getBoundingClientRect();
+      const scrollTop = Math.max(0, -rect.top);
+      toolbar.setAttribute('transform', `translate(0, ${scrollTop})`);
+      if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
+    }
 
-        // Text label
-        const countLabel = DomAdapter.createSvgElement('text');
-        countLabel.setAttribute('class', C.arcCount);
-        countLabel.setAttribute('data-vedge', fromId + '-' + toId);
-        countLabel.setAttribute('x', x);
-        countLabel.setAttribute('y', y);
-        countLabel.textContent = text;
+    window.addEventListener('scroll', updateToolbarPosition);
+    window.addEventListener('resize', updateToolbarPosition);
 
-        labelGroup.appendChild(bg);
-        labelGroup.appendChild(countLabel);
-        labelGroup.style.cursor = 'pointer';
-        labelGroup.addEventListener('click', e => {
+    // === Event handlers ===
+    // Iterate via StaticData instead of DOM query
+    StaticData.getAllNodeIds().forEach(nodeId => {
+      const node = DomAdapter.getNode(nodeId);
+      if (!node) return;
+
+      node.addEventListener('click', e => {
+        e.stopPropagation();
+        highlightNode(nodeId);
+      });
+
+      node.addEventListener('mouseenter', () => handleMouseEnter('node', nodeId));
+      node.addEventListener('mouseleave', handleMouseLeave);
+
+      // Double-click to toggle collapse (only for parents)
+      if (StaticData.hasChildren(nodeId)) {
+        node.addEventListener('dblclick', e => {
           e.stopPropagation();
-          highlightVirtualEdge(fromId, toId, count);
+          toggleCollapse(nodeId);
+          updateToolbarPosition();
         });
-        labelGroup.addEventListener('mouseenter', () => handleMouseEnter('edge', fromId + '-' + toId));
-        labelGroup.addEventListener('mouseleave', handleMouseLeave);
-
-        layers.baseLabels.appendChild(labelGroup);
       }
     });
 
-    // Pass 3: Hitareas (hitareas layer, always on top)
-    mergedEdges.forEach((data, key) => {
-      const { fromId, toId, arc, hiddenEdgeData, count, originalArcs } = data;
-      const arcId = fromId + '-' + toId;
+    DomAdapter.querySelectorAll(`.${C.collapseToggle}`).forEach(toggle => {
+      toggle.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleCollapse(toggle.dataset.target);
+        updateToolbarPosition();
+      });
+    });
 
-      const hitarea = DomAdapter.createSvgElement('path');
-      hitarea.setAttribute('class', `${C.virtualHitarea} ${C.arcHitarea}`);
-      hitarea.setAttribute('d', arc.path);
-      hitarea.setAttribute('data-arc-id', arcId);
-      hitarea.setAttribute('data-from', fromId);
-      hitarea.setAttribute('data-to', toId);
-      // Store structured usages and originalArcs in runtime Map (not DOM attribute)
-      if (hiddenEdgeData.length > 0) {
-        const allUsages = hiddenEdgeData.flat();
-        virtualArcUsages.set(arcId, allUsages);
-      }
-      if (originalArcs && originalArcs.length > 0) {
-        virtualArcOriginals.set(arcId, originalArcs);
-      }
+    // Toolbar button event handlers
+    DomAdapter.querySelector('#collapse-toggle-btn')?.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleCollapseAll();
+      updateToolbarPosition();
+    });
+    DomAdapter.querySelector('#collapse-toggle-label')?.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleCollapseAll();
+      updateToolbarPosition();
+    });
+
+    DomAdapter.querySelector('#crate-dep-checkbox')?.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleCrateDepVisibility();
+    });
+
+    // Event handlers on hit-area paths (invisible, 12px wide) — regular arcs only
+    DomAdapter.querySelectorAll(`.${C.arcHitarea}:not(.${C.virtualHitarea})`).forEach(hitarea => {
+      const edgeId = hitarea.dataset.from + '-' + hitarea.dataset.to;
+
       hitarea.addEventListener('click', e => {
         e.stopPropagation();
-        highlightVirtualEdge(fromId, toId, count);
+        highlightEdge(hitarea.dataset.from, hitarea.dataset.to);
       });
-      hitarea.addEventListener('mouseenter', () => handleVirtualMouseEnter(arcId, fromId, toId));
+
+      hitarea.addEventListener('mouseenter', () => handleMouseEnter('arc', edgeId));
+
       hitarea.addEventListener('mouseleave', () => {
         handleMouseLeave();
       });
-      layers.hitareas.appendChild(hitarea);
     });
-  }
 
-  // Highlight virtual (aggregated) edge
-  function highlightVirtualEdge(fromId, toId, count) {
-    const edgeId = fromId + '-' + toId;
-    // Toggle: if same edge is already pinned, deselect
-    const isPinned = AppState.togglePinned(appState, 'edge', edgeId);
-    clearHighlights();
-    if (!isPinned) return; // Was not pinned (toggled off), done
-    // Build sidebar data from runtime Maps
-    const usages = virtualArcUsages.get(edgeId) || [];
-    const originalArcs = virtualArcOriginals.get(edgeId) || [];
-    const mergedUsages = SidebarLogic.mergeSymbolGroups(usages);
-    SidebarLogic.show(edgeId, { from: fromId, to: toId, usages: mergedUsages, originalArcs });
-    // from-Node: dependent (purple border)
-    DomAdapter.getNode(fromId)?.classList.add(C.dependentNode);
-    // to-Node: dep (green border)
-    DomAdapter.getNode(toId)?.classList.add(C.depNode);
-    // Virtual arc: marker class (keeps direction color), dynamic stroke-width
-    let highlightWidth = 0;
-    DomAdapter.querySelectorAll(Selectors.virtualArc(fromId, toId))
-      .forEach(el => {
-        highlightWidth = highlightArcElement(el, edgeId, 'dep');
-      });
-    // Arrows: marker class (keeps direction color), scale to match arc
-    DomAdapter.querySelectorAll(`.${C.virtualArrow}[data-vedge="` + edgeId + `"]`)
-      .forEach(el => {
-        el.classList.add(C.highlightedArrow);
-        const tip = ArcLogic.parseTipFromPoints(el.getAttribute('points'));
-        if (tip) {
-          el.setAttribute('points', ArcLogic.getArrowPoints(tip, HighlightLogic.calculateVirtualArrowScale(highlightWidth)));
+    DomAdapter.getSvgRoot().addEventListener('click', () => {
+      AppState.clearPinned(appState);
+      rerenderHighlights();
+      SidebarLogic.hide();
+    });
+
+    // Close-button and click isolation for sidebar foreignObject
+    const sidebarEl = DomAdapter.getElementById('relation-sidebar');
+    if (sidebarEl) {
+      sidebarEl.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent SVG background click
+        if (e.target.classList.contains('sidebar-close')) {
+          AppState.clearPinned(appState);
+          rerenderHighlights();
+          SidebarLogic.hide();
         }
       });
-    // Arc-count labels
-    DomAdapter.querySelectorAll(`.${C.arcCount}[data-vedge="` + edgeId + `"]`)
-      .forEach(el => el.classList.add(C.highlightedLabel));
-    // Move virtual arc and label group to highlight layers
-    LayerManager.moveToHighlightLayer(DomAdapter.querySelector(`.${C.virtualArc}[data-arc-id="` + edgeId + `"]`), DomAdapter);
-    LayerManager.moveToHighlightLayer(DomAdapter.getLabelGroup(edgeId), DomAdapter);
-    DomAdapter.querySelectorAll(`.${C.virtualArrow}[data-vedge="` + edgeId + `"]`).forEach(el => LayerManager.moveToHighlightLayer(el, DomAdapter));
-    // Dim everything else
-    dimNonHighlighted();
-  }
-
-  // Check if nodeId is an ancestor of targetId
-  function isAncestorOf(nodeId, targetId) {
-    let checkId = targetId;
-    while (true) {
-      const checkNode = DomAdapter.getNode(checkId);
-      const parentId = checkNode?.dataset.parent;
-      if (!parentId) return false;
-      if (parentId === nodeId) return true;
-      checkId = parentId;
     }
-  }
 
-  // --- Collapse helpers ---
-
-  function updateDescendantVisibility(descId, collapsed) {
-    const node = DomAdapter.getNode(descId);
-    const label = node?.nextElementSibling;
-    const toggle = DomAdapter.getCollapseToggle(descId);
-    if (collapsed) {
-      node?.classList.add(C.collapsed);
-      label?.classList.add(C.collapsed);
-      toggle?.classList.add(C.collapsed);
-    } else {
-      node?.classList.remove(C.collapsed);
-      label?.classList.remove(C.collapsed);
-      toggle?.classList.remove(C.collapsed);
-    }
-    DomAdapter.getTreeLines(descId, 'child').forEach(line => {
-      if (collapsed) {
-        line.classList.add(C.collapsed);
-      } else if (!node?.classList.contains(C.collapsed)) {
-        line.classList.remove(C.collapsed);
-      }
-    });
-  }
-
-  function hasCollapsedAncestor(descId, excludeNodeId) {
-    let checkId = descId;
-    while (true) {
-      const checkNode = DomAdapter.getNode(checkId);
-      const parentId = checkNode?.dataset.parent;
-      if (!parentId) return false;
-      if (AppState.isCollapsed(appState, parentId) && parentId !== excludeNodeId) {
-        return true;
-      }
-      checkId = parentId;
-    }
-  }
-
-  function updateParentNodeUI(nodeId, collapsed) {
-    const toggleIcon = DomAdapter.getCollapseToggle(nodeId);
-    if (toggleIcon) {
-      toggleIcon.textContent = collapsed ? '+' : '−';
-    }
-    const countLabel = DomAdapter.getCountLabel(nodeId);
-    if (!countLabel) return;
-    const nodeRect = DomAdapter.getNode(nodeId);
-    if (!nodeRect) return;
-    if (!nodeRect.hasAttribute('data-original-width')) {
-      nodeRect.setAttribute('data-original-width', nodeRect.getAttribute('width'));
-    }
-    if (collapsed) {
-      countLabel.textContent = ' (+' + countDescendants(nodeId) + ')';
-      const labelText = countLabel.parentElement;
-      if (labelText) {
-        const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
-        const padding = 20;
-        const neededWidth = textWidth + padding;
-        const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
-        const newWidth = Math.max(originalWidth, neededWidth);
-        nodeRect.setAttribute('width', newWidth);
-        // Reposition toggle icon to right edge of expanded box
-        if (toggleIcon) {
-          const nodeX = parseFloat(nodeRect.getAttribute('x'));
-          toggleIcon.setAttribute('x', nodeX + newWidth - TOGGLE_OFFSET);
-        }
-      }
-    } else {
-      countLabel.textContent = '';
-      const originalWidth = nodeRect.getAttribute('data-original-width');
-      if (originalWidth) {
-        nodeRect.setAttribute('width', originalWidth);
-        // Restore toggle icon to original position
-        if (toggleIcon) {
-          const nodeX = parseFloat(nodeRect.getAttribute('x'));
-          toggleIcon.setAttribute('x', nodeX + parseFloat(originalWidth) - TOGGLE_OFFSET);
-        }
-      }
-    }
-  }
-
-  // Toggle collapse state
-  function toggleCollapse(nodeId) {
-    // Only clear visual highlights - relayout() will re-apply for pinned nodes
-    clearHighlights();
-
-    const collapsed = AppState.toggleCollapsed(appState, nodeId);
-
-    getDescendants(nodeId).forEach(descId => {
-      if (collapsed || !hasCollapsedAncestor(descId, nodeId)) {
-        updateDescendantVisibility(descId, collapsed);
-      }
-    });
-
-    updateParentNodeUI(nodeId, collapsed);
-    relayout();
-  }
-
-  // Toggle collapse/expand all parent nodes
-  function toggleCollapseAll() {
-    // Only clear visual highlights - relayout() will re-apply for pinned nodes
-    clearHighlights();
-
-    const parentNodeIds = StaticData.getAllNodeIds().filter(id => StaticData.hasChildren(id));
-    const allExpanded = parentNodeIds.every(id => !AppState.isCollapsed(appState, id));
-    const collapsed = allExpanded;
-
-    parentNodeIds.forEach(nodeId => {
-      AppState.setCollapsed(appState, nodeId, collapsed);
-      getDescendants(nodeId).forEach(descId => {
-        updateDescendantVisibility(descId, collapsed);
-      });
-      updateParentNodeUI(nodeId, collapsed);
-    });
-
-    const label = DomAdapter.getElementById('collapse-toggle-label');
-    if (label) label.textContent = collapsed ? 'Expand All' : 'Collapse All';
-
-    relayout();
-  }
-
-  // Toggle visibility of crate-to-crate dependency arcs
-  function toggleCrateDepVisibility() {
-    const checkbox = DomAdapter.querySelector('#crate-dep-checkbox');
-    if (!checkbox) return;
-
-    const isChecked = checkbox.classList.toggle(C.checked);
-
-    DomAdapter.querySelectorAll(`.${C.crateDepArc}`).forEach(arc => {
-      if (isChecked) {
-        arc.classList.remove(C.hiddenByFilter);
-      } else {
-        arc.classList.add(C.hiddenByFilter);
-      }
-    });
-
-    // Also hide/show associated hitareas and arrows
-    DomAdapter.querySelectorAll(`.${C.arcHitarea}`).forEach(hitarea => {
-      const arcId = hitarea.dataset.arcId;
-      const visibleArc = DomAdapter.querySelector(`.${C.crateDepArc}[data-arc-id="${arcId}"]`);
-      if (visibleArc) {
-        if (isChecked) {
-          hitarea.classList.remove(C.hiddenByFilter);
-        } else {
-          hitarea.classList.add(C.hiddenByFilter);
-        }
-        // Also handle arrows
-        DomAdapter.getArrows(arcId).forEach(arrow => {
-          if (isChecked) {
-            arrow.classList.remove(C.hiddenByFilter);
-          } else {
-            arrow.classList.add(C.hiddenByFilter);
-          }
-        });
-      }
-    });
-  }
-
-  // Update toolbar position to stay at top when scrolling
-  function updateToolbarPosition() {
-    const toolbar = DomAdapter.querySelector(`.${C.viewOptions}`);
-    const svg = DomAdapter.getSvgRoot();
-    if (!toolbar || !svg) return;
-
-    const rect = svg.getBoundingClientRect();
-    const scrollTop = Math.max(0, -rect.top);
-    toolbar.setAttribute('transform', `translate(0, ${scrollTop})`);
-    if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
-  }
-
-  window.addEventListener('scroll', updateToolbarPosition);
-  window.addEventListener('resize', updateToolbarPosition);
-
-  // === Event handlers ===
-  // Iterate via StaticData instead of DOM query
-  StaticData.getAllNodeIds().forEach(nodeId => {
-    const node = DomAdapter.getNode(nodeId);
-    if (!node) return;
-
-    node.addEventListener('click', e => {
-      e.stopPropagation();
-      highlightNode(nodeId, true); // pin
-    });
-
-    node.addEventListener('mouseenter', () => handleMouseEnter('node', nodeId));
-    node.addEventListener('mouseleave', handleMouseLeave);
-
-    // Double-click to toggle collapse (only for parents)
-    if (StaticData.hasChildren(nodeId)) {
-      node.addEventListener('dblclick', e => {
-        e.stopPropagation();
-        toggleCollapse(nodeId);
-        updateToolbarPosition();
-      });
-    }
-  });
-
-  DomAdapter.querySelectorAll(`.${C.collapseToggle}`).forEach(toggle => {
-    toggle.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleCollapse(toggle.dataset.target);
-      updateToolbarPosition();
-    });
-  });
-
-  // Toolbar button event handlers
-  DomAdapter.querySelector('#collapse-toggle-btn')?.addEventListener('click', e => {
-    e.stopPropagation();
-    toggleCollapseAll();
-    updateToolbarPosition();
-  });
-  DomAdapter.querySelector('#collapse-toggle-label')?.addEventListener('click', e => {
-    e.stopPropagation();
-    toggleCollapseAll();
-    updateToolbarPosition();
-  });
-
-  DomAdapter.querySelector('#crate-dep-checkbox')?.addEventListener('click', e => {
-    e.stopPropagation();
-    toggleCrateDepVisibility();
-  });
-
-  // Event handlers on hit-area paths (invisible, 12px wide) — regular arcs only
-  DomAdapter.querySelectorAll(`.${C.arcHitarea}:not(.${C.virtualHitarea})`).forEach(hitarea => {
-    const edgeId = hitarea.dataset.from + '-' + hitarea.dataset.to;
-
-    hitarea.addEventListener('click', e => {
-      e.stopPropagation();
-      highlightEdge(hitarea.dataset.from, hitarea.dataset.to, true); // pin
-    });
-
-    hitarea.addEventListener('mouseenter', () => handleMouseEnter('edge', edgeId));
-
-    hitarea.addEventListener('mouseleave', () => {
-      handleMouseLeave();
-    });
-  });
-
-  DomAdapter.getSvgRoot().addEventListener('click', () => {
-    AppState.clearPinned(appState);
-    clearHighlights();
-  });
-
-  // Close-button and click isolation for sidebar foreignObject
-  const sidebarEl = DomAdapter.getElementById('relation-sidebar');
-  if (sidebarEl) {
-    sidebarEl.addEventListener('click', (e) => {
-      e.stopPropagation(); // Prevent SVG background click
-      if (e.target.classList.contains('sidebar-close')) {
-        AppState.clearPinned(appState);
-        clearHighlights();
-      }
-    });
-  }
-
-  // Apply initial arc weights based on source location counts
-  applyInitialArcWeights();
-})();
+    // Apply initial arc weights based on source location counts
+    applyInitialArcWeights();
+  })();
 }

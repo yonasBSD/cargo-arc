@@ -58,7 +58,9 @@ const LayerManager = {
    */
   clearLayer(layerId, domAdapter) {
     const layer = domAdapter.getElementById(layerId);
-    if (layer) layer.innerHTML = '';
+    if (layer) {
+      while (layer.firstChild) layer.removeChild(layer.firstChild);
+    }
   },
 
   /**
@@ -71,21 +73,7 @@ const LayerManager = {
     if (layerId) this.moveToLayer(element, layerId, domAdapter);
   },
 
-  /**
-   * Move element back to its appropriate base layer
-   * @param {Element|null} element - Element to move
-   * @param {Object} domAdapter - DomAdapter instance
-   */
-  moveToBaseLayer(element, domAdapter) {
-    const layerId = this.getLayerForElement(element, false);
-    if (layerId) this.moveToLayer(element, layerId, domAdapter);
-  },
 };
-
-// Export for Browser
-if (typeof window !== "undefined") {
-  window.LayerManager = LayerManager;
-}
 
 // Export for Bun/Node
 if (typeof module !== "undefined" && module.exports) {

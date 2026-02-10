@@ -443,15 +443,20 @@ mod tests {
                 config_keys: vec![],
             },
             JsModuleInfo {
-                name: "DerivedState".into(),
-                file_name: "derived_state.js".into(),
-                deps: vec!["TreeLogic".into()],
-                config_keys: vec![],
-            },
-            JsModuleInfo {
                 name: "HighlightLogic".into(),
                 file_name: "highlight_logic.js".into(),
                 deps: vec!["ArcLogic".into()],
+                config_keys: vec![],
+            },
+            JsModuleInfo {
+                name: "DerivedState".into(),
+                file_name: "derived_state.js".into(),
+                deps: vec![
+                    "TreeLogic".into(),
+                    "ArcLogic".into(),
+                    "AppState".into(),
+                    "HighlightLogic".into(),
+                ],
                 config_keys: vec![],
             },
             JsModuleInfo {
@@ -467,6 +472,12 @@ mod tests {
                 config_keys: vec![],
             },
             JsModuleInfo {
+                name: "HighlightRenderer".into(),
+                file_name: "highlight_renderer.js".into(),
+                deps: vec!["ArcLogic".into(), "LayerManager".into()],
+                config_keys: vec![],
+            },
+            JsModuleInfo {
                 name: "SvgScript".into(),
                 file_name: "svg_script.js".into(),
                 deps: vec![
@@ -478,7 +489,7 @@ mod tests {
                     "LayerManager".into(),
                     "TreeLogic".into(),
                     "DerivedState".into(),
-                    "HighlightLogic".into(),
+                    "HighlightRenderer".into(),
                     "VirtualEdgeLogic".into(),
                     "TextMetrics".into(),
                     "SidebarLogic".into(),
@@ -711,15 +722,20 @@ mod tests {
                 config_keys: vec![],
             },
             JsModuleInfo {
-                name: "DerivedState".into(),
-                file_name: "derived_state.js".into(),
-                deps: vec!["TreeLogic".into()],
-                config_keys: vec![],
-            },
-            JsModuleInfo {
                 name: "HighlightLogic".into(),
                 file_name: "highlight_logic.js".into(),
                 deps: vec!["ArcLogic".into()],
+                config_keys: vec![],
+            },
+            JsModuleInfo {
+                name: "DerivedState".into(),
+                file_name: "derived_state.js".into(),
+                deps: vec![
+                    "TreeLogic".into(),
+                    "ArcLogic".into(),
+                    "AppState".into(),
+                    "HighlightLogic".into(),
+                ],
                 config_keys: vec![],
             },
             JsModuleInfo {
@@ -735,6 +751,12 @@ mod tests {
                 config_keys: vec![],
             },
             JsModuleInfo {
+                name: "HighlightRenderer".into(),
+                file_name: "highlight_renderer.js".into(),
+                deps: vec!["ArcLogic".into(), "LayerManager".into()],
+                config_keys: vec![],
+            },
+            JsModuleInfo {
                 name: "SvgScript".into(),
                 file_name: "svg_script.js".into(),
                 deps: vec![
@@ -746,7 +768,7 @@ mod tests {
                     "LayerManager".into(),
                     "TreeLogic".into(),
                     "DerivedState".into(),
-                    "HighlightLogic".into(),
+                    "HighlightRenderer".into(),
                     "VirtualEdgeLogic".into(),
                     "TextMetrics".into(),
                     "SidebarLogic".into(),
@@ -767,10 +789,11 @@ mod tests {
             include_str!("../js/layer_manager.js"),
             include_str!("../js/static_data.js"),
             include_str!("../js/dom_adapter.js"),
-            include_str!("../js/derived_state.js"),
             include_str!("../js/highlight_logic.js"),
+            include_str!("../js/derived_state.js"),
             include_str!("../js/virtual_edge_logic.js"),
             include_str!("../js/sidebar.js"),
+            include_str!("../js/highlight_renderer.js"),
             include_str!("../js/svg_script.js"),
         ];
         validate_source_deps(&modules, &sources); // no panic — all deps correctly declared

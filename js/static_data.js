@@ -25,15 +25,6 @@ const StaticData = {
   },
 
   /**
-   * Get parent node ID
-   * @param {string} nodeId
-   * @returns {string|null}
-   */
-  getParent(nodeId) {
-    return STATIC_DATA.nodes[nodeId]?.parent ?? null;
-  },
-
-  /**
    * Get original position and dimensions for node (from initial layout)
    * @param {string} nodeId
    * @returns {{ x: number, y: number, width: number, height: number }|null}

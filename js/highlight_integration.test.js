@@ -1,5 +1,6 @@
-// highlight_integration.test.js - Integration tests for highlight/clearHighlights behavior
+// highlight_integration.test.js - Integration tests for highlight reset behavior
 // Ensures proper separation of highlight state (scale) vs layout state (position)
+// Reset flow: HighlightRenderer.apply(null) → resetToBase() per data-iteration
 
 import { test, expect, describe } from "bun:test";
 
@@ -11,10 +12,10 @@ global.HighlightLogic = require('./highlight_logic.js').HighlightLogic;
 const { createMockDomAdapter, createFakeElement } = require('./dom_adapter.js');
 const { AppState } = require('./app_state.js');
 
-describe('clearHighlights - Separation of Highlight State vs Layout State', () => {
+describe('Highlight Reset - Separation of Highlight State vs Layout State', () => {
   /**
-   * Specification: clearHighlights should only restore highlight state (scale),
-   * not layout state (position).
+   * Specification: HighlightRenderer.resetToBase() should only restore highlight state
+   * (scale), not layout state (position).
    *
    * Key insight: Scale is now calculated from StaticData, not stored.
    * Position is always read from DOM (current layout state).
@@ -58,7 +59,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
     expect(finalTip.y).not.toBe(307);  // NOT expanded position
   });
 
-  test('clearHighlights restores scale correctly', () => {
+  test('reset restores scale correctly', () => {
     const arrow = createFakeElement('polygon');
 
     // Initial: scale 1.0
@@ -108,7 +109,7 @@ describe('clearHighlights - Separation of Highlight State vs Layout State', () =
   });
 
   test('uses current arrow position from DOM, not stored position', () => {
-    // Specification: clearHighlights must read current position from DOM
+    // Specification: resetToBase must read current position from DOM
     const arrow = createFakeElement('polygon');
     const baseScale = 1.0;
 
@@ -186,8 +187,8 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
    *
    * This tests the exact flow:
    * 1. Virtual arc exists with original strokeWidth
-   * 2. Hover → highlightArcElement reads strokeWidth, scales by 1.3
-   * 3. Leave → resetArcToOriginal should restore original strokeWidth
+   * 2. Hover → deriveHighlightState computes highlightWidth, HighlightRenderer applies 1.3×
+   * 3. Leave → HighlightRenderer.resetToBase() restores original strokeWidth from usages
    * 4. Hover again → should read ORIGINAL strokeWidth, not highlighted
    */
 
@@ -210,7 +211,7 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
     // Verify initial state
     expect(parseFloat(arc.style.strokeWidth)).toBeCloseTo(originalStrokeWidth, 5);
 
-    // === HIGHLIGHT (simulates highlightArcElement) ===
+    // === HIGHLIGHT (simulates HighlightRenderer._applyArcHighlights) ===
     const currentWidth = parseFloat(arc.style.strokeWidth);
     const highlightWidth = HighlightLogic.calculateHighlightWidth(currentWidth);
     arc.style.strokeWidth = highlightWidth + 'px';
@@ -218,7 +219,7 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
     expect(parseFloat(arc.style.strokeWidth)).toBeCloseTo(highlightWidth, 5);
     expect(highlightWidth).toBeCloseTo(originalStrokeWidth * 1.3, 5);
 
-    // === CLEAR (simulates resetArcToOriginal for virtual arc) ===
+    // === CLEAR (simulates HighlightRenderer._resetVirtualArcStyles) ===
     // Key: reset calculates from usages, not from DOM
     const resetCount = ArcLogic.countLocations(usages);
     const resetStrokeWidth = ArcLogic.calculateStrokeWidth(resetCount);
@@ -324,10 +325,10 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
     /**
      * This simulates the ACTUAL bug scenario:
      * 1. Virtual arc exists with original strokeWidth
-     * 2. Hover → highlightArcElement reads arc.style.strokeWidth (should be original)
-     * 3. Highlight is applied
-     * 4. Leave → resetArcToOriginal should reset arc.style.strokeWidth
-     * 5. Hover again → highlightArcElement reads arc.style.strokeWidth
+     * 2. Hover → deriveHighlightState computes highlightWidth from usages
+     * 3. HighlightRenderer applies highlightWidth to DOM
+     * 4. Leave → HighlightRenderer.resetToBase() recalculates from virtualArcUsages
+     * 5. Hover again → deriveHighlightState computes highlightWidth again
      *
      * Bug occurs if step 4 doesn't reset properly, causing step 5 to read highlighted value.
      */
@@ -341,13 +342,13 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
     const highlightedWidths = [];
 
     for (let cycle = 0; cycle < 5; cycle++) {
-      // === HIGHLIGHT (simulates highlightArcElement reading from DOM) ===
+      // === HIGHLIGHT (simulates HighlightRenderer._applyArcHighlights) ===
       const currentWidth = parseFloat(arc.style.strokeWidth) || 0.5;
       const highlightWidth = HighlightLogic.calculateHighlightWidth(currentWidth);
       arc.style.strokeWidth = highlightWidth + 'px';
       highlightedWidths.push(highlightWidth);
 
-      // === CLEAR (simulates resetArcToOriginal - calculates from usages, NOT from DOM) ===
+      // === CLEAR (simulates _resetVirtualArcStyles - calculates from usages, NOT from DOM) ===
       const resetCount = ArcLogic.countLocations(usages);
       const resetStrokeWidth = ArcLogic.calculateStrokeWidth(resetCount);
       arc.style.strokeWidth = resetStrokeWidth + 'px';
@@ -365,7 +366,7 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
   test('BUG CASE: empty sourceLocations causes wrong reset', () => {
     /**
      * Bug scenario: if hitarea.dataset.sourceLocations is empty/undefined,
-     * resetArcToOriginal calculates wrong strokeWidth.
+     * _resetVirtualArcStyles calculates wrong strokeWidth.
      */
     const arc = createFakeElement('path');
     arc.classList.add('virtual-arc');
@@ -396,7 +397,8 @@ describe('AppState without originalValues', () => {
   test('AppState.create() returns state without originalValues', () => {
     const appState = AppState.create();
     expect(appState.collapsed).toBeDefined();
-    expect(appState.selection).toBeDefined();
+    expect(appState.clickSelection).toBeDefined();
+    expect(appState.hoverSelection).toBeDefined();
     expect(appState.originalValues).toBeUndefined();
   });
 

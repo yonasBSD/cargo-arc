@@ -1,5 +1,5 @@
 // @module DerivedState
-// @deps TreeLogic
+// @deps TreeLogic, ArcLogic, AppState, HighlightLogic
 // @config
 // derived_state.js - Pure functions to derive display state from core state
 // Computes highlights and visibility based on selection and collapse state
@@ -7,55 +7,6 @@
 // TreeLogic is loaded before this file (see render.rs load order)
 
 const DerivedState = {
-  /**
-   * Derive highlight roles for nodes and which arcs to highlight.
-   * @param {{ mode: string, type: string|null, id: string|null }} selection
-   * @param {Object} staticData - StaticData accessor
-   * @returns {{ nodeRoles: Map<string, string>, highlightedArcs: Set<string> }}
-   */
-  deriveHighlights(selection, staticData) {
-    const nodeRoles = new Map();
-    const highlightedArcs = new Set();
-
-    if (selection.mode === 'none') {
-      return { nodeRoles, highlightedArcs };
-    }
-
-    if (selection.type === 'node') {
-      const selectedNodeId = selection.id;
-      nodeRoles.set(selectedNodeId, 'current');
-
-      // Find all arcs connected to this node
-      for (const arcId of staticData.getAllArcIds()) {
-        const arc = staticData.getArc(arcId);
-        if (!arc) continue;
-
-        if (arc.from === selectedNodeId) {
-          // Outgoing arc: target is dependency
-          highlightedArcs.add(arcId);
-          if (!nodeRoles.has(arc.to)) {
-            nodeRoles.set(arc.to, 'dependency');
-          }
-        } else if (arc.to === selectedNodeId) {
-          // Incoming arc: source is dependent
-          highlightedArcs.add(arcId);
-          if (!nodeRoles.has(arc.from)) {
-            nodeRoles.set(arc.from, 'dependent');
-          }
-        }
-      }
-    } else if (selection.type === 'arc') {
-      const arc = staticData.getArc(selection.id);
-      if (arc) {
-        highlightedArcs.add(selection.id);
-        nodeRoles.set(arc.from, 'dependent');
-        nodeRoles.set(arc.to, 'dependency');
-      }
-    }
-
-    return { nodeRoles, highlightedArcs };
-  },
-
   /**
    * Derive which nodes are visible based on collapsed state.
    * A node is visible if getVisibleAncestor(nodeId) === nodeId
@@ -187,6 +138,198 @@ const DerivedState = {
   },
 
   /**
+   * @typedef {Object} HighlightState
+   * @property {Map<string, {role: string, cssClass: string}>} nodeHighlights
+   *   Highlighted nodes with their role and CSS class name.
+   * @property {Map<string, {highlightWidth: number, arrowScale: number, relationType: string, isVirtual: boolean}>} arcHighlights
+   *   Highlighted arcs. Keys: "from-to" for regular arcs, "v:from-to" for virtual arcs.
+   * @property {Map<string, {shadowWidth: number, visibleLength: number, dashOffset: number, glowClass: string}>} shadowData
+   *   Shadow glow data per arc. Keys: same convention as arcHighlights.
+   * @property {Set<string>} promotedHitareas
+   *   Arc IDs (without "v:" prefix) whose hitareas should be promoted to highlight layer.
+   */
+
+  /**
+   * Derive complete highlight state from application state (pure, no DOM access).
+   * @param {Object} appState - AppState object
+   * @param {Object} staticData - StaticData accessor
+   * @param {Map<string, Array>} virtualArcUsages - Runtime virtual arc usage map
+   * @param {Set<string>} hiddenByFilter - Arc IDs hidden by user filters
+   * @param {Map<string, {x: number, y: number, width: number, height: number}>} positions - Current node positions
+   * @param {number} rowHeight - Row height for arc path calculation
+   * @returns {HighlightState|null} null when no active selection
+   */
+  deriveHighlightState(appState, staticData, virtualArcUsages, hiddenByFilter, positions, rowHeight) {
+    const selection = AppState.getActiveSelection(appState);
+    if (selection.mode === 'none') return null;
+
+    const result = {
+      nodeHighlights: new Map(), arcHighlights: new Map(),
+      shadowData: new Map(), promotedHitareas: new Set()
+    };
+    const ctx = { maxRight: this.computeMaxRight(positions), rowHeight, yOffset: 3 };
+
+    if (selection.type === 'node') {
+      this._deriveForNodeSelection(selection, appState, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result);
+    } else if (selection.type === 'arc') {
+      this._deriveForArcSelection(selection, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result);
+    }
+
+    return result;
+  },
+
+  /** @private Node-selection: highlight set + all connected arcs (regular + virtual). */
+  _deriveForNodeSelection(selection, appState, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result) {
+    const highlightSet = this.deriveHighlightSet(selection.id, appState.collapsed, staticData);
+
+    const primaryNode = staticData.getNode(selection.id);
+    if (primaryNode) {
+      const cssClass = primaryNode.type === 'crate' ? 'selectedCrate' : 'selectedModule';
+      result.nodeHighlights.set(selection.id, { role: 'current', cssClass });
+    }
+
+    const descs = [
+      ...this._collectRegularArcDescs(staticData, hiddenByFilter, highlightSet),
+      ...this._collectVirtualArcDescs(virtualArcUsages, highlightSet)
+    ];
+    this._processArcDescriptors(descs, positions, ctx, result);
+  },
+
+  /** @private Arc-selection: specific arc + its virtual variant. */
+  _deriveForArcSelection(selection, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result) {
+    const arcId = selection.id;
+    const [fromId, toId] = arcId.split('-');
+
+    result.nodeHighlights.set(fromId, { role: 'dependent', cssClass: 'dependentNode' });
+    result.nodeHighlights.set(toId, { role: 'dependency', cssClass: 'depNode' });
+
+    const descs = [];
+    if (staticData.getArc(arcId) && !hiddenByFilter.has(arcId)) {
+      descs.push({
+        key: arcId, fromId, toId, fromInSet: true, toInSet: true,
+        originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false
+      });
+    }
+    if (virtualArcUsages.has(arcId)) {
+      const usages = virtualArcUsages.get(arcId);
+      const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
+      descs.push({
+        key: 'v:' + arcId, fromId, toId, fromInSet: true, toInSet: true,
+        originalWidth: ArcLogic.calculateStrokeWidth(count), isVirtual: true
+      });
+    }
+    this._processArcDescriptors(descs, positions, ctx, result);
+  },
+
+  /** @private Build descriptors for regular arcs connected to highlight set. */
+  _collectRegularArcDescs(staticData, hiddenByFilter, highlightSet) {
+    const descs = [];
+    for (const arcId of staticData.getAllArcIds()) {
+      if (hiddenByFilter.has(arcId)) continue;
+      const arc = staticData.getArc(arcId);
+      if (!arc) continue;
+      const fromInSet = highlightSet.has(arc.from);
+      const toInSet = highlightSet.has(arc.to);
+      if (!fromInSet && !toInSet) continue;
+      descs.push({
+        key: arcId, fromId: arc.from, toId: arc.to, fromInSet, toInSet,
+        originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false
+      });
+    }
+    return descs;
+  },
+
+  /** @private Build descriptors for virtual arcs connected to highlight set. */
+  _collectVirtualArcDescs(virtualArcUsages, highlightSet) {
+    const descs = [];
+    for (const [vArcId, usages] of virtualArcUsages) {
+      const [fromId, toId] = vArcId.split('-');
+      const fromInSet = highlightSet.has(fromId);
+      const toInSet = highlightSet.has(toId);
+      if (!fromInSet && !toInSet) continue;
+      const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
+      descs.push({
+        key: 'v:' + vArcId, fromId, toId, fromInSet, toInSet,
+        originalWidth: ArcLogic.calculateStrokeWidth(count), isVirtual: true
+      });
+    }
+    return descs;
+  },
+
+  /** @private Process arc descriptors: compute highlights, shadows, endpoint nodes. */
+  _processArcDescriptors(descriptors, positions, ctx, result) {
+    for (const desc of descriptors) {
+      const fromPos = positions.get(desc.fromId);
+      const toPos = positions.get(desc.toId);
+      // Virtual arcs: no position guard needed — highlight width/arrowScale are
+      // position-independent, and _computeShadowEntry safely returns null when
+      // positions are missing.
+      if (!desc.isVirtual && (!fromPos || !toPos)) continue;
+
+      const relationType = desc.fromInSet && !desc.toInSet ? 'dep'
+        : !desc.fromInSet && desc.toInSet ? 'reverse' : 'dep';
+
+      const { arcHighlight, shadow } = this._computeArcHighlightEntry(
+        desc.originalWidth, desc.isVirtual, relationType, fromPos, toPos, ctx
+      );
+
+      result.arcHighlights.set(desc.key, arcHighlight);
+      if (shadow) result.shadowData.set(desc.key, shadow);
+      if (!desc.isVirtual) result.promotedHitareas.add(desc.key);
+      this._markEndpointNodes(desc.fromId, desc.toId, desc.fromInSet, desc.toInSet, result.nodeHighlights);
+    }
+  },
+
+  /** @private Compute highlight entry + shadow for a single arc. */
+  _computeArcHighlightEntry(originalWidth, isVirtual, relationType, fromPos, toPos, ctx) {
+    const highlightWidth = HighlightLogic.calculateHighlightWidth(originalWidth);
+    const arrowScale = isVirtual
+      ? HighlightLogic.calculateVirtualArrowScale(highlightWidth)
+      : ArcLogic.scaleFromStrokeWidth(highlightWidth);
+    return {
+      arcHighlight: { highlightWidth, arrowScale, relationType, isVirtual },
+      shadow: this._computeShadowEntry(originalWidth, relationType, fromPos, toPos, ctx)
+    };
+  },
+
+  /** @private Compute shadow glow data for an arc path. */
+  _computeShadowEntry(originalWidth, relationType, fromPos, toPos, ctx) {
+    if (!fromPos || !toPos) return null;
+    const pathData = this._computeArcPath(fromPos, toPos, ctx.yOffset, ctx.maxRight, ctx.rowHeight);
+    const pathLength = ArcLogic.estimatePathLength(pathData.path);
+    const sd = HighlightLogic.calculateShadowData(originalWidth, pathLength);
+    return {
+      shadowWidth: sd.shadowWidth, visibleLength: sd.visibleLength,
+      dashOffset: sd.dashOffset,
+      glowClass: relationType === 'dep' ? 'glowIncoming' : 'glowOutgoing'
+    };
+  },
+
+  /** @private Set CSS classes for arc endpoint nodes not in the highlight set. */
+  _markEndpointNodes(fromId, toId, fromInSet, toInSet, nodeHighlights) {
+    if (!fromInSet && !nodeHighlights.has(fromId)) {
+      nodeHighlights.set(fromId, { role: 'dependent', cssClass: 'dependentNode' });
+    }
+    if (!toInSet && !nodeHighlights.has(toId)) {
+      nodeHighlights.set(toId, { role: 'dependency', cssClass: 'depNode' });
+    }
+  },
+
+  /**
+   * Compute arc path between two node positions.
+   * @private
+   * @param {{x: number, y: number, width: number, height: number}} fromPos
+   * @param {{x: number, y: number, width: number, height: number}} toPos
+   * @param {number} yOffset - Y offset for arc endpoints
+   * @param {number} maxRight - Rightmost X coordinate
+   * @param {number} rowHeight - Row height for arc offset calculation
+   * @returns {{path: string, toX: number, toY: number, ctrlX: number, midY: number}}
+   */
+  _computeArcPath(fromPos, toPos, yOffset, maxRight, rowHeight) {
+    return ArcLogic.calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight, rowHeight);
+  },
+
+  /**
    * Compute the rightmost X coordinate from positions.
    * @param {Map<string, {x: number, width: number}>} positions
    * @returns {number}
@@ -203,9 +346,4 @@ const DerivedState = {
 // CommonJS export for tests (Node/Bun)
 if (typeof module !== 'undefined') {
   module.exports = { DerivedState };
-}
-
-// Browser export
-if (typeof window !== 'undefined') {
-  window.DerivedState = DerivedState;
 }

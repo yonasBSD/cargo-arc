@@ -34,26 +34,4 @@ describe("TextMetrics", () => {
     });
   });
 
-  describe("estimateMultilineWidth", () => {
-    test("returns 0 for empty string", () => {
-      expect(TextMetrics.estimateMultilineWidth("")).toBe(0);
-    });
-
-    test("returns width of single line", () => {
-      expect(TextMetrics.estimateMultilineWidth("abc")).toBe(3 * 6.6);
-    });
-
-    test("returns max width of multiple lines", () => {
-      // "short|longerline" -> max of 5 and 10 chars
-      const text = "short|longerline";
-      expect(TextMetrics.estimateMultilineWidth(text)).toBe(10 * 6.6);
-    });
-
-    test("works with typical tooltip format", () => {
-      // Multi-line tooltip with symbol-aligned format
-      const text = "Symbol  <- file.rs:10|        <- other.rs:20";
-      // Line 1: 21 chars, Line 2: 22 chars (8 spaces + 14)
-      expect(TextMetrics.estimateMultilineWidth(text)).toBeCloseTo(22 * 6.6, 1);
-    });
-  });
 });

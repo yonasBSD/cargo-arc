@@ -80,11 +80,10 @@ const SidebarLogic = {
     } else {
       const sorted = [...groups].sort((a, b) => b.locations.length - a.locations.length);
       for (const group of sorted) {
-        const collapsed = false;
         html += `<div class="sidebar-usage-group">`;
         if (group.symbol) {
-          html += `<div class="sidebar-symbol"${collapsed ? ' data-collapsed="true"' : ''}>`;
-          html += `<span class="sidebar-toggle">${collapsed ? '&#x25B8;' : '&#x25BE;'}</span>`;
+          html += `<div class="sidebar-symbol">`;
+          html += `<span class="sidebar-toggle">&#x25BE;</span>`;
           if (group.modulePath) {
             html += `<span class="sidebar-ns">${group.modulePath}::</span>`;
           }
@@ -92,7 +91,7 @@ const SidebarLogic = {
           html += `<span class="sidebar-ref-count">${group.locations.length}</span>`;
           html += `</div>`;
         }
-        html += `<div class="sidebar-locations"${collapsed ? ' style="display:none"' : ''}>`;
+        html += `<div class="sidebar-locations">`;
         for (const loc of group.locations) {
           html += `<div class="sidebar-location">${loc.file}<span class="sidebar-line-badge">:${loc.line}</span></div>`;
         }

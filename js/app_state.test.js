@@ -11,7 +11,9 @@ describe("AppState", () => {
 
     test("creates state with default selection", () => {
       const state = AppState.create();
-      expect(state.selection).toEqual({ mode: 'none', type: null, id: null });
+      expect(state.clickSelection).toEqual({ type: null, id: null });
+      expect(state.hoverSelection).toEqual({ type: null, id: null });
+      expect(AppState.getSelection(state)).toEqual({ mode: 'none', type: null, id: null });
     });
   });
 
@@ -138,6 +140,32 @@ describe("AppState", () => {
       expect(AppState.isSelected(state, 'node', 'node-2')).toBe(true);
       expect(AppState.isSelected(state, 'node', 'node-1')).toBe(false);
     });
+
+    test("click selection takes priority over hover", () => {
+      const state = AppState.create();
+      AppState.setHover(state, 'node', 'hover-node');
+      AppState.setSelection(state, 'node', 'click-node');
+      const sel = AppState.getSelection(state);
+      expect(sel.mode).toBe('click');
+      expect(sel.id).toBe('click-node');
+    });
+
+    test("clearHover removes hover without affecting click", () => {
+      const state = AppState.create();
+      AppState.setSelection(state, 'node', 'pinned');
+      AppState.setHover(state, 'arc', '1-2');
+      AppState.clearHover(state);
+      const sel = AppState.getSelection(state);
+      expect(sel.mode).toBe('click');
+      expect(sel.id).toBe('pinned');
+    });
+
+    test("clearHover with no click returns none", () => {
+      const state = AppState.create();
+      AppState.setHover(state, 'node', 'tmp');
+      AppState.clearHover(state);
+      expect(AppState.getSelection(state).mode).toBe('none');
+    });
   });
 
   describe("legacy API compatibility", () => {
@@ -148,8 +176,8 @@ describe("AppState", () => {
 
     test("getPinned returns object when selected", () => {
       const state = AppState.create();
-      AppState.setSelection(state, 'edge', '1-2');
-      expect(AppState.getPinned(state)).toEqual({ type: 'edge', id: '1-2' });
+      AppState.setSelection(state, 'arc', '1-2');
+      expect(AppState.getPinned(state)).toEqual({ type: 'arc', id: '1-2' });
     });
 
     test("getPinned returns null for hover mode", () => {
@@ -171,6 +199,17 @@ describe("AppState", () => {
       AppState.setSelection(state, 'node', 'node-1');
       AppState.clearPinned(state);
       expect(AppState.getPinned(state)).toBeNull();
+    });
+  });
+
+  describe("arc filter operations", () => {
+    test("hideArc/showArc/isArcHidden", () => {
+      const state = AppState.create();
+      expect(AppState.isArcHidden(state, '1-2')).toBe(false);
+      AppState.hideArc(state, '1-2');
+      expect(AppState.isArcHidden(state, '1-2')).toBe(true);
+      AppState.showArc(state, '1-2');
+      expect(AppState.isArcHidden(state, '1-2')).toBe(false);
     });
   });
 });

@@ -27,25 +27,9 @@ const TextMetrics = {
     return text.length * charWidth;
   },
 
-  /**
-   * Estimate width for multi-line text (returns max line width).
-   * @param {string} text - Text with | as line separator
-   * @param {number} fontSize - Font size in pixels (default: 11)
-   * @returns {number} - Estimated width of widest line
-   */
-  estimateMultilineWidth(text, fontSize = 11) {
-    if (!text) return 0;
-    const lines = text.split('|');
-    return Math.max(...lines.map(line => this.estimateWidth(line, fontSize)));
-  }
 };
 
 // CommonJS export for tests (Node/Bun)
 if (typeof module !== 'undefined') {
   module.exports = { TextMetrics };
-}
-
-// Browser export
-if (typeof window !== 'undefined') {
-  window.TextMetrics = TextMetrics;
 }

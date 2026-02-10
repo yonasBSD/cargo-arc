@@ -26,8 +26,8 @@ describe("Selectors", () => {
   });
 
   describe("CSS Selectors", () => {
-    test("visibleArc selects dep-arc or cycle-arc by arc-id", () => {
-      expect(Selectors.visibleArc("a-b")).toBe(
+    test("baseArc selects dep-arc or cycle-arc by arc-id", () => {
+      expect(Selectors.baseArc("a-b")).toBe(
         '.dep-arc[data-arc-id="a-b"], .cycle-arc[data-arc-id="a-b"]'
       );
     });
@@ -37,7 +37,7 @@ describe("Selectors", () => {
     });
 
     test("arrows selects by data-edge attribute", () => {
-      expect(Selectors.arrows("from-to")).toBe('[data-edge="from-to"]');
+      expect(Selectors.arrows("from-to")).toBe('polygon[data-edge="from-to"]');
     });
 
     test("virtualArrows selects data-vedge excluding arc-count", () => {
@@ -49,12 +49,6 @@ describe("Selectors", () => {
     test("virtualArc selects by from and to attributes", () => {
       expect(Selectors.virtualArc("nodeA", "nodeB")).toBe(
         '.virtual-arc[data-from="nodeA"][data-to="nodeB"]'
-      );
-    });
-
-    test("connectedHitareas selects hitareas connected to a node", () => {
-      expect(Selectors.connectedHitareas("myNode")).toBe(
-        '.arc-hitarea[data-from="myNode"], .arc-hitarea[data-to="myNode"]'
       );
     });
 
@@ -111,24 +105,10 @@ describe("Selectors", () => {
     });
   });
 
-  describe("Layer Selectors", () => {
-    test("highlightedArcs returns selector for highlight-arcs-layer children", () => {
-      expect(Selectors.highlightedArcs()).toBe("#highlight-arcs-layer > *");
-    });
-
-    test("highlightedLabels returns selector for highlight-labels-layer children", () => {
-      expect(Selectors.highlightedLabels()).toBe("#highlight-labels-layer > *");
-    });
-
-    test("highlightedHitareas returns selector for highlight-hitareas-layer children", () => {
-      expect(Selectors.highlightedHitareas()).toBe("#highlight-hitareas-layer > *");
-    });
-  });
-
   describe("Edge cases", () => {
     test("handles empty string IDs", () => {
       expect(Selectors.nodeId("")).toBe("node-");
-      expect(Selectors.visibleArc("")).toBe(
+      expect(Selectors.baseArc("")).toBe(
         '.dep-arc[data-arc-id=""], .cycle-arc[data-arc-id=""]'
       );
     });
