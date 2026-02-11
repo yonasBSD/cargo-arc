@@ -888,6 +888,7 @@ mod tests {
                 name: "cargo-arc".to_string(),
                 path: crate_root.to_path_buf(),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             };
             let workspace_crates: HashSet<String> =
                 ["cargo-arc"].iter().map(|s| s.to_string()).collect();
@@ -944,6 +945,7 @@ mod tests {
                 name: "cargo-arc".to_string(),
                 path: crate_root.to_path_buf(),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             };
             let workspace_crates: HashSet<String> =
                 ["cargo-arc"].iter().map(|s| s.to_string()).collect();
@@ -1005,6 +1007,7 @@ mod tests {
                 name: "binonly".to_string(),
                 path: tmp.path().to_path_buf(),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             };
             let tree = analyze_modules_syn(
                 &crate_info,
@@ -1047,6 +1050,7 @@ fn main() {
                 name: "app".to_string(),
                 path: tmp.path().to_path_buf(),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             };
             let tree = analyze_modules_syn(&crate_info, &ws, &mp, &HashMap::new(), false)
                 .expect("should analyze");
@@ -1086,6 +1090,7 @@ fn main() {
                 name: "app".to_string(),
                 path: tmp.path().to_path_buf(),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             };
             let tree = analyze_modules_syn(&crate_info, &ws, &mp, &HashMap::new(), false)
                 .expect("should analyze");
@@ -1123,6 +1128,7 @@ fn main() {
                 name: "mixed".to_string(),
                 path: tmp.path().to_path_buf(),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             };
             let tree = analyze_modules_syn(
                 &crate_info,

@@ -81,6 +81,11 @@ impl<'a> DepInfo<'a> {
     pub(super) fn is_included(&self) -> bool {
         matches!(self.kind, DepKind::Normal) && matches!(self.scope, DepScope::Workspace)
     }
+
+    /// Check if this is a dev-dependency from the workspace
+    pub(super) fn is_dev_workspace(&self) -> bool {
+        matches!(self.kind, DepKind::Dev) && matches!(self.scope, DepScope::Workspace)
+    }
 }
 
 /// Parses a feature string that may have a crate prefix.
@@ -306,5 +311,46 @@ mod tests {
             scope: DepScope::External,
         };
         assert!(!info.is_included(), "Dev + External should be excluded");
+    }
+
+    // --- is_dev_workspace() tests ---
+
+    #[test]
+    fn test_dep_info_dev_workspace_is_dev_workspace() {
+        let info = DepInfo {
+            name: "foo",
+            kind: DepKind::Dev,
+            scope: DepScope::Workspace,
+        };
+        assert!(
+            info.is_dev_workspace(),
+            "Dev + Workspace should be dev_workspace"
+        );
+    }
+
+    #[test]
+    fn test_dep_info_normal_workspace_is_not_dev_workspace() {
+        let info = DepInfo {
+            name: "foo",
+            kind: DepKind::Normal,
+            scope: DepScope::Workspace,
+        };
+        assert!(
+            !info.is_dev_workspace(),
+            "Normal + Workspace should not be dev_workspace"
+        );
+    }
+
+    #[test]
+    fn test_dep_info_dev_external_is_not_dev_workspace() {
+        let info = DepInfo {
+            name: "foo",
+            kind: DepKind::Dev,
+            scope: DepScope::External,
+        };
+        assert!(
+            !info.is_dev_workspace(),
+            "Dev + External should not be dev_workspace"
+        );
     }
 }

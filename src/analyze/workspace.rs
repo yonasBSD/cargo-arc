@@ -69,12 +69,16 @@ fn build_workspace_context(metadata: &cargo_metadata::Metadata) -> WorkspaceCont
     }
 }
 
-/// Builds resolved dependencies map from cargo metadata resolve section.
+type DepsMap<'a> = std::collections::HashMap<&'a str, Vec<String>>;
+
+/// Builds resolved dependencies maps from cargo metadata resolve section.
+/// Returns (production deps, dev deps) as separate maps.
 fn build_resolved_deps<'a>(
     resolve: &'a cargo_metadata::Resolve,
     ctx: &WorkspaceContext<'a>,
-) -> std::collections::HashMap<&'a str, Vec<String>> {
-    let mut resolved_deps = std::collections::HashMap::new();
+) -> (DepsMap<'a>, DepsMap<'a>) {
+    let mut prod_deps = std::collections::HashMap::new();
+    let mut dev_deps = std::collections::HashMap::new();
 
     debug!(workspace_members = ?ctx.workspace_member_names, "building resolved_deps");
 
@@ -87,22 +91,26 @@ fn build_resolved_deps<'a>(
         let pkg_name = ctx.pkg_id_to_name.get(node_id).copied().unwrap_or("?");
         debug!(pkg = pkg_name, "processing deps");
 
-        let deps: Vec<String> = node
-            .deps
-            .iter()
-            .filter_map(|dep| {
-                let info = DepInfo::from_node_dep(dep, &ctx.workspace_member_names);
-                debug!(name = info.name, kind = ?info.kind, scope = ?info.scope);
-                info.is_included().then(|| info.name.to_string())
-            })
-            .collect();
+        let mut prod: Vec<String> = Vec::new();
+        let mut dev: Vec<String> = Vec::new();
+
+        for dep in &node.deps {
+            let info = DepInfo::from_node_dep(dep, &ctx.workspace_member_names);
+            debug!(name = info.name, kind = ?info.kind, scope = ?info.scope);
+            if info.is_included() {
+                prod.push(info.name.to_string());
+            } else if info.is_dev_workspace() {
+                dev.push(info.name.to_string());
+            }
+        }
 
         if let Some(pkg_name) = ctx.pkg_id_to_name.get(node_id) {
-            resolved_deps.insert(*pkg_name, deps);
+            prod_deps.insert(*pkg_name, prod);
+            dev_deps.insert(*pkg_name, dev);
         }
     }
 
-    resolved_deps
+    (prod_deps, dev_deps)
 }
 
 /// Determines if a crate should be included based on feature config and reachability.
@@ -130,24 +138,28 @@ fn should_include_crate(
 /// Builds a CrateInfo from a package and its resolved dependencies.
 fn build_crate_info(
     pkg: &cargo_metadata::Package,
-    resolved_deps: &std::collections::HashMap<&str, Vec<String>>,
+    prod_deps: &std::collections::HashMap<&str, Vec<String>>,
+    dev_deps: &std::collections::HashMap<&str, Vec<String>>,
 ) -> CrateInfo {
-    let dependencies = resolved_deps
+    let dependencies = prod_deps
         .get(pkg.name.as_str())
         .cloned()
         .unwrap_or_default();
+    let dev_dependencies = dev_deps.get(pkg.name.as_str()).cloned().unwrap_or_default();
 
     CrateInfo {
         name: pkg.name.to_string(),
         path: pkg.manifest_path.parent().unwrap().into(),
         dependencies,
+        dev_dependencies,
     }
 }
 
 /// Filters and builds CrateInfo list from workspace packages.
 fn build_filtered_crates(
     metadata: &cargo_metadata::Metadata,
-    resolved_deps: &std::collections::HashMap<&str, Vec<String>>,
+    prod_deps: &std::collections::HashMap<&str, Vec<String>>,
+    dev_deps: &std::collections::HashMap<&str, Vec<String>>,
     feature_config: &FeatureConfig,
     workspace_member_names: &HashSet<&str>,
 ) -> Vec<CrateInfo> {
@@ -160,7 +172,7 @@ fn build_filtered_crates(
         );
     }
 
-    let reachable = collect_reachable_crates(seeds, resolved_deps, workspace_member_names);
+    let reachable = collect_reachable_crates(seeds, prod_deps, workspace_member_names);
 
     debug!(
         features_empty = feature_config.features.is_empty(),
@@ -172,7 +184,7 @@ fn build_filtered_crates(
         .workspace_packages()
         .into_iter()
         .filter(|pkg| should_include_crate(pkg, &reachable, feature_config))
-        .map(|pkg| build_crate_info(pkg, resolved_deps))
+        .map(|pkg| build_crate_info(pkg, prod_deps, dev_deps))
         .collect();
 
     debug!(crate_count = crates.len(), "final result");
@@ -198,10 +210,11 @@ pub fn analyze_workspace(
         .context("No resolve section in cargo metadata")?;
 
     let ctx = build_workspace_context(&metadata);
-    let resolved_deps = build_resolved_deps(resolve, &ctx);
+    let (prod_deps, dev_deps) = build_resolved_deps(resolve, &ctx);
     let crates = build_filtered_crates(
         &metadata,
-        &resolved_deps,
+        &prod_deps,
+        &dev_deps,
         feature_config,
         &ctx.workspace_member_names,
     );

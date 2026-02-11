@@ -63,10 +63,12 @@ fn log_condensed_cycles(
                 continue;
             }
             match &graph[edge_idx] {
-                Edge::CrateDep => {
+                Edge::CrateDep { .. } => {
                     tracing::warn!("  CrateDep: {} -> {}", node_label(src), node_label(dst));
                 }
-                Edge::ModuleDep(locs) => {
+                Edge::ModuleDep {
+                    locations: locs, ..
+                } => {
                     let loc_strs: Vec<_> = locs
                         .iter()
                         .map(|l| {
@@ -186,10 +188,16 @@ pub fn topo_sort(graph: &ArcGraph, cycles: &[Cycle]) -> Vec<NodeIndex> {
         rep_to_condensed.insert(rep, cond_idx);
     }
 
-    // Add edges (only CrateDep and ModuleDep, mapped to representatives)
+    // Add edges (only Production CrateDep and ModuleDep, mapped to representatives)
     for edge_idx in graph.edge_indices() {
-        match graph[edge_idx] {
-            Edge::CrateDep | Edge::ModuleDep(_) => {
+        match &graph[edge_idx] {
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            }
+            | Edge::ModuleDep {
+                context: crate::model::EdgeContext::Production,
+                ..
+            } => {
                 let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
                 let src_rep = node_to_rep[&src];
                 let dst_rep = node_to_rep[&dst];
@@ -203,7 +211,7 @@ pub fn topo_sort(graph: &ArcGraph, cycles: &[Cycle]) -> Vec<NodeIndex> {
                     }
                 }
             }
-            Edge::Contains => {} // Ignore hierarchy edges
+            _ => {} // Ignore Contains and Test edges
         }
     }
 
@@ -402,7 +410,7 @@ fn collect_children_recursive(
         let child_subtree = &subtrees[&child];
         for &node in child_subtree {
             for edge in graph.edges(node) {
-                if matches!(edge.weight(), Edge::ModuleDep(_)) {
+                if matches!(edge.weight(), Edge::ModuleDep { .. }) {
                     let target = edge.target();
                     // Find which sibling's subtree contains the target
                     for (&sibling, sibling_subtree) in &subtrees {
@@ -514,7 +522,13 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
         // Add edges from both CrateDep and ModuleDep (aggregated to crate level)
         for edge_idx in graph.edge_indices() {
             match &graph[edge_idx] {
-                Edge::CrateDep | Edge::ModuleDep(_) => {
+                Edge::CrateDep {
+                    context: crate::model::EdgeContext::Production,
+                }
+                | Edge::ModuleDep {
+                    context: crate::model::EdgeContext::Production,
+                    ..
+                } => {
                     let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
                     let src_crate = crate_of(src);
                     let dst_crate = crate_of(dst);
@@ -526,7 +540,7 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
                         crate_graph.add_edge(sc, dc, ());
                     }
                 }
-                Edge::Contains => {}
+                _ => {}
             }
         }
 
@@ -593,7 +607,9 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
             let source_path = graph
                 .edges_directed(idx, petgraph::Direction::Outgoing)
                 .filter_map(|e| match e.weight() {
-                    Edge::ModuleDep(locs) => locs.first().map(|l| l.file.display().to_string()),
+                    Edge::ModuleDep {
+                        locations: locs, ..
+                    } => locs.first().map(|l| l.file.display().to_string()),
                     _ => None,
                 })
                 .next();
@@ -612,7 +628,7 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
     };
     let mut crates_with_module_deps: HashSet<(NodeIndex, NodeIndex)> = HashSet::new();
     for edge_idx in graph.edge_indices() {
-        if let Edge::ModuleDep(_) = &graph[edge_idx] {
+        if let Edge::ModuleDep { .. } = &graph[edge_idx] {
             let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
             let src_crate = crate_of(src);
             let dst_crate = crate_of(dst);
@@ -625,7 +641,7 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
     // Add dependency edges (CrateDep and ModuleDep only)
     for edge_idx in graph.edge_indices() {
         match &graph[edge_idx] {
-            Edge::CrateDep => {
+            Edge::CrateDep { .. } => {
                 let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
                 // Skip CrateDep if ModuleDeps already show this relationship
                 if crates_with_module_deps.contains(&(src, dst)) {
@@ -644,7 +660,7 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
                     ir.add_edge(from, to, kind, vec![]);
                 }
             }
-            Edge::ModuleDep(locations) => {
+            Edge::ModuleDep { locations, .. } => {
                 let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
                 if let (Some(&from), Some(&to)) = (node_map.get(&src), node_map.get(&dst)) {
                     let kind = if cycle_pairs.contains(&(src, dst)) {
@@ -653,7 +669,7 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
                             && graph.contains_edge(dst, src)
                             && matches!(
                                 graph[graph.find_edge(dst, src).unwrap()],
-                                Edge::ModuleDep(_)
+                                Edge::ModuleDep { .. }
                             )
                         {
                             EdgeKind::DirectCycle
@@ -690,11 +706,24 @@ pub fn detect_cycles(graph: &ArcGraph) -> Vec<Cycle> {
         node_map.insert(idx, new_idx);
     }
 
-    // Copy only ModuleDep edges
+    // Copy only Production ModuleDep edges
     for edge_idx in graph.edge_indices() {
-        if matches!(graph[edge_idx], Edge::ModuleDep(_)) {
+        if matches!(
+            &graph[edge_idx],
+            Edge::ModuleDep {
+                context: crate::model::EdgeContext::Production,
+                ..
+            }
+        ) {
             let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
-            filtered.add_edge(node_map[&src], node_map[&dst], Edge::ModuleDep(vec![]));
+            filtered.add_edge(
+                node_map[&src],
+                node_map[&dst],
+                Edge::ModuleDep {
+                    locations: vec![],
+                    context: crate::model::EdgeContext::Production,
+                },
+            );
         }
     }
 
@@ -828,8 +857,22 @@ mod tests {
             name: "c".to_string(),
             crate_idx: NodeIndex::new(0),
         });
-        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
-        graph.add_edge(b, c, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = detect_cycles(&graph);
         assert!(cycles.is_empty(), "Linear graph should have no cycles");
@@ -847,8 +890,22 @@ mod tests {
             name: "b".to_string(),
             crate_idx: NodeIndex::new(0),
         });
-        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
-        graph.add_edge(b, a, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = detect_cycles(&graph);
         assert_eq!(cycles.len(), 1, "Should detect one cycle");
@@ -873,9 +930,30 @@ mod tests {
             name: "c".to_string(),
             crate_idx: NodeIndex::new(0),
         });
-        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
-        graph.add_edge(b, c, Edge::ModuleDep(vec![]));
-        graph.add_edge(c, a, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            c,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = detect_cycles(&graph);
         assert_eq!(cycles.len(), 1, "Should detect one cycle");
@@ -905,12 +983,40 @@ mod tests {
         });
 
         // Cycle 1: A <-> B
-        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
-        graph.add_edge(b, a, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         // Cycle 2: C <-> D
-        graph.add_edge(c, d, Edge::ModuleDep(vec![]));
-        graph.add_edge(d, c, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            c,
+            d,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            d,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = detect_cycles(&graph);
         assert_eq!(cycles.len(), 2, "Should detect two independent cycles");
@@ -946,8 +1052,22 @@ mod tests {
             name: "c".to_string(),
             crate_idx: NodeIndex::new(0),
         });
-        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
-        graph.add_edge(b, c, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles: Vec<Cycle> = vec![];
         let sorted = topo_sort(&graph, &cycles);
@@ -984,10 +1104,38 @@ mod tests {
             name: "d".to_string(),
             crate_idx: NodeIndex::new(0),
         });
-        graph.add_edge(d, a, Edge::ModuleDep(vec![]));
-        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
-        graph.add_edge(b, a, Edge::ModuleDep(vec![])); // cycle
-        graph.add_edge(b, c, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            d,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        ); // cycle
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = vec![Cycle { nodes: vec![a, b] }];
         let sorted = topo_sort(&graph, &cycles);
@@ -1036,7 +1184,14 @@ mod tests {
         });
         graph.add_edge(crate_idx, mod_a, Edge::Contains);
         graph.add_edge(crate_idx, mod_b, Edge::Contains);
-        graph.add_edge(mod_a, mod_b, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            mod_a,
+            mod_b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles: Vec<Cycle> = vec![];
         let order = topo_sort(&graph, &cycles);
@@ -1061,8 +1216,22 @@ mod tests {
             name: "b".to_string(),
             crate_idx: NodeIndex::new(0),
         });
-        graph.add_edge(a, b, Edge::ModuleDep(vec![]));
-        graph.add_edge(b, a, Edge::ModuleDep(vec![])); // cycle
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        ); // cycle
 
         let cycles = detect_cycles(&graph);
         let order = topo_sort(&graph, &cycles);
@@ -1105,7 +1274,14 @@ mod tests {
         graph.add_edge(crate_idx, mod_a, Edge::Contains);
         graph.add_edge(crate_idx, mod_b, Edge::Contains);
         // a -> b (a depends on b)
-        graph.add_edge(mod_a, mod_b, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            mod_a,
+            mod_b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles: Vec<Cycle> = vec![];
         let order = topo_sort(&graph, &cycles);
@@ -1165,7 +1341,13 @@ mod tests {
         graph.add_edge(crate_b, mod_b2, Edge::Contains);
 
         // Crate A depends on Crate B
-        graph.add_edge(crate_a, crate_b, Edge::CrateDep);
+        graph.add_edge(
+            crate_a,
+            crate_b,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles: Vec<Cycle> = vec![];
         let order = topo_sort(&graph, &cycles);
@@ -1419,8 +1601,22 @@ mod tests {
         graph.add_edge(crate_idx, zebra, Edge::Contains);
 
         // Dependencies: zebra -> beta -> alpha
-        graph.add_edge(zebra, beta, Edge::ModuleDep(vec![]));
-        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            zebra,
+            beta,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            beta,
+            alpha,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles: Vec<Cycle> = vec![];
         let order = topo_sort(&graph, &cycles);
@@ -1471,18 +1667,27 @@ mod tests {
         graph.add_edge(crate_a, mod_a, Edge::Contains);
 
         // CrateDep: crate_a -> crate_b
-        graph.add_edge(crate_a, crate_b, Edge::CrateDep);
+        graph.add_edge(
+            crate_a,
+            crate_b,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         // ModuleDep: mod_a -> crate_b (entry-point import)
         graph.add_edge(
             mod_a,
             crate_b,
-            Edge::ModuleDep(vec![SourceLocation {
-                file: PathBuf::from("src/mod_a.rs"),
-                line: 1,
-                symbols: vec!["Helper".to_string()],
-                module_path: "crate_b".to_string(),
-            }]),
+            Edge::ModuleDep {
+                locations: vec![SourceLocation {
+                    file: PathBuf::from("src/mod_a.rs"),
+                    line: 1,
+                    symbols: vec!["Helper".to_string()],
+                    module_path: "crate_b".to_string(),
+                }],
+                context: crate::model::EdgeContext::Production,
+            },
         );
 
         let cycles: Vec<Cycle> = vec![];
@@ -1534,18 +1739,27 @@ mod tests {
         });
 
         // CrateDep: crate_a -> crate_b
-        graph.add_edge(crate_a, crate_b, Edge::CrateDep);
+        graph.add_edge(
+            crate_a,
+            crate_b,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         // ModuleDep: crate_a -> crate_b (root-to-entry-point)
         graph.add_edge(
             crate_a,
             crate_b,
-            Edge::ModuleDep(vec![SourceLocation {
-                file: PathBuf::from("src/lib.rs"),
-                line: 3,
-                symbols: vec!["Config".to_string()],
-                module_path: "crate_b".to_string(),
-            }]),
+            Edge::ModuleDep {
+                locations: vec![SourceLocation {
+                    file: PathBuf::from("src/lib.rs"),
+                    line: 3,
+                    symbols: vec!["Config".to_string()],
+                    module_path: "crate_b".to_string(),
+                }],
+                context: crate::model::EdgeContext::Production,
+            },
         );
 
         let cycles: Vec<Cycle> = vec![];
@@ -1590,18 +1804,27 @@ mod tests {
         graph.add_edge(crate_b, mod_b, Edge::Contains);
 
         // CrateDep: crate_a -> crate_b
-        graph.add_edge(crate_a, crate_b, Edge::CrateDep);
+        graph.add_edge(
+            crate_a,
+            crate_b,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         // ModuleDep: crate_a -> mod_b (root imports from module)
         graph.add_edge(
             crate_a,
             mod_b,
-            Edge::ModuleDep(vec![SourceLocation {
-                file: PathBuf::from("src/lib.rs"),
-                line: 5,
-                symbols: vec!["parse".to_string()],
-                module_path: "mod_b".to_string(),
-            }]),
+            Edge::ModuleDep {
+                locations: vec![SourceLocation {
+                    file: PathBuf::from("src/lib.rs"),
+                    line: 5,
+                    symbols: vec!["parse".to_string()],
+                    module_path: "mod_b".to_string(),
+                }],
+                context: crate::model::EdgeContext::Production,
+            },
         );
 
         let cycles: Vec<Cycle> = vec![];
@@ -1669,7 +1892,14 @@ mod tests {
 
         // Cross-subtree dependency: child_a -> child_b
         // This means parent_a's subtree depends on parent_b's subtree
-        graph.add_edge(child_a, child_b, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            child_a,
+            child_b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles: Vec<Cycle> = vec![];
         let order = topo_sort(&graph, &cycles);
@@ -1723,7 +1953,14 @@ mod tests {
 
         // Module dependency: mod_a -> mod_b (crate_a depends on crate_b)
         // but NO CrateDep edge!
-        graph.add_edge(mod_a, mod_b, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            mod_a,
+            mod_b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles: Vec<Cycle> = vec![];
         let order = topo_sort(&graph, &cycles);
@@ -1781,8 +2018,21 @@ mod tests {
             name: "alpha".into(),
             path: PathBuf::new(),
         });
-        graph.add_edge(alpha, beta, Edge::CrateDep);
-        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            alpha,
+            beta,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            beta,
+            alpha,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = detect_cycles(&graph);
         assert!(cycles.is_empty(), "No pure ModuleDep cycle expected");
@@ -1826,9 +2076,28 @@ mod tests {
             name: "alpha".into(),
             path: PathBuf::new(),
         });
-        graph.add_edge(alpha, beta, Edge::CrateDep);
-        graph.add_edge(alpha, gamma, Edge::CrateDep);
-        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            alpha,
+            beta,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            alpha,
+            gamma,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            beta,
+            alpha,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = detect_cycles(&graph);
         assert!(cycles.is_empty(), "No pure ModuleDep cycle expected");
@@ -1887,12 +2156,39 @@ mod tests {
         graph.add_edge(alpha, mod_b, Edge::Contains);
 
         // Ebene-1 cycle: mod_a ↔ mod_b (pure ModuleDep)
-        graph.add_edge(mod_a, mod_b, Edge::ModuleDep(vec![]));
-        graph.add_edge(mod_b, mod_a, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            mod_a,
+            mod_b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            mod_b,
+            mod_a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         // Ebene-2 mixed cycle: alpha → beta (CrateDep), beta → alpha (ModuleDep)
-        graph.add_edge(alpha, beta, Edge::CrateDep);
-        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+        graph.add_edge(
+            alpha,
+            beta,
+            Edge::CrateDep {
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            beta,
+            alpha,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
 
         let cycles = detect_cycles(&graph);
         assert_eq!(

@@ -1,6 +1,6 @@
 //! Graph Types & Builder
 
-use crate::model::{CrateInfo, DependencyRef, ModuleInfo, ModuleTree};
+use crate::model::{CrateInfo, DependencyRef, EdgeContext, ModuleInfo, ModuleTree, TestKind};
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,8 +20,13 @@ pub struct SourceLocation {
 }
 
 pub enum Edge {
-    CrateDep,
-    ModuleDep(Vec<SourceLocation>),
+    CrateDep {
+        context: EdgeContext,
+    },
+    ModuleDep {
+        locations: Vec<SourceLocation>,
+        context: EdgeContext,
+    },
     Contains,
 }
 
@@ -79,7 +84,24 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
         if let Some(&from_idx) = crate_map.get(&crate_info.name) {
             for dep_name in &crate_info.dependencies {
                 if let Some(&to_idx) = crate_map.get(dep_name) {
-                    graph.add_edge(from_idx, to_idx, Edge::CrateDep);
+                    graph.add_edge(
+                        from_idx,
+                        to_idx,
+                        Edge::CrateDep {
+                            context: EdgeContext::Production,
+                        },
+                    );
+                }
+            }
+            for dep_name in &crate_info.dev_dependencies {
+                if let Some(&to_idx) = crate_map.get(dep_name) {
+                    graph.add_edge(
+                        from_idx,
+                        to_idx,
+                        Edge::CrateDep {
+                            context: EdgeContext::Test(TestKind::Unit),
+                        },
+                    );
                 }
             }
         }
@@ -137,7 +159,14 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
                         })
                         .collect();
 
-                    graph.add_edge(from_idx, to_idx, Edge::ModuleDep(locations));
+                    graph.add_edge(
+                        from_idx,
+                        to_idx,
+                        Edge::ModuleDep {
+                            locations,
+                            context: EdgeContext::Production,
+                        },
+                    );
                 }
             }
         }
@@ -208,21 +237,27 @@ mod tests {
 
     #[test]
     fn test_moduledep_edge_carries_locations() {
-        let edge = Edge::ModuleDep(vec![
-            SourceLocation {
-                file: PathBuf::from("src/cli.rs"),
-                line: 5,
-                symbols: vec![],
-                module_path: String::new(),
-            },
-            SourceLocation {
-                file: PathBuf::from("src/cli.rs"),
-                line: 12,
-                symbols: vec![],
-                module_path: String::new(),
-            },
-        ]);
-        if let Edge::ModuleDep(locs) = edge {
+        let edge = Edge::ModuleDep {
+            locations: vec![
+                SourceLocation {
+                    file: PathBuf::from("src/cli.rs"),
+                    line: 5,
+                    symbols: vec![],
+                    module_path: String::new(),
+                },
+                SourceLocation {
+                    file: PathBuf::from("src/cli.rs"),
+                    line: 12,
+                    symbols: vec![],
+                    module_path: String::new(),
+                },
+            ],
+            context: EdgeContext::Production,
+        };
+        if let Edge::ModuleDep {
+            locations: locs, ..
+        } = edge
+        {
             assert_eq!(locs.len(), 2);
             assert_eq!(locs[0].line, 5);
             assert_eq!(locs[1].line, 12);
@@ -254,7 +289,16 @@ mod tests {
 
     #[test]
     fn test_edge_types() {
-        let edges = [Edge::CrateDep, Edge::ModuleDep(vec![]), Edge::Contains];
+        let edges = [
+            Edge::CrateDep {
+                context: EdgeContext::Production,
+            },
+            Edge::ModuleDep {
+                locations: vec![],
+                context: EdgeContext::Production,
+            },
+            Edge::Contains,
+        ];
         assert_eq!(edges.len(), 3);
     }
 
@@ -264,6 +308,7 @@ mod tests {
             name: "my_crate".to_string(),
             path: PathBuf::from("/path/to/crate"),
             dependencies: vec![],
+            dev_dependencies: vec![],
         }];
         let modules: Vec<ModuleTree> = vec![];
 
@@ -289,6 +334,7 @@ mod tests {
             name: "my_crate".to_string(),
             path: PathBuf::from("/path/to/crate"),
             dependencies: vec![],
+            dev_dependencies: vec![],
         }];
 
         let modules = vec![ModuleTree {
@@ -337,11 +383,13 @@ mod tests {
                 name: "crate_a".to_string(),
                 path: PathBuf::from("/path/to/a"),
                 dependencies: vec!["crate_b".to_string()],
+                dev_dependencies: vec![],
             },
             CrateInfo {
                 name: "crate_b".to_string(),
                 path: PathBuf::from("/path/to/b"),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             },
         ];
         let modules: Vec<ModuleTree> = vec![];
@@ -357,7 +405,7 @@ mod tests {
         // Verify the edge is CrateDep
         let edge_idx = graph.edge_indices().next().unwrap();
         match graph[edge_idx] {
-            Edge::CrateDep => {}
+            Edge::CrateDep { .. } => {}
             _ => panic!("Expected CrateDep edge"),
         }
     }
@@ -370,6 +418,7 @@ mod tests {
             name: "my_crate".to_string(),
             path: PathBuf::from("/path/to/crate"),
             dependencies: vec![],
+            dev_dependencies: vec![],
         }];
 
         // Module "bar" depends on module "foo"
@@ -415,7 +464,7 @@ mod tests {
         for edge_idx in graph.edge_indices() {
             match graph[edge_idx] {
                 Edge::Contains => contains_count += 1,
-                Edge::ModuleDep(_) => module_dep_count += 1,
+                Edge::ModuleDep { .. } => module_dep_count += 1,
                 _ => {}
             }
         }
@@ -433,11 +482,13 @@ mod tests {
                 name: "crate_a".to_string(),
                 path: PathBuf::from("/path/to/a"),
                 dependencies: vec!["crate_b".to_string()],
+                dev_dependencies: vec![],
             },
             CrateInfo {
                 name: "crate_b".to_string(),
                 path: PathBuf::from("/path/to/b"),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             },
         ];
 
@@ -491,9 +542,11 @@ mod tests {
         let mut module_dep_count = 0;
         for edge_idx in graph.edge_indices() {
             match &graph[edge_idx] {
-                Edge::CrateDep => crate_dep_count += 1,
+                Edge::CrateDep { .. } => crate_dep_count += 1,
                 Edge::Contains => contains_count += 1,
-                Edge::ModuleDep(locs) => {
+                Edge::ModuleDep {
+                    locations: locs, ..
+                } => {
                     module_dep_count += 1;
                     // Verify source location is preserved
                     assert_eq!(locs.len(), 1);
@@ -517,6 +570,7 @@ mod tests {
             name: "crate_a".to_string(),
             path: PathBuf::from("/path/to/a"),
             dependencies: vec![],
+            dev_dependencies: vec![],
         }];
 
         // Root module has a dependency on child module "gamma"
@@ -545,7 +599,10 @@ mod tests {
         // Should have ModuleDep edge from Crate node to gamma Module node
         let mut module_dep_count = 0;
         for edge_idx in graph.edge_indices() {
-            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+            if let Edge::ModuleDep {
+                locations: locs, ..
+            } = &graph[edge_idx]
+            {
                 module_dep_count += 1;
                 let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
                 assert!(
@@ -573,11 +630,13 @@ mod tests {
                 name: "crate_a".to_string(),
                 path: PathBuf::from("/path/to/a"),
                 dependencies: vec!["crate_b".to_string()],
+                dev_dependencies: vec![],
             },
             CrateInfo {
                 name: "crate_b".to_string(),
                 path: PathBuf::from("/path/to/b"),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             },
         ];
 
@@ -617,7 +676,10 @@ mod tests {
         // Should have ModuleDep edge from beta Module to crate_b Crate node
         let mut found = false;
         for edge_idx in graph.edge_indices() {
-            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+            if let Edge::ModuleDep {
+                locations: locs, ..
+            } = &graph[edge_idx]
+            {
                 let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
                 if matches!(&graph[from], Node::Module { name, .. } if name == "beta")
                     && matches!(&graph[to], Node::Crate { name, .. } if name == "crate_b")
@@ -644,11 +706,13 @@ mod tests {
                 name: "crate_a".to_string(),
                 path: PathBuf::from("/path/to/a"),
                 dependencies: vec!["crate_b".to_string()],
+                dev_dependencies: vec![],
             },
             CrateInfo {
                 name: "crate_b".to_string(),
                 path: PathBuf::from("/path/to/b"),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             },
         ];
 
@@ -688,7 +752,10 @@ mod tests {
         // Should have ModuleDep from crate_a Crate node to gamma Module node
         let mut found = false;
         for edge_idx in graph.edge_indices() {
-            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+            if let Edge::ModuleDep {
+                locations: locs, ..
+            } = &graph[edge_idx]
+            {
                 let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
                 if matches!(&graph[from], Node::Crate { name, .. } if name == "crate_a")
                     && matches!(&graph[to], Node::Module { name, .. } if name == "gamma")
@@ -712,11 +779,13 @@ mod tests {
                 name: "crate_a".to_string(),
                 path: PathBuf::from("/path/to/a"),
                 dependencies: vec!["crate_b".to_string()],
+                dev_dependencies: vec![],
             },
             CrateInfo {
                 name: "crate_b".to_string(),
                 path: PathBuf::from("/path/to/b"),
                 dependencies: vec![],
+                dev_dependencies: vec![],
             },
         ];
 
@@ -751,7 +820,10 @@ mod tests {
         // Should have ModuleDep from crate_a Crate to crate_b Crate
         let mut found = false;
         for edge_idx in graph.edge_indices() {
-            if let Edge::ModuleDep(locs) = &graph[edge_idx] {
+            if let Edge::ModuleDep {
+                locations: locs, ..
+            } = &graph[edge_idx]
+            {
                 let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
                 if matches!(&graph[from], Node::Crate { name, .. } if name == "crate_a")
                     && matches!(&graph[to], Node::Crate { name, .. } if name == "crate_b")

@@ -4,11 +4,24 @@
 
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeContext {
+    Production,
+    Test(TestKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestKind {
+    Unit,
+    Integration,
+}
+
 #[derive(Debug, Clone)]
 pub struct CrateInfo {
     pub name: String,
     pub path: PathBuf,
     pub dependencies: Vec<String>,
+    pub dev_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
