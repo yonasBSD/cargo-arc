@@ -1,34 +1,71 @@
 //! Syn-based use statement parsing for workspace dependency extraction.
 
-use crate::model::DependencyRef;
+use crate::model::{DependencyRef, EdgeContext, TestKind};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use syn::UseTree;
 use syn::visit::Visit;
 
+fn context_from_test_flag(in_test: bool) -> EdgeContext {
+    if in_test {
+        EdgeContext::Test(TestKind::Unit)
+    } else {
+        EdgeContext::Production
+    }
+}
+
+/// Shared `visit_item_mod` for cfg(test) scope tracking.
+/// Used by both `UseCollector` and `PathRefCollector` — the logic is identical.
+macro_rules! impl_cfg_test_visit_item_mod {
+    () => {
+        fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+            let was_in_cfg_test = self.in_cfg_test;
+            if super::syn_walker::is_cfg_test(&node.attrs) {
+                self.in_cfg_test = true;
+            }
+            syn::visit::visit_item_mod(self, node);
+            self.in_cfg_test = was_in_cfg_test;
+        }
+    };
+}
+
 /// Collect all `use` items from a parsed file, including those nested inside
 /// function bodies, blocks, and other scopes. Uses `syn::visit::Visit` to
 /// traverse the full AST regardless of nesting depth.
-pub(crate) fn collect_all_use_items(syntax: &syn::File) -> Vec<syn::ItemUse> {
+///
+/// Returns `(ItemUse, EdgeContext)` tuples: uses inside `#[cfg(test)]` scopes
+/// or with `#[cfg(test)]` on the item itself are tagged `Test(Unit)`,
+/// all others are `Production`.
+pub(crate) fn collect_all_use_items(syntax: &syn::File) -> Vec<(syn::ItemUse, EdgeContext)> {
     struct UseCollector {
-        uses: Vec<syn::ItemUse>,
+        uses: Vec<(syn::ItemUse, EdgeContext)>,
+        in_cfg_test: bool,
     }
     impl<'ast> Visit<'ast> for UseCollector {
         fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
-            self.uses.push(node.clone());
+            let is_test = self.in_cfg_test || super::syn_walker::is_cfg_test(&node.attrs);
+            self.uses
+                .push((node.clone(), context_from_test_flag(is_test)));
         }
+
+        impl_cfg_test_visit_item_mod!();
     }
-    let mut collector = UseCollector { uses: Vec::new() };
+    let mut collector = UseCollector {
+        uses: Vec::new(),
+        in_cfg_test: false,
+    };
     collector.visit_file(syntax);
     collector.uses
 }
 
 /// Collect all qualified path references (2+ segments) from a parsed file.
 /// Uses `syn::visit::Visit` to traverse expressions, types, patterns, and trait bounds.
-/// Returns `(path_string, line_number)` tuples.
-pub(crate) fn collect_all_path_refs(syntax: &syn::File) -> Vec<(String, usize)> {
+/// Returns `(path_string, line_number, EdgeContext)` tuples: references inside
+/// `#[cfg(test)]` scopes are tagged `Test(Unit)`, all others `Production`.
+pub(crate) fn collect_all_path_refs(syntax: &syn::File) -> Vec<(String, usize, EdgeContext)> {
     struct PathRefCollector {
-        paths: Vec<(String, usize)>,
+        paths: Vec<(String, usize, EdgeContext)>,
+        in_cfg_test: bool,
     }
     impl<'ast> Visit<'ast> for PathRefCollector {
         fn visit_path(&mut self, node: &'ast syn::Path) {
@@ -44,13 +81,19 @@ pub(crate) fn collect_all_path_refs(syntax: &syn::File) -> Vec<(String, usize)> 
                     .first()
                     .map(|s| s.ident.span().start().line)
                     .unwrap_or(0);
-                self.paths.push((path_str, line));
+                self.paths
+                    .push((path_str, line, context_from_test_flag(self.in_cfg_test)));
             }
             // Continue visiting nested paths (e.g. in generics)
             syn::visit::visit_path(self, node);
         }
+
+        impl_cfg_test_visit_item_mod!();
     }
-    let mut collector = PathRefCollector { paths: Vec::new() };
+    let mut collector = PathRefCollector {
+        paths: Vec::new(),
+        in_cfg_test: false,
+    };
     collector.visit_file(syntax);
     collector.paths
 }
@@ -153,6 +196,7 @@ fn parse_crate_local_import(
     source_file: &Path,
     line_num: usize,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    context: EdgeContext,
 ) -> Option<DependencyRef> {
     let after_crate = path.strip_prefix("crate::")?;
     let parts: Vec<&str> = after_crate.split("::").collect();
@@ -174,6 +218,7 @@ fn parse_crate_local_import(
         target_item: extract_item_from_parts(&parts, prefix_len),
         source_file: source_file.to_path_buf(),
         line: line_num,
+        context,
     })
 }
 
@@ -185,6 +230,7 @@ fn parse_bare_module_import(
     source_file: &Path,
     line_num: usize,
     all_module_paths: &HashMap<String, HashSet<String>>,
+    context: EdgeContext,
 ) -> Option<DependencyRef> {
     let parts: Vec<&str> = path.split("::").collect();
     let first = parts.first()?.trim_end_matches('{').trim();
@@ -209,6 +255,7 @@ fn parse_bare_module_import(
         target_item: extract_item_from_parts(&parts, prefix_len),
         source_file: source_file.to_path_buf(),
         line: line_num,
+        context,
     })
 }
 
@@ -220,6 +267,7 @@ fn parse_workspace_import(
     line_num: usize,
     all_module_paths: &HashMap<String, HashSet<String>>,
     crate_exports: &HashMap<String, HashSet<String>>,
+    context: EdgeContext,
 ) -> Option<DependencyRef> {
     let parts: Vec<&str> = path.split("::").collect();
     let crate_name = parts.first()?.trim();
@@ -254,6 +302,7 @@ fn parse_workspace_import(
             target_item: Some(module_segment.to_string()),
             source_file: source_file.to_path_buf(),
             line: line_num,
+            context,
         });
     }
 
@@ -263,11 +312,13 @@ fn parse_workspace_import(
         target_item: extract_item_from_parts(&parts, 1 + prefix_len),
         source_file: source_file.to_path_buf(),
         line: line_num,
+        context,
     })
 }
 
 /// Resolve a single use path through the resolution chain: crate-local → bare module → workspace.
 /// Handles glob paths (`crate::module::*`) by stripping the glob and setting target_item = "*".
+#[allow(clippy::too_many_arguments)]
 fn resolve_single_path(
     path: &str,
     line_num: usize,
@@ -276,6 +327,7 @@ fn resolve_single_path(
     source_file: &Path,
     all_module_paths: &HashMap<String, HashSet<String>>,
     crate_exports: &HashMap<String, HashSet<String>>,
+    context: EdgeContext,
 ) -> Option<DependencyRef> {
     // Handle glob: `crate::module::*` → resolve base, set target_item = "*"
     if let Some(base) = path.strip_suffix("::*") {
@@ -287,40 +339,57 @@ fn resolve_single_path(
             source_file,
             all_module_paths,
             crate_exports,
+            context,
         )?;
         // The base resolved as a module — push "*" as the item
         dep.target_item = Some("*".to_string());
         return Some(dep);
     }
 
-    parse_crate_local_import(path, current_crate, source_file, line_num, all_module_paths)
-        .or_else(|| {
-            parse_bare_module_import(path, current_crate, source_file, line_num, all_module_paths)
-        })
-        .or_else(|| {
-            parse_workspace_import(
-                path,
-                workspace_crates,
-                source_file,
-                line_num,
-                all_module_paths,
-                crate_exports,
-            )
-        })
-        .or_else(|| {
-            // Bare workspace crate name (e.g. from `use other_crate::{Foo}` → path = "other_crate")
-            if !path.contains("::") && is_workspace_member(path, workspace_crates) {
-                Some(DependencyRef {
-                    target_crate: path.to_string(),
-                    target_module: String::new(),
-                    target_item: None,
-                    source_file: source_file.to_path_buf(),
-                    line: line_num,
-                })
-            } else {
-                None
-            }
-        })
+    parse_crate_local_import(
+        path,
+        current_crate,
+        source_file,
+        line_num,
+        all_module_paths,
+        context,
+    )
+    .or_else(|| {
+        parse_bare_module_import(
+            path,
+            current_crate,
+            source_file,
+            line_num,
+            all_module_paths,
+            context,
+        )
+    })
+    .or_else(|| {
+        parse_workspace_import(
+            path,
+            workspace_crates,
+            source_file,
+            line_num,
+            all_module_paths,
+            crate_exports,
+            context,
+        )
+    })
+    .or_else(|| {
+        // Bare workspace crate name (e.g. from `use other_crate::{Foo}` → path = "other_crate")
+        if !path.contains("::") && is_workspace_member(path, workspace_crates) {
+            Some(DependencyRef {
+                target_crate: path.to_string(),
+                target_module: String::new(),
+                target_item: None,
+                source_file: source_file.to_path_buf(),
+                line: line_num,
+                context,
+            })
+        } else {
+            None
+        }
+    })
 }
 
 /// Parse syn-based use items, extracting workspace-relevant dependencies.
@@ -331,7 +400,7 @@ fn resolve_single_path(
 ///
 /// Deduplicates by full_target() to keep distinct symbols but avoid duplicates.
 pub(crate) fn parse_workspace_dependencies(
-    use_items: &[syn::ItemUse],
+    use_items: &[(syn::ItemUse, EdgeContext)],
     current_crate: &str,
     workspace_crates: &HashSet<String>,
     source_file: &Path,
@@ -339,9 +408,9 @@ pub(crate) fn parse_workspace_dependencies(
     crate_exports: &HashMap<String, HashSet<String>>,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
-    let mut seen_targets: HashSet<String> = HashSet::new();
+    let mut seen_targets: HashSet<(String, EdgeContext)> = HashSet::new();
 
-    for item in use_items {
+    for (item, context) in use_items {
         let line_num = item.use_token.span.start().line;
         let paths = resolve_use_tree(&item.tree, "");
 
@@ -354,10 +423,10 @@ pub(crate) fn parse_workspace_dependencies(
                 source_file,
                 all_module_paths,
                 crate_exports,
+                *context,
             ) {
-                let target_key = dep.full_target();
-                if !seen_targets.contains(&target_key) {
-                    seen_targets.insert(target_key);
+                let dedup_key = (dep.full_target(), dep.context);
+                if seen_targets.insert(dedup_key) {
                     deps.push(dep);
                 }
             }
@@ -373,7 +442,7 @@ pub(crate) fn parse_workspace_dependencies(
 /// each through the existing resolution chain (`resolve_single_path()`).
 /// Deduplicates by `full_target()` — same strategy as `parse_workspace_dependencies()`.
 pub(crate) fn parse_path_ref_dependencies(
-    paths: &[(String, usize)],
+    paths: &[(String, usize, EdgeContext)],
     current_crate: &str,
     workspace_crates: &HashSet<String>,
     source_file: &Path,
@@ -381,9 +450,9 @@ pub(crate) fn parse_path_ref_dependencies(
     crate_exports: &HashMap<String, HashSet<String>>,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
-    let mut seen_targets: HashSet<String> = HashSet::new();
+    let mut seen_targets: HashSet<(String, EdgeContext)> = HashSet::new();
 
-    for (path, line_num) in paths {
+    for (path, line_num, context) in paths {
         if let Some(dep) = resolve_single_path(
             path,
             *line_num,
@@ -392,9 +461,10 @@ pub(crate) fn parse_path_ref_dependencies(
             source_file,
             all_module_paths,
             crate_exports,
+            *context,
         ) {
-            let target_key = dep.full_target();
-            if seen_targets.insert(target_key) {
+            let dedup_key = (dep.full_target(), dep.context);
+            if seen_targets.insert(dedup_key) {
                 deps.push(dep);
             }
         }
@@ -434,7 +504,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    fn parse_test_uses(source: &str) -> Vec<syn::ItemUse> {
+    fn parse_test_uses(source: &str) -> Vec<(syn::ItemUse, EdgeContext)> {
         collect_all_use_items(&syn::parse_file(source).unwrap())
     }
 
@@ -875,8 +945,14 @@ use serde::Serialize;
         fn test_bare_module_simple() {
             let mp: HashMap<String, HashSet<String>> =
                 HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
-            let dep =
-                parse_bare_module_import("cli::Args", "my_crate", Path::new("src/lib.rs"), 1, &mp);
+            let dep = parse_bare_module_import(
+                "cli::Args",
+                "my_crate",
+                Path::new("src/lib.rs"),
+                1,
+                &mp,
+                EdgeContext::Production,
+            );
             let dep = dep.expect("should parse bare module import");
             assert_eq!(dep.target_crate, "my_crate");
             assert_eq!(dep.target_module, "cli");
@@ -893,6 +969,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 1,
                 &mp,
+                EdgeContext::Production,
             );
             assert!(dep.is_none(), "external crate should not match");
         }
@@ -909,6 +986,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 1,
                 &mp,
+                EdgeContext::Production,
             );
             let dep = dep.expect("should parse deep bare module import");
             assert_eq!(dep.target_crate, "my_crate");
@@ -920,7 +998,14 @@ use serde::Serialize;
         fn test_bare_module_module_only() {
             let mp: HashMap<String, HashSet<String>> =
                 HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
-            let dep = parse_bare_module_import("cli", "my_crate", Path::new("src/lib.rs"), 1, &mp);
+            let dep = parse_bare_module_import(
+                "cli",
+                "my_crate",
+                Path::new("src/lib.rs"),
+                1,
+                &mp,
+                EdgeContext::Production,
+            );
             let dep = dep.expect("should parse module-only bare import");
             assert_eq!(dep.target_crate, "my_crate");
             assert_eq!(dep.target_module, "cli");
@@ -1224,6 +1309,84 @@ fn main() {
         }
     }
 
+    mod cfg_test_scope_tests {
+        use super::*;
+        use crate::model::EdgeContext;
+
+        #[test]
+        fn test_use_in_cfg_test_module_marked() {
+            let source = r#"
+#[cfg(test)]
+mod tests {
+    use other_crate::helper;
+}
+"#;
+            let syntax = syn::parse_file(source).unwrap();
+            let uses = collect_all_use_items(&syntax);
+            assert_eq!(uses.len(), 1);
+            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+        }
+
+        #[test]
+        fn test_use_in_normal_module_not_marked() {
+            let source = r#"
+mod normal {
+    use other_crate::helper;
+}
+"#;
+            let syntax = syn::parse_file(source).unwrap();
+            let uses = collect_all_use_items(&syntax);
+            assert_eq!(uses.len(), 1);
+            assert_eq!(uses[0].1, EdgeContext::Production);
+        }
+
+        #[test]
+        fn test_cfg_test_on_use_item_marked() {
+            let source = r#"
+#[cfg(test)]
+use other_crate::test_helper;
+"#;
+            let syntax = syn::parse_file(source).unwrap();
+            let uses = collect_all_use_items(&syntax);
+            assert_eq!(uses.len(), 1);
+            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+        }
+
+        #[test]
+        fn test_nested_cfg_test_scope() {
+            let source = r#"
+#[cfg(test)]
+mod tests {
+    mod inner {
+        use other_crate::deep_helper;
+    }
+}
+"#;
+            let syntax = syn::parse_file(source).unwrap();
+            let uses = collect_all_use_items(&syntax);
+            assert_eq!(uses.len(), 1);
+            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+        }
+
+        /// Known limitation: `#[cfg(test)]` on `fn` items is NOT detected —
+        /// only `mod`-level `#[cfg(test)]` propagates. This is acceptable because
+        /// the dominant pattern is `#[cfg(test)] mod tests { ... }`.
+        #[test]
+        fn test_cfg_test_on_fn_not_detected() {
+            let source = r#"
+#[cfg(test)]
+fn test_helper() {
+    use other_crate::helper;
+}
+"#;
+            let syntax = syn::parse_file(source).unwrap();
+            let uses = collect_all_use_items(&syntax);
+            assert_eq!(uses.len(), 1);
+            // fn-level cfg(test) is NOT propagated — use is tagged Production
+            assert_eq!(uses[0].1, EdgeContext::Production);
+        }
+    }
+
     mod path_ref_tests {
         use super::*;
 
@@ -1237,7 +1400,7 @@ fn main() {
             let syntax = syn::parse_file(source).unwrap();
             let refs = collect_all_path_refs(&syntax);
             assert!(
-                refs.iter().any(|(p, _)| p == "my_server::run"),
+                refs.iter().any(|(p, _, _)| p == "my_server::run"),
                 "should collect my_server::run, found: {refs:?}"
             );
         }
@@ -1252,7 +1415,7 @@ fn main() {
             let syntax = syn::parse_file(source).unwrap();
             let refs = collect_all_path_refs(&syntax);
             assert!(
-                refs.iter().any(|(p, _)| p == "my_lib::Config"),
+                refs.iter().any(|(p, _, _)| p == "my_lib::Config"),
                 "should collect my_lib::Config, found: {refs:?}"
             );
         }
@@ -1271,7 +1434,7 @@ fn main() {
             let syntax = syn::parse_file(source).unwrap();
             let refs = collect_all_path_refs(&syntax);
             assert!(
-                refs.iter().any(|(p, _)| p == "my_lib::check"),
+                refs.iter().any(|(p, _, _)| p == "my_lib::check"),
                 "should collect my_lib::check, found: {refs:?}"
             );
         }
@@ -1284,7 +1447,7 @@ fn process<T: my_lib::Trait>(_t: T) {}
             let syntax = syn::parse_file(source).unwrap();
             let refs = collect_all_path_refs(&syntax);
             assert!(
-                refs.iter().any(|(p, _)| p == "my_lib::Trait"),
+                refs.iter().any(|(p, _, _)| p == "my_lib::Trait"),
                 "should collect my_lib::Trait, found: {refs:?}"
             );
         }
@@ -1299,7 +1462,7 @@ fn main() {
             let syntax = syn::parse_file(source).unwrap();
             let refs = collect_all_path_refs(&syntax);
             assert!(
-                refs.iter().any(|(p, _)| p == "my_lib::Config"),
+                refs.iter().any(|(p, _, _)| p == "my_lib::Config"),
                 "should collect my_lib::Config from struct literal, found: {refs:?}"
             );
         }
@@ -1316,7 +1479,7 @@ fn main() {
             let refs = collect_all_path_refs(&syntax);
             // "println" is a single segment → not collected
             assert!(
-                !refs.iter().any(|(p, _)| p == "println"),
+                !refs.iter().any(|(p, _, _)| p == "println"),
                 "single-segment paths should not be collected, found: {refs:?}"
             );
         }
@@ -1331,7 +1494,7 @@ fn main() {
             let syntax = syn::parse_file(source).unwrap();
             let refs = collect_all_path_refs(&syntax);
             assert!(
-                refs.iter().any(|(p, _)| p == "my_lib::Config::default"),
+                refs.iter().any(|(p, _, _)| p == "my_lib::Config::default"),
                 "should collect full path my_lib::Config::default, found: {refs:?}"
             );
         }
@@ -1347,25 +1510,75 @@ fn main() {
             let syntax = syn::parse_file(source).unwrap();
             let refs = collect_all_path_refs(&syntax);
             assert!(
-                refs.iter().any(|(p, _)| p == "my_server::run"),
+                refs.iter().any(|(p, _, _)| p == "my_server::run"),
                 "should collect my_server::run, found: {refs:?}"
             );
             assert!(
-                refs.iter().any(|(p, _)| p == "my_lib::Config"),
+                refs.iter().any(|(p, _, _)| p == "my_lib::Config"),
                 "should collect my_lib::Config, found: {refs:?}"
             );
         }
     }
 
+    mod path_ref_cfg_test_tests {
+        use super::*;
+        use crate::model::EdgeContext;
+
+        #[test]
+        fn test_path_ref_in_cfg_test_marked() {
+            let source = r#"
+#[cfg(test)]
+mod tests {
+    fn check() {
+        other_crate::module::helper();
+    }
+}
+"#;
+            let syntax = syn::parse_file(source).unwrap();
+            let refs = collect_all_path_refs(&syntax);
+            let matching: Vec<_> = refs
+                .iter()
+                .filter(|(p, _, _)| p == "other_crate::module::helper")
+                .collect();
+            assert_eq!(matching.len(), 1);
+            assert_eq!(
+                matching[0].2,
+                EdgeContext::Test(crate::model::TestKind::Unit)
+            );
+        }
+
+        #[test]
+        fn test_path_ref_in_normal_code_production() {
+            let source = r#"
+fn main() {
+    other_crate::module::run();
+}
+"#;
+            let syntax = syn::parse_file(source).unwrap();
+            let refs = collect_all_path_refs(&syntax);
+            let matching: Vec<_> = refs
+                .iter()
+                .filter(|(p, _, _)| p == "other_crate::module::run")
+                .collect();
+            assert_eq!(matching.len(), 1);
+            assert_eq!(matching[0].2, EdgeContext::Production);
+        }
+    }
+
     mod path_ref_resolution_tests {
         use super::*;
+        use crate::model::EdgeContext;
 
         #[test]
         fn test_parse_path_refs_workspace_crate() {
             let ws: HashSet<String> = HashSet::from(["other_crate".to_string()]);
             let mp: HashMap<String, HashSet<String>> =
                 HashMap::from([("other_crate".to_string(), HashSet::from(["module".into()]))]);
-            let paths = vec![("other_crate::module::item".to_string(), 5)];
+            let paths = vec![(
+                "other_crate::module::item".to_string(),
+                5,
+                EdgeContext::Production,
+            )];
             let deps = parse_path_ref_dependencies(
                 &paths,
                 "my_crate",
@@ -1390,7 +1603,11 @@ fn main() {
             let ws: HashSet<String> = HashSet::new();
             let mp: HashMap<String, HashSet<String>> =
                 HashMap::from([("my_crate".to_string(), HashSet::from(["module".into()]))]);
-            let paths = vec![("crate::module::item".to_string(), 3)];
+            let paths = vec![(
+                "crate::module::item".to_string(),
+                3,
+                EdgeContext::Production,
+            )];
             let deps = parse_path_ref_dependencies(
                 &paths,
                 "my_crate",
@@ -1410,7 +1627,7 @@ fn main() {
             let ws: HashSet<String> = HashSet::new();
             let mp: HashMap<String, HashSet<String>> =
                 HashMap::from([("my_crate".to_string(), HashSet::from(["cli".into()]))]);
-            let paths = vec![("cli::Args".to_string(), 1)];
+            let paths = vec![("cli::Args".to_string(), 1, EdgeContext::Production)];
             let deps = parse_path_ref_dependencies(
                 &paths,
                 "my_crate",
@@ -1430,9 +1647,9 @@ fn main() {
             let ws: HashSet<String> = HashSet::new();
             let mp: HashMap<String, HashSet<String>> = HashMap::new();
             let paths = vec![
-                ("std::io::Read".to_string(), 1),
-                ("anyhow::Result".to_string(), 2),
-                ("serde::Serialize".to_string(), 3),
+                ("std::io::Read".to_string(), 1, EdgeContext::Production),
+                ("anyhow::Result".to_string(), 2, EdgeContext::Production),
+                ("serde::Serialize".to_string(), 3, EdgeContext::Production),
             ];
             let deps = parse_path_ref_dependencies(
                 &paths,
@@ -1453,7 +1670,11 @@ fn main() {
                 "other_crate".to_string(),
                 HashSet::from(["MyStruct".into()]),
             )]);
-            let paths = vec![("other_crate::MyStruct".to_string(), 7)];
+            let paths = vec![(
+                "other_crate::MyStruct".to_string(),
+                7,
+                EdgeContext::Production,
+            )];
             let deps = parse_path_ref_dependencies(
                 &paths,
                 "my_crate",
@@ -1474,8 +1695,16 @@ fn main() {
             let mp: HashMap<String, HashSet<String>> =
                 HashMap::from([("other_crate".to_string(), HashSet::from(["module".into()]))]);
             let paths = vec![
-                ("other_crate::module::item".to_string(), 5),
-                ("other_crate::module::item".to_string(), 10),
+                (
+                    "other_crate::module::item".to_string(),
+                    5,
+                    EdgeContext::Production,
+                ),
+                (
+                    "other_crate::module::item".to_string(),
+                    10,
+                    EdgeContext::Production,
+                ),
             ];
             let deps = parse_path_ref_dependencies(
                 &paths,
@@ -1486,6 +1715,121 @@ fn main() {
                 &HashMap::new(),
             );
             assert_eq!(deps.len(), 1, "duplicate paths should be deduped: {deps:?}");
+        }
+    }
+
+    mod context_aware_dedup_tests {
+        use super::*;
+        use crate::model::{EdgeContext, TestKind};
+
+        #[test]
+        fn test_same_target_different_context_not_deduped_use() {
+            // Production and Test dep on same symbol must both survive dedup
+            let ws: HashSet<String> = HashSet::new();
+            let mp: HashMap<String, HashSet<String>> = HashMap::new();
+            let source = "use crate::graph::Node;";
+            let syntax = syn::parse_file(source).unwrap();
+            let item = syntax
+                .items
+                .into_iter()
+                .find_map(|i| match i {
+                    syn::Item::Use(u) => Some(u),
+                    _ => None,
+                })
+                .unwrap();
+            let uses = vec![
+                (item.clone(), EdgeContext::Production),
+                (item, EdgeContext::Test(TestKind::Unit)),
+            ];
+            let deps = parse_workspace_dependencies(
+                &uses,
+                "my_crate",
+                &ws,
+                Path::new("src/lib.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+            assert_eq!(
+                deps.len(),
+                2,
+                "prod + test on same target must not be deduped: {deps:?}"
+            );
+            assert!(deps.iter().any(|d| d.context == EdgeContext::Production));
+            assert!(
+                deps.iter()
+                    .any(|d| d.context == EdgeContext::Test(TestKind::Unit))
+            );
+        }
+
+        #[test]
+        fn test_same_target_different_context_not_deduped_path_ref() {
+            // Production and Test dep on same path ref must both survive dedup
+            let ws: HashSet<String> = HashSet::from(["other_crate".to_string()]);
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("other_crate".to_string(), HashSet::from(["module".into()]))]);
+            let paths = vec![
+                (
+                    "other_crate::module::item".to_string(),
+                    5,
+                    EdgeContext::Production,
+                ),
+                (
+                    "other_crate::module::item".to_string(),
+                    10,
+                    EdgeContext::Test(TestKind::Unit),
+                ),
+            ];
+            let deps = parse_path_ref_dependencies(
+                &paths,
+                "my_crate",
+                &ws,
+                Path::new("src/main.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+            assert_eq!(
+                deps.len(),
+                2,
+                "prod + test on same target must not be deduped: {deps:?}"
+            );
+            assert!(deps.iter().any(|d| d.context == EdgeContext::Production));
+            assert!(
+                deps.iter()
+                    .any(|d| d.context == EdgeContext::Test(TestKind::Unit))
+            );
+        }
+
+        #[test]
+        fn test_same_target_same_context_still_deduped() {
+            // Two Production deps on same symbol should still be deduped
+            let ws: HashSet<String> = HashSet::from(["other_crate".to_string()]);
+            let mp: HashMap<String, HashSet<String>> =
+                HashMap::from([("other_crate".to_string(), HashSet::from(["module".into()]))]);
+            let paths = vec![
+                (
+                    "other_crate::module::item".to_string(),
+                    5,
+                    EdgeContext::Production,
+                ),
+                (
+                    "other_crate::module::item".to_string(),
+                    10,
+                    EdgeContext::Production,
+                ),
+            ];
+            let deps = parse_path_ref_dependencies(
+                &paths,
+                "my_crate",
+                &ws,
+                Path::new("src/main.rs"),
+                &mp,
+                &HashMap::new(),
+            );
+            assert_eq!(
+                deps.len(),
+                1,
+                "same context same target should still dedup: {deps:?}"
+            );
         }
     }
 }

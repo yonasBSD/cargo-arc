@@ -8,7 +8,7 @@ Object.assign(globalThis.STATIC_DATA.classes, {
   arcHitarea: "arc-hitarea", arcCount: "arc-count", arcCountGroup: "arc-count-group",
   arcCountBg: "arc-count-bg", collapseToggle: "collapse-toggle",
   virtualHitarea: "virtual-hitarea", virtualArrow: "virtual-arrow",
-  depArrow: "dep-arrow", cycleArrow: "cycle-arrow",
+  depArrow: "dep-arrow", upwardArrow: "upward-arrow", cycleArrow: "cycle-arrow",
 });
 
 import { Selectors } from "./selectors.js";
@@ -96,8 +96,8 @@ describe("Selectors", () => {
       );
     });
 
-    test("allBaseArrows returns dep-arrow, cycle-arrow", () => {
-      expect(Selectors.allBaseArrows()).toBe(".dep-arrow, .cycle-arrow");
+    test("allBaseArrows returns dep-arrow, upward-arrow, cycle-arrow", () => {
+      expect(Selectors.allBaseArrows()).toBe(".dep-arrow, .upward-arrow, .cycle-arrow");
     });
 
     test("allArcPaths returns dep-arc, cycle-arc, virtual-arc", () => {

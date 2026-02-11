@@ -4,13 +4,13 @@
 
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EdgeContext {
     Production,
     Test(TestKind),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TestKind {
     Unit,
     Integration,
@@ -31,6 +31,7 @@ pub struct DependencyRef {
     pub target_item: Option<String>,
     pub source_file: PathBuf,
     pub line: usize,
+    pub context: EdgeContext,
 }
 
 impl DependencyRef {
@@ -77,6 +78,32 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn test_dependency_ref_carries_context() {
+        let prod_dep = DependencyRef {
+            target_crate: "my_crate".to_string(),
+            target_module: "graph".to_string(),
+            target_item: None,
+            source_file: PathBuf::from("src/lib.rs"),
+            line: 1,
+            context: EdgeContext::Production,
+        };
+        assert_eq!(prod_dep.context, EdgeContext::Production);
+
+        let test_dep = DependencyRef {
+            target_crate: "my_crate".to_string(),
+            target_module: "graph".to_string(),
+            target_item: None,
+            source_file: PathBuf::from("src/lib.rs"),
+            line: 1,
+            context: EdgeContext::Test(TestKind::Unit),
+        };
+        assert_eq!(test_dep.context, EdgeContext::Test(TestKind::Unit));
+
+        // Different context → not equal (PartialEq includes context)
+        assert_ne!(prod_dep, test_dep);
+    }
+
+    #[test]
     fn test_dependency_ref_struct() {
         let dep = DependencyRef {
             target_crate: "my_crate".to_string(),
@@ -84,6 +111,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::from("src/cli.rs"),
             line: 42,
+            context: EdgeContext::Production,
         };
         assert_eq!(dep.target_crate, "my_crate");
         assert_eq!(dep.target_module, "graph");
@@ -100,6 +128,7 @@ mod tests {
             target_item: Some("build".to_string()),
             source_file: PathBuf::new(),
             line: 1,
+            context: EdgeContext::Production,
         };
         assert_eq!(dep.full_target(), "crate::graph::build");
     }
@@ -112,6 +141,7 @@ mod tests {
             target_item: Some("build".to_string()),
             source_file: PathBuf::new(),
             line: 1,
+            context: EdgeContext::Production,
         };
         assert_eq!(dep.module_target(), "crate::graph");
     }
@@ -124,6 +154,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
+            context: EdgeContext::Production,
         };
         assert_eq!(dep.full_target(), "crate::graph");
     }
@@ -136,6 +167,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
+            context: EdgeContext::Production,
         };
         assert_eq!(dep.module_target(), "crate_b");
     }
@@ -148,6 +180,7 @@ mod tests {
             target_item: Some("Symbol".to_string()),
             source_file: PathBuf::new(),
             line: 1,
+            context: EdgeContext::Production,
         };
         assert_eq!(dep.full_target(), "crate_b::Symbol");
     }
@@ -160,6 +193,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
+            context: EdgeContext::Production,
         };
         assert_eq!(dep.full_target(), "crate_b");
     }
@@ -176,6 +210,7 @@ mod tests {
                 target_item: None,
                 source_file: PathBuf::from("src/cli.rs"),
                 line: 5,
+                context: EdgeContext::Production,
             }],
         };
         assert!(

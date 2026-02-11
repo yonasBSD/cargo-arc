@@ -8,7 +8,7 @@ use super::use_parser::{
     collect_all_path_refs, normalize_crate_name, parse_path_ref_dependencies,
     parse_workspace_dependencies,
 };
-use crate::model::{CrateInfo, ModuleInfo, ModuleTree};
+use crate::model::{CrateInfo, EdgeContext, ModuleInfo, ModuleTree};
 
 /// Find root source files (lib.rs and/or main.rs) for a crate.
 /// Returns all existing root files, lib.rs first.
@@ -36,7 +36,7 @@ struct ModDecl {
 }
 
 /// Check whether attributes contain `#[cfg(test)]`.
-fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
+pub(crate) fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
         if !attr.path().is_ident("cfg") {
             return false;
@@ -368,11 +368,14 @@ fn walk_module_syn(
         crate_exports,
     );
 
-    // Merge: use-dependencies first (have priority), then path-dependencies (dedup by full_target)
-    let mut seen: HashSet<String> = use_deps.iter().map(|d| d.full_target()).collect();
+    // Merge: use-dependencies first (have priority), then path-dependencies (dedup by (full_target, context))
+    let mut seen: HashSet<(String, EdgeContext)> = use_deps
+        .iter()
+        .map(|d| (d.full_target(), d.context))
+        .collect();
     let mut dependencies = use_deps;
     for dep in path_deps {
-        if seen.insert(dep.full_target()) {
+        if seen.insert((dep.full_target(), dep.context)) {
             dependencies.push(dep);
         }
     }

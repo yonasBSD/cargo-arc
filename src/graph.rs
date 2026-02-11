@@ -114,7 +114,10 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
             .or_else(|| crate_map.get(from_path))
             .or_else(|| crate_map.get(&from_path.replace('_', "-")))
         {
-            // Group deps by module_target to aggregate symbols into one edge
+            // Group deps by module_target to aggregate symbols into one edge.
+            // Context is derived from the group: Production if any dep is Production,
+            // otherwise Test. This ensures at most one edge per (from, to) node pair,
+            // which the rendering pipeline requires (edge_id = "from-to").
             let mut grouped: HashMap<String, Vec<&DependencyRef>> = HashMap::new();
             for dep in deps {
                 grouped.entry(dep.module_target()).or_default().push(dep);
@@ -124,6 +127,15 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
             sorted_targets.sort_by(|(a, _), (b, _)| a.cmp(b));
 
             for (target, target_deps) in sorted_targets {
+                // Derive context: Production wins over Test
+                let context = if target_deps
+                    .iter()
+                    .any(|d| d.context == EdgeContext::Production)
+                {
+                    EdgeContext::Production
+                } else {
+                    target_deps[0].context
+                };
                 if let Some(&to_idx) = module_map
                     .get(&target)
                     .or_else(|| crate_map.get(&target))
@@ -159,14 +171,7 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
                         })
                         .collect();
 
-                    graph.add_edge(
-                        from_idx,
-                        to_idx,
-                        Edge::ModuleDep {
-                            locations,
-                            context: EdgeContext::Production,
-                        },
-                    );
+                    graph.add_edge(from_idx, to_idx, Edge::ModuleDep { locations, context });
                 }
             }
         }
@@ -443,6 +448,7 @@ mod tests {
                             target_item: None,
                             source_file: PathBuf::from("src/bar.rs"),
                             line: 1,
+                            context: EdgeContext::Production,
                         }],
                     },
                 ],
@@ -508,6 +514,7 @@ mod tests {
                             target_item: None,
                             source_file: PathBuf::from("src/beta.rs"),
                             line: 1,
+                            context: EdgeContext::Production,
                         }],
                     }],
                     dependencies: vec![],
@@ -590,6 +597,7 @@ mod tests {
                     target_item: None,
                     source_file: PathBuf::from("src/lib.rs"),
                     line: 5,
+                    context: EdgeContext::Production,
                 }],
             },
         }];
@@ -656,6 +664,7 @@ mod tests {
                             target_item: Some("Widget".to_string()),
                             source_file: PathBuf::from("src/beta.rs"),
                             line: 3,
+                            context: EdgeContext::Production,
                         }],
                     }],
                     dependencies: vec![],
@@ -729,6 +738,7 @@ mod tests {
                         target_item: None,
                         source_file: PathBuf::from("src/lib.rs"),
                         line: 2,
+                        context: EdgeContext::Production,
                     }],
                 },
             },
@@ -802,6 +812,7 @@ mod tests {
                         target_item: Some("Config".to_string()),
                         source_file: PathBuf::from("src/lib.rs"),
                         line: 1,
+                        context: EdgeContext::Production,
                     }],
                 },
             },
@@ -841,5 +852,139 @@ mod tests {
             found,
             "expected ModuleDep from crate_a Crate to crate_b Crate"
         );
+    }
+
+    #[test]
+    fn test_cfg_test_dep_creates_test_edge() {
+        use crate::model::ModuleInfo;
+
+        let crates = vec![CrateInfo {
+            name: "my_crate".to_string(),
+            path: PathBuf::from("/path/to/crate"),
+            dependencies: vec![],
+            dev_dependencies: vec![],
+        }];
+
+        let modules = vec![ModuleTree {
+            root: ModuleInfo {
+                name: "my_crate".to_string(),
+                full_path: "crate".to_string(),
+                children: vec![
+                    ModuleInfo {
+                        name: "foo".to_string(),
+                        full_path: "crate::foo".to_string(),
+                        children: vec![],
+                        dependencies: vec![],
+                    },
+                    ModuleInfo {
+                        name: "bar".to_string(),
+                        full_path: "crate::bar".to_string(),
+                        children: vec![],
+                        dependencies: vec![DependencyRef {
+                            target_crate: "crate".to_string(),
+                            target_module: "foo".to_string(),
+                            target_item: Some("helper".to_string()),
+                            source_file: PathBuf::from("src/bar.rs"),
+                            line: 5,
+                            context: EdgeContext::Test(TestKind::Unit),
+                        }],
+                    },
+                ],
+                dependencies: vec![],
+            },
+        }];
+
+        let graph = build_graph(&crates, &modules);
+
+        let mut found_test_edge = false;
+        for edge_idx in graph.edge_indices() {
+            if let Edge::ModuleDep { context, .. } = &graph[edge_idx] {
+                if *context == EdgeContext::Test(TestKind::Unit) {
+                    found_test_edge = true;
+                }
+            }
+        }
+        assert!(
+            found_test_edge,
+            "Test(Unit) dep should create ModuleDep with Test(Unit) context"
+        );
+    }
+
+    #[test]
+    fn test_mixed_context_merges_into_production_edge() {
+        use crate::model::ModuleInfo;
+
+        let crates = vec![CrateInfo {
+            name: "my_crate".to_string(),
+            path: PathBuf::from("/path/to/crate"),
+            dependencies: vec![],
+            dev_dependencies: vec![],
+        }];
+
+        // bar depends on foo twice: once Production, once Test(Unit)
+        let modules = vec![ModuleTree {
+            root: ModuleInfo {
+                name: "my_crate".to_string(),
+                full_path: "crate".to_string(),
+                children: vec![
+                    ModuleInfo {
+                        name: "foo".to_string(),
+                        full_path: "crate::foo".to_string(),
+                        children: vec![],
+                        dependencies: vec![],
+                    },
+                    ModuleInfo {
+                        name: "bar".to_string(),
+                        full_path: "crate::bar".to_string(),
+                        children: vec![],
+                        dependencies: vec![
+                            DependencyRef {
+                                target_crate: "crate".to_string(),
+                                target_module: "foo".to_string(),
+                                target_item: Some("run".to_string()),
+                                source_file: PathBuf::from("src/bar.rs"),
+                                line: 1,
+                                context: EdgeContext::Production,
+                            },
+                            DependencyRef {
+                                target_crate: "crate".to_string(),
+                                target_module: "foo".to_string(),
+                                target_item: Some("test_helper".to_string()),
+                                source_file: PathBuf::from("src/bar.rs"),
+                                line: 10,
+                                context: EdgeContext::Test(TestKind::Unit),
+                            },
+                        ],
+                    },
+                ],
+                dependencies: vec![],
+            },
+        }];
+
+        let graph = build_graph(&crates, &modules);
+
+        // Mixed contexts merge into one edge with Production context,
+        // preserving all locations (rendering requires one edge per node pair)
+        let mut edge_count = 0;
+        let mut context_is_production = false;
+        let mut location_count = 0;
+        for edge_idx in graph.edge_indices() {
+            if let Edge::ModuleDep { context, locations } = &graph[edge_idx] {
+                let (from, to) = graph.edge_endpoints(edge_idx).unwrap();
+                if matches!(&graph[from], Node::Module { name, .. } if name == "bar")
+                    && matches!(&graph[to], Node::Module { name, .. } if name == "foo")
+                {
+                    edge_count += 1;
+                    context_is_production = *context == EdgeContext::Production;
+                    location_count = locations.len();
+                }
+            }
+        }
+        assert_eq!(edge_count, 1, "mixed contexts should merge into one edge");
+        assert!(
+            context_is_production,
+            "merged edge should have Production context"
+        );
+        assert_eq!(location_count, 2, "both locations should be preserved");
     }
 }
