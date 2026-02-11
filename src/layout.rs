@@ -17,6 +17,127 @@ pub struct Cycle {
     pub nodes: Vec<NodeIndex>,
 }
 
+/// Log debug info about cycles found in the condensed graph (SCCs with >1 node).
+fn log_condensed_cycles(
+    sccs: &[Vec<petgraph::graph::NodeIndex>],
+    condensed: &DiGraph<NodeIndex, ()>,
+    node_to_rep: &HashMap<NodeIndex, NodeIndex>,
+    rep_to_condensed: &HashMap<NodeIndex, petgraph::graph::NodeIndex>,
+    graph: &ArcGraph,
+) {
+    let node_label = |idx: NodeIndex| -> String {
+        match &graph[idx] {
+            crate::graph::Node::Crate { name, .. } => format!("Crate({name})"),
+            crate::graph::Node::Module { name, crate_idx } => {
+                let crate_name = match &graph[*crate_idx] {
+                    crate::graph::Node::Crate { name, .. } => name.as_str(),
+                    _ => "?",
+                };
+                format!("Module({crate_name}::{name})")
+            }
+        }
+    };
+
+    for scc in sccs {
+        if scc.len() <= 1 {
+            continue;
+        }
+        let scc_set: HashSet<_> = scc.iter().copied().collect();
+        let scc_names: Vec<_> = scc.iter().map(|&ci| node_label(condensed[ci])).collect();
+        tracing::warn!(
+            "Cycle in condensed graph ({} nodes): {}",
+            scc.len(),
+            scc_names.join(", ")
+        );
+
+        for edge_idx in graph.edge_indices() {
+            let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
+            let src_rep = node_to_rep[&src];
+            let dst_rep = node_to_rep[&dst];
+            if src_rep == dst_rep {
+                continue;
+            }
+            let src_cond = rep_to_condensed[&src_rep];
+            let dst_cond = rep_to_condensed[&dst_rep];
+            if !scc_set.contains(&src_cond) || !scc_set.contains(&dst_cond) {
+                continue;
+            }
+            match &graph[edge_idx] {
+                Edge::CrateDep => {
+                    tracing::warn!("  CrateDep: {} -> {}", node_label(src), node_label(dst));
+                }
+                Edge::ModuleDep(locs) => {
+                    let loc_strs: Vec<_> = locs
+                        .iter()
+                        .map(|l| {
+                            format!(
+                                "{}:{} use {} ({})",
+                                l.file.display(),
+                                l.line,
+                                l.symbols.join(", "),
+                                l.module_path
+                            )
+                        })
+                        .collect();
+                    tracing::warn!(
+                        "  ModuleDep: {} -> {} [{}]",
+                        node_label(src),
+                        node_label(dst),
+                        loc_strs.join("; ")
+                    );
+                }
+                Edge::Contains => {}
+            }
+        }
+    }
+}
+
+/// Break cycles in the condensed graph via SCC condensation and alphabetical expansion.
+///
+/// Builds a meta-condensed-graph (each SCC = one node), topologically sorts it
+/// (guaranteed DAG after SCC condensation), then expands SCC members alphabetically.
+fn sort_with_cycle_breaking(
+    condensed: &DiGraph<NodeIndex, ()>,
+    sccs: Vec<Vec<petgraph::graph::NodeIndex>>,
+    node_name: &dyn Fn(NodeIndex) -> String,
+) -> Vec<petgraph::graph::NodeIndex> {
+    use petgraph::algo::toposort;
+
+    // Meta-condensed-graph: each SCC becomes one node
+    let mut meta_graph: DiGraph<Vec<petgraph::graph::NodeIndex>, ()> = DiGraph::new();
+    let mut cond_to_meta: HashMap<petgraph::graph::NodeIndex, petgraph::graph::NodeIndex> =
+        HashMap::new();
+
+    for scc in sccs {
+        let meta_idx = meta_graph.add_node(scc.clone());
+        for &cond_idx in &scc {
+            cond_to_meta.insert(cond_idx, meta_idx);
+        }
+    }
+
+    // Transfer edges between meta-nodes (skip intra-SCC edges)
+    for edge in condensed.edge_references() {
+        let src_meta = cond_to_meta[&edge.source()];
+        let dst_meta = cond_to_meta[&edge.target()];
+        if src_meta != dst_meta && !meta_graph.contains_edge(src_meta, dst_meta) {
+            meta_graph.add_edge(src_meta, dst_meta, ());
+        }
+    }
+
+    // Toposort on meta-graph (SCC condensation guarantees DAG)
+    let meta_order = toposort(&meta_graph, None).expect("SCC condensation guarantees DAG");
+
+    // Expand: SCC members sorted alphabetically by node_name
+    meta_order
+        .into_iter()
+        .flat_map(|meta_idx| {
+            let mut members = meta_graph[meta_idx].clone();
+            members.sort_by_key(|&idx| node_name(condensed[idx]));
+            members
+        })
+        .collect()
+}
+
 /// Topologically sort graph nodes, treating cycle members as a unit.
 /// Only considers CrateDep and ModuleDep edges (ignores Contains edges).
 /// Cycle nodes are sorted alphabetically within their group.
@@ -86,20 +207,21 @@ pub fn topo_sort(graph: &ArcGraph, cycles: &[Cycle]) -> Vec<NodeIndex> {
         }
     }
 
-    // Topological sort on condensed graph (dependents first: modules that depend on others come first)
-    let sorted_reps: Vec<_> = match toposort(&condensed, None) {
-        Ok(order) => order, // No .rev() - dependents appear before their dependencies
-        Err(_) => {
-            // Cycle in condensed graph shouldn't happen, but fallback to node order
-            condensed.node_indices().collect()
-        }
-    };
-
     // Helper to get node name for sorting
     let node_name = |idx: NodeIndex| -> String {
         match &graph[idx] {
             crate::graph::Node::Crate { name, .. } => name.clone(),
             crate::graph::Node::Module { name, .. } => name.clone(),
+        }
+    };
+
+    // Topological sort on condensed graph (dependents first: modules that depend on others come first)
+    let sorted_reps: Vec<_> = match toposort(&condensed, None) {
+        Ok(order) => order, // No .rev() - dependents appear before their dependencies
+        Err(_) => {
+            let sccs = tarjan_scc(&condensed);
+            log_condensed_cycles(&sccs, &condensed, &node_to_rep, &rep_to_condensed, graph);
+            sort_with_cycle_breaking(&condensed, sccs, &node_name)
         }
     };
 
@@ -396,14 +518,12 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
                     let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
                     let src_crate = crate_of(src);
                     let dst_crate = crate_of(dst);
-                    if src_crate != dst_crate {
-                        if let (Some(&sc), Some(&dc)) =
+                    if src_crate != dst_crate
+                        && let (Some(&sc), Some(&dc)) =
                             (crate_to_node.get(&src_crate), crate_to_node.get(&dst_crate))
-                        {
-                            if !crate_graph.contains_edge(sc, dc) {
-                                crate_graph.add_edge(sc, dc, ());
-                            }
-                        }
+                        && !crate_graph.contains_edge(sc, dc)
+                    {
+                        crate_graph.add_edge(sc, dc, ());
                     }
                 }
                 Edge::Contains => {}
@@ -1636,5 +1756,180 @@ mod tests {
             EdgeKind::Downward,
             "Inter-crate module dep should be Downward, not Upward"
         );
+    }
+
+    // === Cycle-Breaking Tests (ca-0170) ===
+
+    #[test]
+    fn test_sort_with_cycle_breaking_two_node_cycle() {
+        use std::path::PathBuf;
+
+        // 2 Crates with mixed-edge cycle:
+        //   CrateDep: alpha → beta
+        //   ModuleDep: beta → alpha (simulates cfg(test) root-level use)
+        // detect_cycles finds nothing (no pure ModuleDep cycle).
+        // topo_sort Err-Branch triggers → should resolve alphabetically.
+        //
+        // NOTE: beta added BEFORE alpha so node_indices() would return
+        // [beta, alpha] — proving cycle-breaking sorts, not just preserves insertion order.
+        let mut graph = ArcGraph::new();
+        let beta = graph.add_node(Node::Crate {
+            name: "beta".into(),
+            path: PathBuf::new(),
+        });
+        let alpha = graph.add_node(Node::Crate {
+            name: "alpha".into(),
+            path: PathBuf::new(),
+        });
+        graph.add_edge(alpha, beta, Edge::CrateDep);
+        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+
+        let cycles = detect_cycles(&graph);
+        assert!(cycles.is_empty(), "No pure ModuleDep cycle expected");
+
+        let sorted = topo_sort(&graph, &cycles);
+        let names: Vec<&str> = sorted
+            .iter()
+            .map(|&idx| match &graph[idx] {
+                Node::Crate { name, .. } => name.as_str(),
+                Node::Module { name, .. } => name.as_str(),
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec!["alpha", "beta"],
+            "SCC should be sorted alphabetically"
+        );
+    }
+
+    #[test]
+    fn test_sort_with_cycle_breaking_three_node_partial() {
+        use std::path::PathBuf;
+
+        // 3 Crates: alpha ↔ beta (mixed cycle), gamma depends on alpha.
+        //   CrateDep: alpha → beta, alpha → gamma
+        //   ModuleDep: beta → alpha (cfg(test) cycle)
+        // SCC: {alpha, beta}, gamma is standalone.
+        // Expected: alpha, beta (SCC alphabetical) before gamma (depends on alpha).
+        //
+        // NOTE: gamma added first so node_indices() order would be [gamma, beta, alpha].
+        let mut graph = ArcGraph::new();
+        let gamma = graph.add_node(Node::Crate {
+            name: "gamma".into(),
+            path: PathBuf::new(),
+        });
+        let beta = graph.add_node(Node::Crate {
+            name: "beta".into(),
+            path: PathBuf::new(),
+        });
+        let alpha = graph.add_node(Node::Crate {
+            name: "alpha".into(),
+            path: PathBuf::new(),
+        });
+        graph.add_edge(alpha, beta, Edge::CrateDep);
+        graph.add_edge(alpha, gamma, Edge::CrateDep);
+        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+
+        let cycles = detect_cycles(&graph);
+        assert!(cycles.is_empty(), "No pure ModuleDep cycle expected");
+
+        let sorted = topo_sort(&graph, &cycles);
+        let names: Vec<&str> = sorted
+            .iter()
+            .map(|&idx| match &graph[idx] {
+                Node::Crate { name, .. } => name.as_str(),
+                Node::Module { name, .. } => name.as_str(),
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec!["alpha", "beta", "gamma"],
+            "SCC [alpha,beta] alphabetical, then gamma (dependent)"
+        );
+    }
+
+    #[test]
+    fn test_sort_with_cycle_breaking_combined_levels() {
+        use std::path::PathBuf;
+
+        // Combined Ebene-1 (ModuleDep cycle) + Ebene-2 (mixed cycle):
+        //   Crate("alpha") contains mod_a, mod_b
+        //   ModuleDep: mod_a ↔ mod_b (Ebene-1 cycle, detected by detect_cycles)
+        //   CrateDep: alpha → beta
+        //   ModuleDep: beta → alpha (Ebene-2 cycle, NOT detected by detect_cycles)
+        //
+        // detect_cycles → [{mod_a, mod_b}]
+        // Condensed graph: alpha, Rep(mod_a,mod_b), beta — cycle alpha ↔ beta
+        // sort_with_cycle_breaking resolves Ebene-2, expansion resolves Ebene-1
+        // Expected: [alpha, mod_a, mod_b, beta]
+        //
+        // NOTE: beta added first so arbitrary order would differ.
+        let mut graph = ArcGraph::new();
+        let beta = graph.add_node(Node::Crate {
+            name: "beta".into(),
+            path: PathBuf::new(),
+        });
+        let alpha = graph.add_node(Node::Crate {
+            name: "alpha".into(),
+            path: PathBuf::new(),
+        });
+        let mod_b = graph.add_node(Node::Module {
+            name: "mod_b".into(),
+            crate_idx: alpha,
+        });
+        let mod_a = graph.add_node(Node::Module {
+            name: "mod_a".into(),
+            crate_idx: alpha,
+        });
+
+        // Hierarchy
+        graph.add_edge(alpha, mod_a, Edge::Contains);
+        graph.add_edge(alpha, mod_b, Edge::Contains);
+
+        // Ebene-1 cycle: mod_a ↔ mod_b (pure ModuleDep)
+        graph.add_edge(mod_a, mod_b, Edge::ModuleDep(vec![]));
+        graph.add_edge(mod_b, mod_a, Edge::ModuleDep(vec![]));
+
+        // Ebene-2 mixed cycle: alpha → beta (CrateDep), beta → alpha (ModuleDep)
+        graph.add_edge(alpha, beta, Edge::CrateDep);
+        graph.add_edge(beta, alpha, Edge::ModuleDep(vec![]));
+
+        let cycles = detect_cycles(&graph);
+        assert_eq!(
+            cycles.len(),
+            1,
+            "Should detect Ebene-1 cycle (mod_a ↔ mod_b)"
+        );
+
+        let sorted = topo_sort(&graph, &cycles);
+        let names: Vec<&str> = sorted
+            .iter()
+            .map(|&idx| match &graph[idx] {
+                Node::Crate { name, .. } => name.as_str(),
+                Node::Module { name, .. } => name.as_str(),
+            })
+            .collect();
+
+        // Invariants:
+        // 1. alpha before beta (Ebene-2 SCC resolved alphabetically)
+        let pos_alpha = names.iter().position(|&n| n == "alpha").unwrap();
+        let pos_beta = names.iter().position(|&n| n == "beta").unwrap();
+        assert!(
+            pos_alpha < pos_beta,
+            "alpha before beta (Ebene-2 SCC alphabetical). Got: {:?}",
+            names
+        );
+
+        // 2. mod_a before mod_b (Ebene-1 cycle resolved alphabetically)
+        let pos_mod_a = names.iter().position(|&n| n == "mod_a").unwrap();
+        let pos_mod_b = names.iter().position(|&n| n == "mod_b").unwrap();
+        assert!(
+            pos_mod_a < pos_mod_b,
+            "mod_a before mod_b (Ebene-1 cycle alphabetical). Got: {:?}",
+            names
+        );
+
+        // 3. All 4 nodes present
+        assert_eq!(names.len(), 4, "All nodes present. Got: {:?}", names);
     }
 }

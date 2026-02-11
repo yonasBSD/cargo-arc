@@ -43,3 +43,4 @@ src/
 | 014 | [Discover JS Modules at Build Time](adr/014-build-time-js-module-registry.md) | Active | 2026-01-30 |
 | 015 | [Use foreignObject HTML for SVG Panels](adr/015-foreign-object-html-for-panels.md) | Active | 2026-01-31 |
 | 016 | [Replace Tooltip with Persistent Sidebar](adr/016-sidebar-replaces-tooltip.md) | Active | 2026-01-31 |
+| 017 | [SCC Condensation for Deterministic Cycle Resolution](adr/017-scc-condensation-for-cycle-resolution.md) | Active | 2026-02-11 |
