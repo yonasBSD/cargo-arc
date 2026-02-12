@@ -1,0 +1,3 @@
+[workspace]
+members = ["crate_with_tests", "test_only_crate", "crate_lib"]
+resolver = "2"

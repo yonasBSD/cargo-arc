@@ -46,9 +46,9 @@ pub struct Args {
     #[arg(long)]
     pub no_default_features: bool,
 
-    /// Cfg flag to enable (e.g., --cfg test to include test code)
-    #[arg(long = "cfg", value_name = "CFG")]
-    pub cfg: Vec<String>,
+    /// Include test code in analysis (unit tests, integration tests)
+    #[arg(long)]
+    pub include_tests: bool,
 
     /// Enable debug output to stderr (shows filtering decisions)
     #[arg(long)]
@@ -120,7 +120,7 @@ pub fn run(args: Args) -> Result<()> {
         features: args.features,
         all_features: args.all_features,
         no_default_features: args.no_default_features,
-        cfg_flags: args.cfg,
+        include_tests: args.include_tests,
         debug: args.debug,
     };
 
@@ -245,9 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_cfg_flag() {
-        let args = parse_args(&["cargo", "arc", "--cfg", "test"]);
-        assert_eq!(args.cfg, vec!["test"]);
+    fn test_cli_include_tests_flag() {
+        let args = parse_args(&["cargo", "arc", "--include-tests"]);
+        assert!(args.include_tests);
     }
 
     #[test]
@@ -307,7 +307,7 @@ mod tests {
             features: vec![],
             all_features: false,
             no_default_features: false,
-            cfg: vec![],
+            include_tests: false,
             debug: false,
             volatility: false,
             no_volatility: false,

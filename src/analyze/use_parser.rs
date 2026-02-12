@@ -6,25 +6,26 @@ use std::path::Path;
 use syn::UseTree;
 use syn::visit::Visit;
 
-fn context_from_test_flag(in_test: bool) -> EdgeContext {
-    if in_test {
-        EdgeContext::Test(TestKind::Unit)
-    } else {
-        EdgeContext::Production
+/// Promote any context to a test context. Production becomes Unit test;
+/// already-test contexts are preserved (idempotent for test contexts).
+fn promote_to_test(base: EdgeContext) -> EdgeContext {
+    match base {
+        EdgeContext::Production => EdgeContext::Test(TestKind::Unit),
+        already_test => already_test,
     }
 }
 
-/// Shared `visit_item_mod` for cfg(test) scope tracking.
+/// Shared `visit_item_mod` for cfg(test) scope tracking via EdgeContext.
 /// Used by both `UseCollector` and `PathRefCollector` — the logic is identical.
 macro_rules! impl_cfg_test_visit_item_mod {
     () => {
         fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-            let was_in_cfg_test = self.in_cfg_test;
+            let prev_context = self.context;
             if super::syn_walker::is_cfg_test(&node.attrs) {
-                self.in_cfg_test = true;
+                self.context = promote_to_test(self.context);
             }
             syn::visit::visit_item_mod(self, node);
-            self.in_cfg_test = was_in_cfg_test;
+            self.context = prev_context;
         }
     };
 }
@@ -36,23 +37,29 @@ macro_rules! impl_cfg_test_visit_item_mod {
 /// Returns `(ItemUse, EdgeContext)` tuples: uses inside `#[cfg(test)]` scopes
 /// or with `#[cfg(test)]` on the item itself are tagged `Test(Unit)`,
 /// all others are `Production`.
-pub(crate) fn collect_all_use_items(syntax: &syn::File) -> Vec<(syn::ItemUse, EdgeContext)> {
+pub(crate) fn collect_all_use_items(
+    syntax: &syn::File,
+    base_context: EdgeContext,
+) -> Vec<(syn::ItemUse, EdgeContext)> {
     struct UseCollector {
         uses: Vec<(syn::ItemUse, EdgeContext)>,
-        in_cfg_test: bool,
+        context: EdgeContext,
     }
     impl<'ast> Visit<'ast> for UseCollector {
         fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
-            let is_test = self.in_cfg_test || super::syn_walker::is_cfg_test(&node.attrs);
-            self.uses
-                .push((node.clone(), context_from_test_flag(is_test)));
+            let ctx = if super::syn_walker::is_cfg_test(&node.attrs) {
+                promote_to_test(self.context)
+            } else {
+                self.context
+            };
+            self.uses.push((node.clone(), ctx));
         }
 
         impl_cfg_test_visit_item_mod!();
     }
     let mut collector = UseCollector {
         uses: Vec::new(),
-        in_cfg_test: false,
+        context: base_context,
     };
     collector.visit_file(syntax);
     collector.uses
@@ -62,10 +69,13 @@ pub(crate) fn collect_all_use_items(syntax: &syn::File) -> Vec<(syn::ItemUse, Ed
 /// Uses `syn::visit::Visit` to traverse expressions, types, patterns, and trait bounds.
 /// Returns `(path_string, line_number, EdgeContext)` tuples: references inside
 /// `#[cfg(test)]` scopes are tagged `Test(Unit)`, all others `Production`.
-pub(crate) fn collect_all_path_refs(syntax: &syn::File) -> Vec<(String, usize, EdgeContext)> {
+pub(crate) fn collect_all_path_refs(
+    syntax: &syn::File,
+    base_context: EdgeContext,
+) -> Vec<(String, usize, EdgeContext)> {
     struct PathRefCollector {
         paths: Vec<(String, usize, EdgeContext)>,
-        in_cfg_test: bool,
+        context: EdgeContext,
     }
     impl<'ast> Visit<'ast> for PathRefCollector {
         fn visit_path(&mut self, node: &'ast syn::Path) {
@@ -81,8 +91,7 @@ pub(crate) fn collect_all_path_refs(syntax: &syn::File) -> Vec<(String, usize, E
                     .first()
                     .map(|s| s.ident.span().start().line)
                     .unwrap_or(0);
-                self.paths
-                    .push((path_str, line, context_from_test_flag(self.in_cfg_test)));
+                self.paths.push((path_str, line, self.context));
             }
             // Continue visiting nested paths (e.g. in generics)
             syn::visit::visit_path(self, node);
@@ -92,7 +101,7 @@ pub(crate) fn collect_all_path_refs(syntax: &syn::File) -> Vec<(String, usize, E
     }
     let mut collector = PathRefCollector {
         paths: Vec::new(),
-        in_cfg_test: false,
+        context: base_context,
     };
     collector.visit_file(syntax);
     collector.paths
@@ -488,7 +497,7 @@ pub(crate) fn parse_workspace_dependencies_from_source(
         Ok(f) => f,
         Err(_) => return Vec::new(),
     };
-    let uses = collect_all_use_items(&syntax);
+    let uses = collect_all_use_items(&syntax, EdgeContext::Production);
     parse_workspace_dependencies(
         &uses,
         current_crate,
@@ -505,7 +514,7 @@ mod tests {
     use std::path::Path;
 
     fn parse_test_uses(source: &str) -> Vec<(syn::ItemUse, EdgeContext)> {
-        collect_all_use_items(&syn::parse_file(source).unwrap())
+        collect_all_use_items(&syn::parse_file(source).unwrap(), EdgeContext::Production)
     }
 
     mod normalize_tests {
@@ -1240,7 +1249,7 @@ use serde::Serialize;
         #[test]
         fn top_level_use_found() {
             let syntax = syn::parse_file("use foo::Bar;").unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1);
         }
 
@@ -1252,7 +1261,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1, "use inside fn body must be found");
         }
 
@@ -1266,7 +1275,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1, "use in nested block must be found");
         }
 
@@ -1280,7 +1289,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(
                 uses.len(),
                 2,
@@ -1300,7 +1309,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(
                 uses.len(),
                 2,
@@ -1322,7 +1331,7 @@ mod tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1);
             assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
         }
@@ -1335,7 +1344,7 @@ mod normal {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1);
             assert_eq!(uses[0].1, EdgeContext::Production);
         }
@@ -1347,7 +1356,7 @@ mod normal {
 use other_crate::test_helper;
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1);
             assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
         }
@@ -1363,7 +1372,7 @@ mod tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1);
             assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
         }
@@ -1380,7 +1389,7 @@ fn test_helper() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax);
+            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
             assert_eq!(uses.len(), 1);
             // fn-level cfg(test) is NOT propagated — use is tagged Production
             assert_eq!(uses[0].1, EdgeContext::Production);
@@ -1398,7 +1407,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             assert!(
                 refs.iter().any(|(p, _, _)| p == "my_server::run"),
                 "should collect my_server::run, found: {refs:?}"
@@ -1413,7 +1422,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             assert!(
                 refs.iter().any(|(p, _, _)| p == "my_lib::Config"),
                 "should collect my_lib::Config, found: {refs:?}"
@@ -1432,7 +1441,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             assert!(
                 refs.iter().any(|(p, _, _)| p == "my_lib::check"),
                 "should collect my_lib::check, found: {refs:?}"
@@ -1445,7 +1454,7 @@ fn main() {
 fn process<T: my_lib::Trait>(_t: T) {}
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             assert!(
                 refs.iter().any(|(p, _, _)| p == "my_lib::Trait"),
                 "should collect my_lib::Trait, found: {refs:?}"
@@ -1460,7 +1469,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             assert!(
                 refs.iter().any(|(p, _, _)| p == "my_lib::Config"),
                 "should collect my_lib::Config from struct literal, found: {refs:?}"
@@ -1476,7 +1485,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             // "println" is a single segment → not collected
             assert!(
                 !refs.iter().any(|(p, _, _)| p == "println"),
@@ -1492,7 +1501,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             assert!(
                 refs.iter().any(|(p, _, _)| p == "my_lib::Config::default"),
                 "should collect full path my_lib::Config::default, found: {refs:?}"
@@ -1508,7 +1517,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             assert!(
                 refs.iter().any(|(p, _, _)| p == "my_server::run"),
                 "should collect my_server::run, found: {refs:?}"
@@ -1535,7 +1544,7 @@ mod tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             let matching: Vec<_> = refs
                 .iter()
                 .filter(|(p, _, _)| p == "other_crate::module::helper")
@@ -1555,7 +1564,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
             let matching: Vec<_> = refs
                 .iter()
                 .filter(|(p, _, _)| p == "other_crate::module::run")

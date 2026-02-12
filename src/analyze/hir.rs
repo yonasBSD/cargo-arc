@@ -8,7 +8,7 @@ pub struct FeatureConfig {
     pub features: Vec<String>,
     pub all_features: bool,
     pub no_default_features: bool,
-    pub cfg_flags: Vec<String>,
+    pub include_tests: bool,
     pub debug: bool,
 }
 
@@ -49,7 +49,7 @@ pub fn cargo_config_with_features(config: &FeatureConfig) -> project_model::Carg
         })
         .collect();
 
-    let include_test = config.cfg_flags.contains(&"test".to_string());
+    let include_test = config.include_tests;
     if include_test {
         enable_cfgs.push(CfgAtom::Flag(hir::Symbol::intern("test")));
     }
@@ -359,7 +359,7 @@ mod tests {
         let config = FeatureConfig::default();
         assert!(config.features.is_empty());
         assert!(!config.all_features);
-        assert!(config.cfg_flags.is_empty());
+        assert!(!config.include_tests);
         assert!(!config.no_default_features);
     }
 
@@ -410,7 +410,7 @@ mod hir_tests {
     #[test]
     fn test_cargo_config_includes_test_when_flag_set() {
         let config = FeatureConfig {
-            cfg_flags: vec!["test".to_string()],
+            include_tests: true,
             ..Default::default()
         };
         let cargo_config = cargo_config_with_features(&config);

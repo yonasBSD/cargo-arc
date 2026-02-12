@@ -8,10 +8,11 @@ use super::use_parser::{
     collect_all_path_refs, normalize_crate_name, parse_path_ref_dependencies,
     parse_workspace_dependencies,
 };
-use crate::model::{CrateInfo, EdgeContext, ModuleInfo, ModuleTree};
+use crate::model::{CrateInfo, EdgeContext, ModuleInfo, ModuleTree, TestKind};
 
 /// Find root source files (lib.rs and/or main.rs) for a crate.
 /// Returns all existing root files, lib.rs first.
+/// Returns empty Vec (not error) when src/ is missing but tests/ exists (test-only crate).
 fn find_crate_root_files(crate_path: &Path) -> Result<Vec<PathBuf>> {
     let src = crate_path.join("src");
     let mut roots = Vec::new();
@@ -24,9 +25,37 @@ fn find_crate_root_files(crate_path: &Path) -> Result<Vec<PathBuf>> {
         roots.push(main_rs);
     }
     if roots.is_empty() {
+        // Test-only crates (no src/ but have tests/) are valid
+        let tests_dir = crate_path.join("tests");
+        if tests_dir.is_dir() {
+            return Ok(roots);
+        }
         bail!("no lib.rs or main.rs found in {}", src.display());
     }
     Ok(roots)
+}
+
+/// Find integration test files in `tests/*.rs`.
+/// Each top-level `.rs` file is an independent test binary.
+/// Subdirectory modules (e.g. `tests/common/mod.rs`) are NOT included.
+fn find_integration_test_files(crate_path: &Path) -> Vec<PathBuf> {
+    let tests_dir = crate_path.join("tests");
+    if !tests_dir.is_dir() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    let entries = match std::fs::read_dir(&tests_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+    files.sort(); // deterministic order
+    files
 }
 
 /// A declared `mod` item (external, not inline).
@@ -72,15 +101,15 @@ fn extract_path_attribute(attrs: &[syn::Attribute]) -> Option<String> {
 
 /// Extract external `mod` declarations from a parsed syntax tree,
 /// filtering out `#[cfg(test)]` modules (unless included) and inline modules.
-fn extract_mod_declarations(syntax: &syn::File, include_cfg_test: bool) -> Vec<ModDecl> {
+fn extract_mod_declarations(syntax: &syn::File, include_tests: bool) -> Vec<ModDecl> {
     let mut decls = Vec::new();
     for item in &syntax.items {
         if let syn::Item::Mod(item_mod) = item {
             if item_mod.content.is_some() {
                 continue;
             }
-            // Skip #[cfg(test)] modules unless --cfg test was passed
-            if !include_cfg_test && is_cfg_test(&item_mod.attrs) {
+            // Skip #[cfg(test)] modules unless --include-tests was passed
+            if !include_tests && is_cfg_test(&item_mod.attrs) {
                 continue;
             }
             decls.push(ModDecl {
@@ -94,12 +123,12 @@ fn extract_mod_declarations(syntax: &syn::File, include_cfg_test: bool) -> Vec<M
 
 /// Parse a Rust source file and return all external `mod` declarations.
 /// Convenience wrapper around `extract_mod_declarations` for callers with a file path.
-fn parse_mod_declarations(file_path: &Path, include_cfg_test: bool) -> Result<Vec<ModDecl>> {
+fn parse_mod_declarations(file_path: &Path, include_tests: bool) -> Result<Vec<ModDecl>> {
     let source = std::fs::read_to_string(file_path)
         .with_context(|| format!("reading {}", file_path.display()))?;
     let syntax =
         syn::parse_file(&source).with_context(|| format!("parsing {}", file_path.display()))?;
-    Ok(extract_mod_declarations(&syntax, include_cfg_test))
+    Ok(extract_mod_declarations(&syntax, include_tests))
 }
 
 /// Resolve a module name to its file path.
@@ -140,9 +169,9 @@ fn walk_modules_for_paths(
     file_path: &Path,
     parent_path: &str,
     paths: &mut HashSet<String>,
-    include_cfg_test: bool,
+    include_tests: bool,
 ) {
-    let decls = match parse_mod_declarations(file_path, include_cfg_test) {
+    let decls = match parse_mod_declarations(file_path, include_tests) {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!("skipping {}: {e:#}", file_path.display());
@@ -168,7 +197,7 @@ fn walk_modules_for_paths(
         paths.insert(child_full.clone());
 
         if let Some(resolved) = child_path {
-            walk_modules_for_paths(&resolved, &child_full, paths, include_cfg_test);
+            walk_modules_for_paths(&resolved, &child_full, paths, include_tests);
         }
     }
 }
@@ -178,7 +207,7 @@ fn walk_modules_for_paths(
 pub(crate) fn collect_syn_module_paths(
     crate_root: &Path,
     crate_name: &str,
-    include_cfg_test: bool,
+    include_tests: bool,
 ) -> HashSet<String> {
     let _ = crate_name; // unused; kept for API parity with collect_hir_module_paths
     let root_files = match find_crate_root_files(crate_root) {
@@ -190,7 +219,7 @@ pub(crate) fn collect_syn_module_paths(
     };
     let mut paths = HashSet::new();
     for root_file in root_files {
-        walk_modules_for_paths(&root_file, "", &mut paths, include_cfg_test);
+        walk_modules_for_paths(&root_file, "", &mut paths, include_tests);
     }
     paths
 }
@@ -306,7 +335,9 @@ fn walk_module_syn(
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
     crate_exports: &HashMap<String, HashSet<String>>,
-    include_cfg_test: bool,
+    include_tests: bool,
+    base_context: EdgeContext,
+    is_crate_root: bool,
 ) -> ModuleInfo {
     let full_path = if parent_path == module_name {
         // root module: full_path == crate name
@@ -347,7 +378,7 @@ fn walk_module_syn(
         .unwrap_or_else(|_| file_path.to_path_buf());
 
     // Extract use items from all scopes (top-level + fn bodies + nested blocks)
-    let use_items = super::use_parser::collect_all_use_items(&syntax);
+    let use_items = super::use_parser::collect_all_use_items(&syntax, base_context);
     let use_deps = parse_workspace_dependencies(
         &use_items,
         crate_name,
@@ -358,7 +389,7 @@ fn walk_module_syn(
     );
 
     // Extract qualified path references (e.g. my_lib::run(), let x: my_lib::Config)
-    let path_refs = collect_all_path_refs(&syntax);
+    let path_refs = collect_all_path_refs(&syntax, base_context);
     let path_deps = parse_path_ref_dependencies(
         &path_refs,
         crate_name,
@@ -381,9 +412,15 @@ fn walk_module_syn(
     }
 
     // Extract mod declarations from the same AST (no second file read)
-    let decls = extract_mod_declarations(&syntax, include_cfg_test);
+    let decls = extract_mod_declarations(&syntax, include_tests);
 
-    let resolve_dir = child_resolve_dir(file_path);
+    // Integration test files (tests/smoke.rs) are crate roots: resolve modules
+    // from their parent directory (tests/), not from a stem-based subdirectory.
+    let resolve_dir = if is_crate_root {
+        file_path.parent().unwrap_or(Path::new(".")).to_path_buf()
+    } else {
+        child_resolve_dir(file_path)
+    };
 
     let children: Vec<ModuleInfo> = decls
         .into_iter()
@@ -405,7 +442,9 @@ fn walk_module_syn(
                     workspace_crates,
                     all_module_paths,
                     crate_exports,
-                    include_cfg_test,
+                    include_tests,
+                    base_context,
+                    false,
                 )
             })
         })
@@ -426,7 +465,7 @@ pub(crate) fn analyze_modules_syn(
     workspace_crates: &HashSet<String>,
     all_module_paths: &HashMap<String, HashSet<String>>,
     crate_exports: &HashMap<String, HashSet<String>>,
-    include_cfg_test: bool,
+    include_tests: bool,
 ) -> Result<ModuleTree> {
     let root_files = find_crate_root_files(&crate_info.path)?;
     let normalized = normalize_crate_name(&crate_info.name);
@@ -442,7 +481,9 @@ pub(crate) fn analyze_modules_syn(
             workspace_crates,
             all_module_paths,
             crate_exports,
-            include_cfg_test,
+            include_tests,
+            EdgeContext::Production,
+            false,
         );
         match &mut root {
             None => root = Some(tree),
@@ -460,8 +501,44 @@ pub(crate) fn analyze_modules_syn(
             }
         }
     }
-    let root = root.expect("find_crate_root_files guarantees at least one file");
 
+    // For test-only crates (no src/), create an empty root module
+    if root.is_none() {
+        root = Some(ModuleInfo {
+            name: normalized.clone(),
+            full_path: normalized.clone(),
+            children: Vec::new(),
+            dependencies: Vec::new(),
+        });
+    }
+
+    // Walk integration test files (tests/*.rs) when --include-tests is active
+    if include_tests {
+        let test_files = find_integration_test_files(&crate_info.path);
+        let root = root.as_mut().unwrap();
+        for test_file in test_files {
+            let test_name = test_file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
+            let tree = walk_module_syn(
+                &test_file,
+                test_name,
+                &format!("{normalized}::tests"),
+                &normalized,
+                &crate_info.path,
+                workspace_crates,
+                all_module_paths,
+                crate_exports,
+                include_tests,
+                EdgeContext::Test(TestKind::Integration),
+                true,
+            );
+            root.children.push(tree);
+        }
+    }
+
+    let root = root.unwrap();
     Ok(ModuleTree { root })
 }
 
@@ -1152,6 +1229,187 @@ fn main() {
                 child_names.contains(&"b"),
                 "should contain 'b' from main.rs, found: {child_names:?}"
             );
+        }
+    }
+
+    mod find_integration_tests {
+        use super::*;
+
+        #[test]
+        fn test_find_integration_test_files() {
+            let tmp = TempDir::new().unwrap();
+            let tests = tmp.path().join("tests");
+            std::fs::create_dir_all(&tests).unwrap();
+            std::fs::write(tests.join("smoke.rs"), "").unwrap();
+            std::fs::write(tests.join("check.rs"), "").unwrap();
+            let common = tests.join("common");
+            std::fs::create_dir_all(&common).unwrap();
+            std::fs::write(common.join("mod.rs"), "").unwrap();
+
+            let files = find_integration_test_files(tmp.path());
+            let names: Vec<&str> = files
+                .iter()
+                .filter_map(|p| p.file_stem()?.to_str())
+                .collect();
+            assert!(names.contains(&"smoke"), "should contain smoke: {names:?}");
+            assert!(names.contains(&"check"), "should contain check: {names:?}");
+            assert_eq!(
+                files.len(),
+                2,
+                "should not include common/mod.rs: {names:?}"
+            );
+        }
+
+        #[test]
+        fn test_find_integration_test_files_no_tests_dir() {
+            let tmp = TempDir::new().unwrap();
+            let files = find_integration_test_files(tmp.path());
+            assert!(files.is_empty());
+        }
+
+        #[test]
+        fn test_find_crate_root_test_only_crate() {
+            let tmp = TempDir::new().unwrap();
+            let tests = tmp.path().join("tests");
+            std::fs::create_dir_all(&tests).unwrap();
+            std::fs::write(tests.join("check.rs"), "").unwrap();
+
+            let roots = find_crate_root_files(tmp.path()).unwrap();
+            assert!(
+                roots.is_empty(),
+                "test-only crate should return empty roots"
+            );
+        }
+
+        #[test]
+        fn test_find_crate_root_no_src_no_tests_errors() {
+            let tmp = TempDir::new().unwrap();
+            let result = find_crate_root_files(tmp.path());
+            assert!(result.is_err());
+        }
+    }
+
+    mod integration_test_analysis {
+        use super::*;
+        use crate::model::TestKind;
+
+        #[test]
+        fn test_analyze_crate_with_integration_tests() {
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/integration_test_crate/crate_with_tests");
+            let crate_info = CrateInfo {
+                name: "crate_with_tests".to_string(),
+                path: fixture,
+                dependencies: vec!["crate_lib".to_string()],
+                dev_dependencies: vec![],
+            };
+            let ws: HashSet<String> = ["crate_with_tests", "crate_lib"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+
+            let tree =
+                analyze_modules_syn(&crate_info, &ws, &HashMap::new(), &HashMap::new(), true)
+                    .expect("should analyze");
+
+            let child_names: Vec<&str> =
+                tree.root.children.iter().map(|m| m.name.as_str()).collect();
+            assert!(
+                child_names.contains(&"smoke"),
+                "should contain integration test 'smoke': {child_names:?}"
+            );
+
+            let smoke = tree
+                .root
+                .children
+                .iter()
+                .find(|m| m.name == "smoke")
+                .unwrap();
+            for dep in &smoke.dependencies {
+                assert_eq!(
+                    dep.context,
+                    EdgeContext::Test(TestKind::Integration),
+                    "integration test deps should have Integration context: {dep:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn test_analyze_crate_without_include_tests_flag() {
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/integration_test_crate/crate_with_tests");
+            let crate_info = CrateInfo {
+                name: "crate_with_tests".to_string(),
+                path: fixture,
+                dependencies: vec![],
+                dev_dependencies: vec![],
+            };
+
+            let tree = analyze_modules_syn(
+                &crate_info,
+                &HashSet::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .expect("should analyze");
+
+            let child_names: Vec<&str> =
+                tree.root.children.iter().map(|m| m.name.as_str()).collect();
+            assert!(
+                !child_names.contains(&"smoke"),
+                "without --include-tests, integration tests should not appear: {child_names:?}"
+            );
+        }
+
+        #[test]
+        fn test_analyze_test_only_crate() {
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/integration_test_crate/test_only_crate");
+            let crate_info = CrateInfo {
+                name: "test_only_crate".to_string(),
+                path: fixture,
+                dependencies: vec!["crate_lib".to_string()],
+                dev_dependencies: vec![],
+            };
+            let ws: HashSet<String> = ["test_only_crate", "crate_lib"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+
+            let tree =
+                analyze_modules_syn(&crate_info, &ws, &HashMap::new(), &HashMap::new(), true)
+                    .expect("should analyze test-only crate");
+
+            assert_eq!(tree.root.name, "test_only_crate");
+            let child_names: Vec<&str> =
+                tree.root.children.iter().map(|m| m.name.as_str()).collect();
+            assert!(
+                child_names.contains(&"check"),
+                "test-only crate should have 'check' integration test: {child_names:?}"
+            );
+        }
+
+        #[test]
+        fn test_test_only_crate_errors_without_flag() {
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/integration_test_crate/test_only_crate");
+            let crate_info = CrateInfo {
+                name: "test_only_crate".to_string(),
+                path: fixture,
+                dependencies: vec![],
+                dev_dependencies: vec![],
+            };
+
+            let tree = analyze_modules_syn(
+                &crate_info,
+                &HashSet::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .expect("should not error for test-only crate");
+            assert!(tree.root.children.is_empty());
         }
     }
 }

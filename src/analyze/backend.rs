@@ -19,7 +19,7 @@ use {
 #[allow(clippy::large_enum_variant)]
 pub enum AnalysisBackend {
     /// Fast filesystem + syn parsing (default).
-    Syn { include_cfg_test: bool },
+    Syn { include_tests: bool },
     /// Full rust-analyzer HIR (requires `--hir` flag + `feature = "hir"`).
     #[cfg(feature = "hir")]
     Hir {
@@ -42,16 +42,16 @@ impl AnalysisBackend {
             return Ok(Self::Hir { host, vfs });
         }
 
-        let include_cfg_test = feature_config.cfg_flags.contains(&"test".to_string());
+        let include_tests = feature_config.include_tests;
         let _ = (manifest_path, use_hir);
-        Ok(Self::Syn { include_cfg_test })
+        Ok(Self::Syn { include_tests })
     }
 
     /// Collect all module paths for a crate (lightweight).
     pub fn collect_module_paths(&self, crate_info: &CrateInfo) -> HashSet<String> {
         match self {
-            Self::Syn { include_cfg_test } => {
-                collect_syn_module_paths(&crate_info.path, &crate_info.name, *include_cfg_test)
+            Self::Syn { include_tests } => {
+                collect_syn_module_paths(&crate_info.path, &crate_info.name, *include_tests)
             }
             #[cfg(feature = "hir")]
             Self::Hir { host, vfs } => {
@@ -74,12 +74,12 @@ impl AnalysisBackend {
         crate_exports: &HashMap<String, HashSet<String>>,
     ) -> Result<ModuleTree> {
         match self {
-            Self::Syn { include_cfg_test } => analyze_modules_syn(
+            Self::Syn { include_tests } => analyze_modules_syn(
                 crate_info,
                 workspace_crates,
                 all_module_paths,
                 crate_exports,
-                *include_cfg_test,
+                *include_tests,
             ),
             #[cfg(feature = "hir")]
             Self::Hir { host, vfs } => super::hir::analyze_modules(

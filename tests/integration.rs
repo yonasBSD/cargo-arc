@@ -13,7 +13,7 @@ fn test_multi_crate_fixture() {
         features: vec![],
         all_features: false,
         no_default_features: false,
-        cfg: vec![],
+        include_tests: false,
         debug: false,
         volatility: false,
         no_volatility: false,
@@ -51,7 +51,7 @@ fn test_self_analysis() {
         features: vec![],
         all_features: false,
         no_default_features: false,
-        cfg: vec![],
+        include_tests: false,
         debug: false,
         volatility: false,
         no_volatility: false,
@@ -91,7 +91,7 @@ fn test_cfg_test_excluded_by_default() {
         features: vec![],
         all_features: false,
         no_default_features: false,
-        cfg: vec![], // No --cfg test flag
+        include_tests: false, // No --cfg test flag
         debug: false,
         volatility: false,
         no_volatility: false,
@@ -126,7 +126,7 @@ fn test_cfg_test_included_with_flag() {
         features: vec![],
         all_features: false,
         no_default_features: false,
-        cfg: vec!["test".to_string()], // --cfg test flag
+        include_tests: true, // --include-tests flag
         debug: false,
         volatility: false,
         no_volatility: false,
@@ -161,7 +161,7 @@ fn test_entry_point_imports() {
         features: vec![],
         all_features: false,
         no_default_features: false,
-        cfg: vec![],
+        include_tests: false,
         debug: false,
         volatility: false,
         no_volatility: false,
