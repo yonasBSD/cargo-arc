@@ -2,7 +2,7 @@
 
 use super::filtering::{DepInfo, collect_reachable_crates, find_seed_crates};
 use super::hir::FeatureConfig;
-use crate::model::CrateInfo;
+use crate::model::{CrateInfo, WorkspaceCrates};
 use anyhow::{Context, Result};
 use cargo_metadata::MetadataCommand;
 use std::collections::HashSet;
@@ -17,7 +17,7 @@ use tracing::debug;
 struct WorkspaceContext<'a> {
     pkg_id_to_name: std::collections::HashMap<&'a str, &'a str>,
     workspace_member_ids: HashSet<&'a str>,
-    workspace_member_names: HashSet<&'a str>,
+    workspace_member_names: WorkspaceCrates,
 }
 
 /// Runs cargo metadata with the given feature configuration.
@@ -56,7 +56,7 @@ fn build_workspace_context(metadata: &cargo_metadata::Metadata) -> WorkspaceCont
         .map(|id| id.repr.as_str())
         .collect();
 
-    let workspace_member_names = metadata
+    let workspace_member_names: WorkspaceCrates = metadata
         .workspace_packages()
         .iter()
         .map(|p| p.name.as_str())
@@ -161,7 +161,7 @@ fn build_filtered_crates(
     prod_deps: &std::collections::HashMap<&str, Vec<String>>,
     dev_deps: &std::collections::HashMap<&str, Vec<String>>,
     feature_config: &FeatureConfig,
-    workspace_member_names: &HashSet<&str>,
+    workspace_member_names: &WorkspaceCrates,
 ) -> Vec<CrateInfo> {
     let seeds = find_seed_crates(metadata, feature_config, workspace_member_names);
 

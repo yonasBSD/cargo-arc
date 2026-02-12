@@ -14,7 +14,8 @@ pub struct FeatureConfig {
 
 #[cfg(feature = "hir")]
 use {
-    super::use_parser::{normalize_crate_name, parse_workspace_dependencies_from_source},
+    super::use_parser::parse_workspace_dependencies_from_source,
+    crate::model::normalize_crate_name,
     crate::model::{
         CrateExportMap, CrateInfo, DependencyRef, ModuleInfo, ModulePathMap, ModuleTree,
         WorkspaceCrates,

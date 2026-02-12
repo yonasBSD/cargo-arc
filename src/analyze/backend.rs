@@ -11,7 +11,7 @@ use crate::model::{CrateExportMap, CrateInfo, ModulePathMap, ModuleTree, Workspa
 #[cfg(feature = "hir")]
 use {
     super::hir::{collect_hir_module_paths, find_crate_in_workspace, load_workspace_hir},
-    super::use_parser::normalize_crate_name,
+    crate::model::normalize_crate_name,
     ra_ap_ide as ide,
 };
 

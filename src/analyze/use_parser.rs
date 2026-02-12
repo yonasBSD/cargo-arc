@@ -2,6 +2,7 @@
 
 use crate::model::{
     CrateExportMap, DependencyRef, EdgeContext, ModulePathMap, TestKind, WorkspaceCrates,
+    normalize_crate_name,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -155,10 +156,6 @@ fn resolve_use_tree(tree: &UseTree, prefix: &str) -> Vec<String> {
     }
 }
 
-pub(crate) fn normalize_crate_name(name: &str) -> String {
-    name.replace('-', "_")
-}
-
 /// Find the longest module path prefix from `parts` that exists in `module_paths`.
 ///
 /// Tries from longest to shortest: `["analyze", "use_parser", "normalize"]`
@@ -174,16 +171,6 @@ fn find_longest_module_prefix(parts: &[&str], module_paths: &HashSet<String>) ->
     }
     // Fallback: first segment
     (parts[0].to_string(), 1)
-}
-
-pub(super) fn is_workspace_member<S: AsRef<str>>(
-    name: &str,
-    workspace_crates: &HashSet<S>,
-) -> bool {
-    let normalized = normalize_crate_name(name);
-    workspace_crates
-        .iter()
-        .any(|ws| normalize_crate_name(ws.as_ref()) == normalized)
 }
 
 /// Extract an item from path parts at given index, handling trailing `{` and empty strings.
@@ -283,7 +270,7 @@ fn parse_workspace_import(
     let parts: Vec<&str> = path.split("::").collect();
     let crate_name = parts.first()?.trim();
 
-    if !is_workspace_member(crate_name, workspace_crates) || parts.len() < 2 {
+    if !workspace_crates.contains_normalized(crate_name) || parts.len() < 2 {
         return None;
     }
 
@@ -388,7 +375,7 @@ fn resolve_single_path(
     })
     .or_else(|| {
         // Bare workspace crate name (e.g. from `use other_crate::{Foo}` → path = "other_crate")
-        if !path.contains("::") && is_workspace_member(path, workspace_crates) {
+        if !path.contains("::") && workspace_crates.contains_normalized(path) {
             Some(DependencyRef {
                 target_crate: path.to_string(),
                 target_module: String::new(),

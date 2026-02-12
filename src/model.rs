@@ -23,10 +23,27 @@ impl FromIterator<String> for WorkspaceCrates {
     }
 }
 
+impl<'a> FromIterator<&'a str> for WorkspaceCrates {
+    fn from_iter<I: IntoIterator<Item = &'a str>>(iter: I) -> Self {
+        Self(iter.into_iter().map(|s| s.to_string()).collect())
+    }
+}
+
 impl WorkspaceCrates {
     pub fn insert(&mut self, name: String) -> bool {
         self.0.insert(name)
     }
+
+    pub(crate) fn contains_normalized(&self, name: &str) -> bool {
+        let normalized = normalize_crate_name(name);
+        self.0
+            .iter()
+            .any(|ws| normalize_crate_name(ws) == normalized)
+    }
+}
+
+pub(crate) fn normalize_crate_name(name: &str) -> String {
+    name.replace('-', "_")
 }
 
 /// Crate name → set of module paths (e.g. `{"analyze", "analyze::hir"}`).

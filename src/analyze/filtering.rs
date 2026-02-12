@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{debug, instrument};
 
 use super::FeatureConfig;
-use super::use_parser::is_workspace_member;
+use crate::model::WorkspaceCrates;
 
 // --- Dependency filtering types ---
 
@@ -41,7 +41,7 @@ pub(crate) struct DepInfo<'a> {
 
 impl<'a> DepInfo<'a> {
     /// Extract dependency info from a cargo metadata NodeDep
-    pub(super) fn from_node_dep(dep: &'a NodeDep, workspace_members: &HashSet<&str>) -> Self {
+    pub(super) fn from_node_dep(dep: &'a NodeDep, workspace_members: &WorkspaceCrates) -> Self {
         let name = dep.name.as_str();
 
         let kind = if dep
@@ -68,7 +68,7 @@ impl<'a> DepInfo<'a> {
 
         // Normalize for comparison: cargo metadata uses underscores (core_utils),
         // but Cargo.toml names may have hyphens (core-utils)
-        let scope = if is_workspace_member(name, workspace_members) {
+        let scope = if workspace_members.contains_normalized(name) {
             DepScope::Workspace
         } else {
             DepScope::External
@@ -123,13 +123,13 @@ fn package_matches_features(
 pub(super) fn find_seed_crates(
     metadata: &Metadata,
     feature_config: &FeatureConfig,
-    workspace_members: &HashSet<&str>,
+    workspace_members: &WorkspaceCrates,
 ) -> HashSet<String> {
     debug!(workspace_members = ?workspace_members);
 
     if feature_config.features.is_empty() || feature_config.all_features {
         debug!("returning ALL workspace members (no feature filter)");
-        return workspace_members.iter().map(|s| s.to_string()).collect();
+        return workspace_members.iter().cloned().collect();
     }
 
     let parsed_features: Vec<_> = feature_config
@@ -157,7 +157,7 @@ pub(super) fn find_seed_crates(
 pub(super) fn collect_reachable_crates(
     seeds: HashSet<String>,
     resolved_deps: &HashMap<&str, Vec<String>>,
-    workspace_members: &HashSet<&str>,
+    workspace_members: &WorkspaceCrates,
 ) -> HashSet<String> {
     debug!(seeds = ?seeds);
     for (pkg, deps) in resolved_deps {
@@ -216,7 +216,7 @@ mod tests {
         let mut resolved_deps: HashMap<&str, Vec<String>> = HashMap::new();
         resolved_deps.insert("A", vec!["B".to_string()]);
         resolved_deps.insert("B", vec!["C".to_string()]);
-        let workspace: HashSet<&str> = ["A", "B", "C"].into_iter().collect();
+        let workspace: WorkspaceCrates = ["A", "B", "C"].into_iter().collect();
 
         let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace);
 
@@ -233,7 +233,7 @@ mod tests {
         let mut resolved_deps: HashMap<&str, Vec<String>> = HashMap::new();
         resolved_deps.insert("A", vec!["B".to_string()]);
         resolved_deps.insert("B", vec!["external".to_string()]);
-        let workspace: HashSet<&str> = ["A", "B"].into_iter().collect();
+        let workspace: WorkspaceCrates = ["A", "B"].into_iter().collect();
 
         let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace);
 
@@ -250,7 +250,7 @@ mod tests {
         let mut resolved_deps: HashMap<&str, Vec<String>> = HashMap::new();
         resolved_deps.insert("A", vec!["B".to_string()]);
         resolved_deps.insert("B", vec!["A".to_string()]);
-        let workspace: HashSet<&str> = ["A", "B"].into_iter().collect();
+        let workspace: WorkspaceCrates = ["A", "B"].into_iter().collect();
 
         let reachable = collect_reachable_crates(seeds, &resolved_deps, &workspace);
 

@@ -5,9 +5,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::use_parser::{
-    collect_all_path_refs, normalize_crate_name, parse_path_ref_dependencies,
-    parse_workspace_dependencies,
+    collect_all_path_refs, parse_path_ref_dependencies, parse_workspace_dependencies,
 };
+use crate::model::normalize_crate_name;
 use crate::model::{
     CrateExportMap, CrateInfo, EdgeContext, ModuleInfo, ModulePathMap, ModuleTree, TestKind,
     WorkspaceCrates,
