@@ -385,6 +385,11 @@ fn walk_module_syn(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|_| file_path.to_path_buf());
 
+    // Relative module path within the crate (e.g. "render" for render/mod.rs, "" for root)
+    let current_module_path = full_path
+        .strip_prefix(&format!("{}::", ctx.crate_name))
+        .unwrap_or("");
+
     // Extract use items from all scopes (top-level + fn bodies + nested blocks)
     let use_items = super::use_parser::collect_all_use_items(&syntax, ctx.base_context);
     let use_deps = parse_workspace_dependencies(
@@ -394,6 +399,7 @@ fn walk_module_syn(
         &source_file,
         ctx.all_module_paths,
         ctx.crate_exports,
+        current_module_path,
     );
 
     // Extract qualified path references (e.g. my_lib::run(), let x: my_lib::Config)
@@ -405,6 +411,7 @@ fn walk_module_syn(
         &source_file,
         ctx.all_module_paths,
         ctx.crate_exports,
+        current_module_path,
     );
 
     // Merge: use-dependencies first (have priority), then path-dependencies (dedup by (full_target, context))
@@ -1228,6 +1235,60 @@ fn main() {
             assert!(
                 child_names.contains(&"b"),
                 "should contain 'b' from main.rs, found: {child_names:?}"
+            );
+        }
+    }
+
+    mod child_module_resolution {
+        use super::*;
+
+        #[test]
+        fn test_child_module_bare_use_resolved() {
+            // cargo-arc analyzes itself: render module must have deps on render::css and render::elements
+            let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+            let crate_info = CrateInfo {
+                name: "cargo-arc".to_string(),
+                path: crate_root.to_path_buf(),
+                dependencies: vec![],
+                dev_dependencies: vec![],
+            };
+            let workspace_crates: WorkspaceCrates =
+                ["cargo-arc"].iter().map(|s| s.to_string()).collect();
+            let paths = collect_syn_module_paths(crate_root, "cargo_arc", false);
+            let all_module_paths: ModulePathMap =
+                [("cargo_arc".to_string(), paths)].into_iter().collect();
+
+            let tree = analyze_modules_syn(
+                &crate_info,
+                &workspace_crates,
+                &all_module_paths,
+                &CrateExportMap::default(),
+                false,
+            )
+            .expect("should analyze");
+
+            let render_mod = tree
+                .root
+                .children
+                .iter()
+                .find(|m| m.name == "render")
+                .expect("should find render module");
+
+            let dep_targets: Vec<String> = render_mod
+                .dependencies
+                .iter()
+                .map(|d| d.module_target())
+                .collect();
+
+            assert!(
+                dep_targets.iter().any(|t| t == "cargo_arc::render::css"),
+                "render should depend on render::css, found: {dep_targets:?}"
+            );
+            assert!(
+                dep_targets
+                    .iter()
+                    .any(|t| t == "cargo_arc::render::elements"),
+                "render should depend on render::elements, found: {dep_targets:?}"
             );
         }
     }

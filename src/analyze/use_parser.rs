@@ -222,6 +222,12 @@ fn parse_crate_local_import(
 
 /// Parse bare module imports: `use cli::Args` where `cli` is a known module of the current crate.
 /// Rust 2018+ resolves bare paths from any file, not just the crate root.
+///
+/// `current_module_path` is the relative module path of the file containing this import
+/// (e.g. `"render"` for `render/mod.rs`, `""` for crate root). When non-empty, child modules
+/// are checked first: `use css::X` in `render/mod.rs` resolves to `render::css` before
+/// trying top-level `css`. This matches Rust 2018+/2024 semantics where bare paths in
+/// non-root modules refer to children, not siblings.
 fn parse_bare_module_import(
     path: &str,
     current_crate: &str,
@@ -229,6 +235,7 @@ fn parse_bare_module_import(
     line_num: usize,
     all_module_paths: &ModulePathMap,
     context: EdgeContext,
+    current_module_path: &str,
 ) -> Option<DependencyRef> {
     let parts: Vec<&str> = path.split("::").collect();
     let first = parts.first()?.trim_end_matches('{').trim();
@@ -241,16 +248,32 @@ fn parse_bare_module_import(
         .get(&normalize_crate_name(current_crate))
         .unwrap_or(&empty_set);
 
-    if !module_paths.contains(first) {
+    // Child-module has priority (Rust 2018+/2024 semantics:
+    // bare `use foo::X` in non-root module means child, not sibling/top-level)
+    let is_child = !current_module_path.is_empty()
+        && module_paths.contains(&format!("{current_module_path}::{first}"));
+
+    if !is_child && !module_paths.contains(first) {
         return None;
     }
 
-    let (target_module, prefix_len) = find_longest_module_prefix(&parts, module_paths);
+    let prefix_segments: Vec<&str> = current_module_path.split("::").collect();
+    let effective_parts: Vec<&str> = if is_child {
+        prefix_segments
+            .iter()
+            .copied()
+            .chain(parts.iter().copied())
+            .collect()
+    } else {
+        parts
+    };
+
+    let (target_module, prefix_len) = find_longest_module_prefix(&effective_parts, module_paths);
 
     Some(DependencyRef {
         target_crate: normalize_crate_name(current_crate),
         target_module,
-        target_item: extract_item_from_parts(&parts, prefix_len),
+        target_item: extract_item_from_parts(&effective_parts, prefix_len),
         source_file: source_file.to_path_buf(),
         line: line_num,
         context,
@@ -326,6 +349,7 @@ fn resolve_single_path(
     all_module_paths: &ModulePathMap,
     crate_exports: &CrateExportMap,
     context: EdgeContext,
+    current_module_path: &str,
 ) -> Option<DependencyRef> {
     // Handle glob: `crate::module::*` → resolve base, set target_item = "*"
     if let Some(base) = path.strip_suffix("::*") {
@@ -338,6 +362,7 @@ fn resolve_single_path(
             all_module_paths,
             crate_exports,
             context,
+            current_module_path,
         )?;
         // The base resolved as a module — push "*" as the item
         dep.target_item = Some("*".to_string());
@@ -360,6 +385,7 @@ fn resolve_single_path(
             line_num,
             all_module_paths,
             context,
+            current_module_path,
         )
     })
     .or_else(|| {
@@ -404,6 +430,7 @@ pub(crate) fn parse_workspace_dependencies(
     source_file: &Path,
     all_module_paths: &ModulePathMap,
     crate_exports: &CrateExportMap,
+    current_module_path: &str,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
     let mut seen_targets: HashSet<(String, EdgeContext)> = HashSet::new();
@@ -422,6 +449,7 @@ pub(crate) fn parse_workspace_dependencies(
                 all_module_paths,
                 crate_exports,
                 *context,
+                current_module_path,
             ) {
                 let dedup_key = (dep.full_target(), dep.context);
                 if seen_targets.insert(dedup_key) {
@@ -446,6 +474,7 @@ pub(crate) fn parse_path_ref_dependencies(
     source_file: &Path,
     all_module_paths: &ModulePathMap,
     crate_exports: &CrateExportMap,
+    current_module_path: &str,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
     let mut seen_targets: HashSet<(String, EdgeContext)> = HashSet::new();
@@ -460,6 +489,7 @@ pub(crate) fn parse_path_ref_dependencies(
             all_module_paths,
             crate_exports,
             *context,
+            current_module_path,
         ) {
             let dedup_key = (dep.full_target(), dep.context);
             if seen_targets.insert(dedup_key) {
@@ -481,6 +511,7 @@ pub(crate) fn parse_workspace_dependencies_from_source(
     source_file: &Path,
     all_module_paths: &ModulePathMap,
     crate_exports: &CrateExportMap,
+    current_module_path: &str,
 ) -> Vec<DependencyRef> {
     let syntax = match syn::parse_file(source) {
         Ok(f) => f,
@@ -494,6 +525,7 @@ pub(crate) fn parse_workspace_dependencies_from_source(
         source_file,
         all_module_paths,
         crate_exports,
+        current_module_path,
     )
 }
 
@@ -529,6 +561,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -550,6 +583,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -572,6 +606,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -592,6 +627,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -612,6 +648,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert!(deps.is_empty(), "self:: imports should be ignored");
         }
@@ -629,6 +666,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert!(deps.is_empty(), "super:: imports should be ignored");
         }
@@ -646,6 +684,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert!(deps.is_empty(), "external crate imports should be filtered");
         }
@@ -663,6 +702,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert!(deps.is_empty(), "std imports should be filtered");
         }
@@ -735,6 +775,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -760,6 +801,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -785,6 +827,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -805,6 +848,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -832,6 +876,7 @@ mod tests {
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
             assert_eq!(deps[0].target_module, "analyze::use_parser");
@@ -869,6 +914,7 @@ use std::collections::HashMap;
                 Path::new("src/lib.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
 
             assert_eq!(deps.len(), 2, "found: {:?}", deps);
@@ -899,6 +945,7 @@ use crate::graph;
                 Path::new("src/cli.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
 
             assert_eq!(deps.len(), 3, "should keep distinct symbols: {:?}", deps);
@@ -926,6 +973,7 @@ use crate::graph;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
             assert!(
@@ -951,6 +999,7 @@ use crate::graph;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
             assert_eq!(deps[0].target_item, Some("*".to_string()));
@@ -987,6 +1036,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
 
             // Expected: 6 DependencyRefs
@@ -1056,6 +1106,7 @@ use serde::Serialize;
                 1,
                 &mp,
                 EdgeContext::Production,
+                "",
             );
             let dep = dep.expect("should parse bare module import");
             assert_eq!(dep.target_crate, "my_crate");
@@ -1075,6 +1126,7 @@ use serde::Serialize;
                 1,
                 &mp,
                 EdgeContext::Production,
+                "",
             );
             assert!(dep.is_none(), "external crate should not match");
         }
@@ -1094,6 +1146,7 @@ use serde::Serialize;
                 1,
                 &mp,
                 EdgeContext::Production,
+                "",
             );
             let dep = dep.expect("should parse deep bare module import");
             assert_eq!(dep.target_crate, "my_crate");
@@ -1113,6 +1166,7 @@ use serde::Serialize;
                 1,
                 &mp,
                 EdgeContext::Production,
+                "",
             );
             let dep = dep.expect("should parse module-only bare import");
             assert_eq!(dep.target_crate, "my_crate");
@@ -1135,6 +1189,7 @@ use serde::Serialize;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -1158,6 +1213,7 @@ use serde::Serialize;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
@@ -1181,6 +1237,7 @@ use serde::Serialize;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 3, "should return 3 deps: {:?}", deps);
             assert!(deps.iter().all(|d| d.target_crate == "my_crate"));
@@ -1214,11 +1271,112 @@ use serde::Serialize;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
             assert_eq!(deps[0].target_crate, "my_crate");
             assert_eq!(deps[0].target_module, "cli");
             assert_eq!(deps[0].target_item, Some("*".to_string()));
+        }
+
+        #[test]
+        fn test_bare_module_child_resolution() {
+            // `use css::render_styles` in render/mod.rs should resolve to render::css
+            let mp: ModulePathMap = [(
+                "my_crate".to_string(),
+                HashSet::from(["render".into(), "render::css".into()]),
+            )]
+            .into_iter()
+            .collect();
+            let dep = parse_bare_module_import(
+                "css::render_styles",
+                "my_crate",
+                Path::new("src/render/mod.rs"),
+                1,
+                &mp,
+                EdgeContext::Production,
+                "render",
+            );
+            let dep = dep.expect("should resolve child module");
+            assert_eq!(dep.target_crate, "my_crate");
+            assert_eq!(dep.target_module, "render::css");
+            assert_eq!(dep.target_item, Some("render_styles".to_string()));
+        }
+
+        #[test]
+        fn test_bare_module_child_multi_import() {
+            // Group import `use elements::{A, B}` in render/mod.rs
+            let ws = WorkspaceCrates::default();
+            let mp: ModulePathMap = [(
+                "my_crate".to_string(),
+                HashSet::from(["render".into(), "render::elements".into()]),
+            )]
+            .into_iter()
+            .collect();
+            let path = Path::new("src/render/mod.rs");
+            let uses = parse_test_uses("use elements::{LinkTag, ScriptTag};");
+            let deps = parse_workspace_dependencies(
+                &uses,
+                "my_crate",
+                &ws,
+                path,
+                &mp,
+                &CrateExportMap::default(),
+                "render",
+            );
+            assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
+            assert!(deps.iter().all(|d| d.target_module == "render::elements"));
+            assert!(
+                deps.iter()
+                    .any(|d| d.target_item == Some("LinkTag".to_string()))
+            );
+            assert!(
+                deps.iter()
+                    .any(|d| d.target_item == Some("ScriptTag".to_string()))
+            );
+        }
+
+        #[test]
+        fn test_bare_module_root_still_works() {
+            // current_module_path="" → existing behavior unchanged
+            let mp: ModulePathMap = [("my_crate".to_string(), HashSet::from(["cli".into()]))]
+                .into_iter()
+                .collect();
+            let dep = parse_bare_module_import(
+                "cli::Args",
+                "my_crate",
+                Path::new("src/lib.rs"),
+                1,
+                &mp,
+                EdgeContext::Production,
+                "",
+            );
+            let dep = dep.expect("should parse bare module from root");
+            assert_eq!(dep.target_module, "cli");
+            assert_eq!(dep.target_item, Some("Args".to_string()));
+        }
+
+        #[test]
+        fn test_bare_module_deeply_nested() {
+            // `use sub::Item` in a::b → resolves to a::b::sub
+            let mp: ModulePathMap = [(
+                "my_crate".to_string(),
+                HashSet::from(["a".into(), "a::b".into(), "a::b::sub".into()]),
+            )]
+            .into_iter()
+            .collect();
+            let dep = parse_bare_module_import(
+                "sub::Item",
+                "my_crate",
+                Path::new("src/a/b/mod.rs"),
+                1,
+                &mp,
+                EdgeContext::Production,
+                "a::b",
+            );
+            let dep = dep.expect("should resolve deeply nested child");
+            assert_eq!(dep.target_module, "a::b::sub");
+            assert_eq!(dep.target_item, Some("Item".to_string()));
         }
     }
 
@@ -1303,7 +1461,8 @@ use serde::Serialize;
             .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::MyStruct;");
-            let deps = parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports);
+            let deps =
+                parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports, "");
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "other_crate");
@@ -1323,7 +1482,8 @@ use serde::Serialize;
                 .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::Unknown;");
-            let deps = parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports);
+            let deps =
+                parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports, "");
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "Unknown");
@@ -1343,7 +1503,8 @@ use serde::Serialize;
                     .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::sub_mod::Foo;");
-            let deps = parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports);
+            let deps =
+                parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports, "");
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "sub_mod");
@@ -1366,6 +1527,7 @@ use serde::Serialize;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
             assert!(deps.iter().all(|d| d.target_crate == "other_crate"));
@@ -1386,6 +1548,7 @@ use serde::Serialize;
                 path,
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
             assert_eq!(deps[0].target_module, "");
@@ -1746,6 +1909,7 @@ fn main() {
                 Path::new("src/main.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(
                 deps.len(),
@@ -1776,6 +1940,7 @@ fn main() {
                 Path::new("src/main.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1, "should resolve crate-local path: {deps:?}");
             assert_eq!(deps[0].target_crate, "my_crate");
@@ -1797,6 +1962,7 @@ fn main() {
                 Path::new("src/lib.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1, "should resolve bare module path: {deps:?}");
             assert_eq!(deps[0].target_crate, "my_crate");
@@ -1820,6 +1986,7 @@ fn main() {
                 Path::new("src/lib.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert!(deps.is_empty(), "unknown paths should be skipped: {deps:?}");
         }
@@ -1846,6 +2013,7 @@ fn main() {
                 Path::new("src/main.rs"),
                 &mp,
                 &exports,
+                "",
             );
             assert_eq!(deps.len(), 1, "should resolve entry-point path: {deps:?}");
             assert_eq!(deps[0].target_crate, "other_crate");
@@ -1878,6 +2046,7 @@ fn main() {
                 Path::new("src/main.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(deps.len(), 1, "duplicate paths should be deduped: {deps:?}");
         }
@@ -1913,6 +2082,7 @@ fn main() {
                 Path::new("src/lib.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(
                 deps.len(),
@@ -1952,6 +2122,7 @@ fn main() {
                 Path::new("src/main.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(
                 deps.len(),
@@ -1991,6 +2162,7 @@ fn main() {
                 Path::new("src/main.rs"),
                 &mp,
                 &CrateExportMap::default(),
+                "",
             );
             assert_eq!(
                 deps.len(),

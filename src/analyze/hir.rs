@@ -266,6 +266,11 @@ fn walk_module(
 ) -> ModuleInfo {
     let (name, full_path) = resolve_module_name_and_path(module, db, parent_path);
 
+    // Relative module path within the crate (e.g. "render" for render/mod.rs, "" for root)
+    let current_module_path = full_path
+        .strip_prefix(&format!("{}::", crate_name))
+        .unwrap_or("");
+
     // Extract module dependencies from imports/uses in this module's scope
     let dependencies = extract_module_dependencies(
         module,
@@ -276,6 +281,7 @@ fn walk_module(
         workspace_crates,
         all_module_paths,
         crate_exports,
+        current_module_path,
     );
 
     let children: Vec<ModuleInfo> = module
@@ -319,6 +325,7 @@ fn extract_module_dependencies(
     workspace_crates: &WorkspaceCrates,
     all_module_paths: &ModulePathMap,
     crate_exports: &CrateExportMap,
+    current_module_path: &str,
 ) -> Vec<DependencyRef> {
     // Get the source file for this module
     let source = module.definition_source(db);
@@ -351,6 +358,7 @@ fn extract_module_dependencies(
         &source_file,
         all_module_paths,
         crate_exports,
+        current_module_path,
     )
 }
 
