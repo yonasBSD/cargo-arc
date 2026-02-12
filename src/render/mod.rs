@@ -1,0 +1,280 @@
+//! SVG Generation
+
+use crate::layout::{ItemKind, LayoutIR, NodeId};
+use std::collections::HashSet;
+
+mod constants;
+mod css;
+mod elements;
+mod positioning;
+mod static_data;
+pub use constants::RenderConfig;
+use css::render_styles;
+use elements::{
+    render_edges, render_header, render_nodes, render_sidebar, render_toolbar, render_tree_lines,
+};
+use positioning::{
+    calculate_box_width, calculate_canvas_size, calculate_max_arc_width, calculate_positions,
+};
+use static_data::render_script;
+
+/// Render LayoutIR to SVG string
+pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
+    let box_width = calculate_box_width(ir);
+    let positioned = calculate_positions(ir, config, box_width);
+    let max_arc_width = calculate_max_arc_width(&positioned, ir, config.row_height);
+    let (width, height) = calculate_canvas_size(&positioned, config, max_arc_width);
+
+    // Collect all node IDs that are parents (have children)
+    let parents: HashSet<NodeId> = ir
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Module { parent, .. } => Some(*parent),
+            ItemKind::Crate => None,
+        })
+        .collect();
+
+    let mut svg = String::new();
+    svg.push_str(&render_header(width, height));
+    svg.push_str(&render_styles());
+    svg.push_str(&render_tree_lines(&positioned, ir));
+    svg.push_str(&render_nodes(&positioned, &parents));
+    svg.push_str(&render_edges(&positioned, ir, config.row_height));
+    svg.push_str(&render_toolbar(width));
+    svg.push_str(&render_sidebar(width));
+    svg.push_str(&render_script(config, ir, &positioned, &parents));
+    svg.push_str("</svg>\n");
+    svg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::EdgeKind;
+
+    #[test]
+    fn test_render_empty() {
+        let ir = LayoutIR::new();
+        let svg = render(&ir, &RenderConfig::default());
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("</svg>"));
+    }
+
+    #[test]
+    fn test_render_single_crate() {
+        let mut ir = LayoutIR::new();
+        ir.add_item(ItemKind::Crate, "my_crate".into());
+        let svg = render(&ir, &RenderConfig::default());
+        assert!(svg.contains(r#"class="crate""#));
+        assert!(svg.contains("my_crate"));
+    }
+
+    #[test]
+    fn test_render_with_edges() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+        assert!(svg.contains(" Q ")); // Bezier
+        assert!(svg.contains("<polygon")); // Arrow
+    }
+
+    #[test]
+    fn test_render_cycle_edges() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+
+        // Test DirectCycle
+        ir.add_edge(a, b, EdgeKind::DirectCycle, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+        assert!(svg.contains("cycle-arc"));
+        // DirectCycle should have two arrows (bidirectional)
+        // Count polygon elements with cycle-arrow class (not style definition)
+        assert_eq!(svg.matches(r#"class="cycle-arrow""#).count(), 2);
+
+        // Test TransitiveCycle
+        let mut ir2 = LayoutIR::new();
+        let c2 = ir2.add_item(ItemKind::Crate, "c".into());
+        let a2 = ir2.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c2,
+            },
+            "a".into(),
+        );
+        let b2 = ir2.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c2,
+            },
+            "b".into(),
+        );
+        ir2.add_edge(a2, b2, EdgeKind::TransitiveCycle, vec![]);
+        let svg2 = render(&ir2, &RenderConfig::default());
+        assert!(svg2.contains("cycle-arc"));
+        assert!(svg2.contains("stroke-dasharray"));
+    }
+
+    #[test]
+    fn test_svg_has_script() {
+        let ir = LayoutIR::new();
+        let svg = render(&ir, &RenderConfig::default());
+        assert!(svg.contains("<script>"), "SVG should contain script tag");
+        assert!(
+            svg.contains("highlightNode"),
+            "Script should contain highlightNode function"
+        );
+        assert!(
+            svg.contains("highlightEdge"),
+            "Script should contain highlightEdge function"
+        );
+    }
+
+    #[test]
+    fn test_layer_structure() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+
+        // Verify all 6 layers exist
+        assert!(
+            svg.contains(r#"<g id="base-arcs-layer">"#),
+            "SVG should contain base-arcs-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="base-labels-layer">"#),
+            "SVG should contain base-labels-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="highlight-shadows">"#),
+            "SVG should contain highlight-shadows layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="highlight-arcs-layer">"#),
+            "SVG should contain highlight-arcs-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="highlight-labels-layer">"#),
+            "SVG should contain highlight-labels-layer"
+        );
+        assert!(
+            svg.contains(r#"<g id="hitareas-layer">"#),
+            "SVG should contain hitareas-layer"
+        );
+    }
+
+    #[test]
+    fn test_arcs_in_base_arcs_layer() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+
+        // Find base-arcs-layer content
+        let base_arcs_start = svg.find(r#"<g id="base-arcs-layer">"#).unwrap();
+        let base_arcs_end = svg[base_arcs_start..].find("</g>").unwrap() + base_arcs_start;
+        let base_arcs_content = &svg[base_arcs_start..base_arcs_end];
+
+        // Verify dep-arc is inside base-arcs-layer
+        assert!(
+            base_arcs_content.contains("dep-arc"),
+            "base-arcs-layer should contain dep-arc"
+        );
+        // Verify arrows are inside base-arcs-layer
+        assert!(
+            base_arcs_content.contains("<polygon"),
+            "base-arcs-layer should contain arrow polygons"
+        );
+    }
+
+    #[test]
+    fn test_hitareas_in_hitareas_layer() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        ir.add_edge(a, b, EdgeKind::Downward, vec![]);
+        let svg = render(&ir, &RenderConfig::default());
+
+        // Find hitareas-layer content
+        let hitareas_start = svg.find(r#"<g id="hitareas-layer">"#).unwrap();
+        let hitareas_end = svg[hitareas_start..].find("</g>").unwrap() + hitareas_start;
+        let hitareas_content = &svg[hitareas_start..hitareas_end];
+
+        // Verify arc-hitarea is inside hitareas-layer
+        assert!(
+            hitareas_content.contains("arc-hitarea"),
+            "hitareas-layer should contain arc-hitarea"
+        );
+    }
+}
