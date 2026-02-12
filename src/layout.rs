@@ -293,12 +293,38 @@ fn stable_toposort(
         }
     };
 
-    // Use BinaryHeap with reversed comparison for alphabetical (min-first) order
-    #[derive(Eq, PartialEq)]
-    struct Item(String, petgraph::graph::NodeIndex);
+    // Barycenter score: average position of already-placed dependents.
+    // Nodes closer to their dependents get lower scores → fewer arc crossings.
+    let barycenter = |n: petgraph::graph::NodeIndex,
+                      positions: &HashMap<petgraph::graph::NodeIndex, usize>|
+     -> f64 {
+        let placed: Vec<usize> = sibling_deps
+            .neighbors_directed(n, petgraph::Direction::Incoming)
+            .filter_map(|pred| positions.get(&pred).copied())
+            .collect();
+        if placed.is_empty() {
+            f64::INFINITY
+        } else {
+            placed.iter().sum::<usize>() as f64 / placed.len() as f64
+        }
+    };
+
+    // Use BinaryHeap with barycenter score as primary key, name as tiebreaker
+    struct Item(f64, String, petgraph::graph::NodeIndex);
+    impl PartialEq for Item {
+        fn eq(&self, other: &Self) -> bool {
+            self.0.to_bits() == other.0.to_bits() && self.1 == other.1
+        }
+    }
+    impl Eq for Item {}
     impl Ord for Item {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            other.0.cmp(&self.0) // Reversed for min-heap behavior
+            // Reversed for min-heap: lower score = higher priority
+            other
+                .0
+                .partial_cmp(&self.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| other.1.cmp(&self.1))
         }
     }
     impl PartialOrd for Item {
@@ -307,17 +333,21 @@ fn stable_toposort(
         }
     }
 
-    // Initialize with nodes having in-degree 0
+    // Position tracking: maps sibling_deps node index → placement order in result
+    let mut positions: HashMap<petgraph::graph::NodeIndex, usize> = HashMap::new();
+
+    // Initialize with nodes having in-degree 0 (all INFINITY — nothing placed yet)
     let mut heap: BinaryHeap<Item> = BinaryHeap::new();
     for (&n, &deg) in &in_degree {
         if deg == 0 {
             let orig = node_to_orig[&n];
-            heap.push(Item(get_name(orig), n));
+            heap.push(Item(f64::INFINITY, get_name(orig), n));
         }
     }
 
     let mut result = Vec::new();
-    while let Some(Item(_, n)) = heap.pop() {
+    while let Some(Item(_, _, n)) = heap.pop() {
+        positions.insert(n, result.len());
         result.push(node_to_orig[&n]);
 
         // Decrease in-degree of neighbors
@@ -326,7 +356,8 @@ fn stable_toposort(
             *deg -= 1;
             if *deg == 0 {
                 let orig = node_to_orig[&neighbor];
-                heap.push(Item(get_name(orig), neighbor));
+                let score = barycenter(neighbor, &positions);
+                heap.push(Item(score, get_name(orig), neighbor));
             }
         }
     }
@@ -522,13 +553,7 @@ pub fn build_layout(graph: &ArcGraph, order: &[NodeIndex], cycles: &[Cycle]) -> 
         // Add edges from both CrateDep and ModuleDep (aggregated to crate level)
         for edge_idx in graph.edge_indices() {
             match &graph[edge_idx] {
-                Edge::CrateDep {
-                    context: crate::model::EdgeContext::Production,
-                }
-                | Edge::ModuleDep {
-                    context: crate::model::EdgeContext::Production,
-                    ..
-                } => {
+                Edge::CrateDep { .. } | Edge::ModuleDep { .. } => {
                     let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
                     let src_crate = crate_of(src);
                     let dst_crate = crate_of(dst);
@@ -1996,6 +2021,237 @@ mod tests {
     }
 
     // === Cycle-Breaking Tests (ca-0170) ===
+
+    // === Barycenter Heuristic Tests (ca-0159) ===
+
+    #[test]
+    fn test_barycenter_incoming_gives_dependents() {
+        // Verify edge direction: A→B means "A depends on B"
+        // neighbors_directed(B, Incoming) should return A (the dependent)
+        let mut g: DiGraph<NodeIndex, ()> = DiGraph::new();
+        let a_orig = NodeIndex::new(0);
+        let b_orig = NodeIndex::new(1);
+        let a = g.add_node(a_orig);
+        let b = g.add_node(b_orig);
+        g.add_edge(a, b, ()); // A depends on B
+
+        let incoming: Vec<_> = g
+            .neighbors_directed(b, petgraph::Direction::Incoming)
+            .collect();
+        assert_eq!(incoming, vec![a], "Incoming neighbors of B should be [A]");
+    }
+
+    #[test]
+    fn test_barycenter_symmetric_diamond() {
+        use std::path::PathBuf;
+
+        // Symmetric diamond: A→C, A→D, B→C, B→D
+        // Barycenter scores identical → alphabetical fallback → A, B, C, D
+        let mut graph = ArcGraph::new();
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test".to_string(),
+            path: PathBuf::from("/test"),
+        });
+        let a = graph.add_node(Node::Module {
+            name: "a".into(),
+            crate_idx,
+        });
+        let b = graph.add_node(Node::Module {
+            name: "b".into(),
+            crate_idx,
+        });
+        let c = graph.add_node(Node::Module {
+            name: "c".into(),
+            crate_idx,
+        });
+        let d = graph.add_node(Node::Module {
+            name: "d".into(),
+            crate_idx,
+        });
+
+        graph.add_edge(crate_idx, a, Edge::Contains);
+        graph.add_edge(crate_idx, b, Edge::Contains);
+        graph.add_edge(crate_idx, c, Edge::Contains);
+        graph.add_edge(crate_idx, d, Edge::Contains);
+
+        // A→C, A→D (A depends on C and D)
+        graph.add_edge(
+            a,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            a,
+            d,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        // B→C, B→D (B depends on C and D)
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            d,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
+        let pos_a = labels.iter().position(|&l| l == "a").unwrap();
+        let pos_b = labels.iter().position(|&l| l == "b").unwrap();
+        let pos_c = labels.iter().position(|&l| l == "c").unwrap();
+        let pos_d = labels.iter().position(|&l| l == "d").unwrap();
+
+        // Symmetric: A and B before C and D, alphabetical within each group
+        assert!(pos_a < pos_c, "A before C. Labels: {labels:?}");
+        assert!(pos_b < pos_d, "B before D. Labels: {labels:?}");
+        assert!(
+            pos_a < pos_b,
+            "A before B (alphabetical). Labels: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_barycenter_reduces_crossings() {
+        use std::path::PathBuf;
+
+        // Graph: A→D, B→C (A depends on D, B depends on C)
+        // Alphabetical: A(0), B(1), C(2), D(3) — Arc A→D crosses Arc B→C
+        // Barycenter: A(0), B(1), D(2) [score=0.0 from A@0], C(3) [score=1.0 from B@1]
+        // D should come before C to minimize crossings
+        let mut graph = ArcGraph::new();
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test".to_string(),
+            path: PathBuf::from("/test"),
+        });
+        let a = graph.add_node(Node::Module {
+            name: "a".into(),
+            crate_idx,
+        });
+        let b = graph.add_node(Node::Module {
+            name: "b".into(),
+            crate_idx,
+        });
+        let c = graph.add_node(Node::Module {
+            name: "c".into(),
+            crate_idx,
+        });
+        let d = graph.add_node(Node::Module {
+            name: "d".into(),
+            crate_idx,
+        });
+
+        graph.add_edge(crate_idx, a, Edge::Contains);
+        graph.add_edge(crate_idx, b, Edge::Contains);
+        graph.add_edge(crate_idx, c, Edge::Contains);
+        graph.add_edge(crate_idx, d, Edge::Contains);
+
+        // A depends on D, B depends on C
+        graph.add_edge(
+            a,
+            d,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
+        let pos_c = labels.iter().position(|&l| l == "c").unwrap();
+        let pos_d = labels.iter().position(|&l| l == "d").unwrap();
+
+        // D should come before C (barycenter: D's dependent A is at pos 0, C's dependent B at pos 1)
+        assert!(
+            pos_d < pos_c,
+            "D should come before C (barycenter reduces crossings). Labels: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_barycenter_linear_chain_unchanged() {
+        use std::path::PathBuf;
+
+        // Linear chain: A→B→C — should produce same order as alphabetical
+        let mut graph = ArcGraph::new();
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test".to_string(),
+            path: PathBuf::from("/test"),
+        });
+        let a = graph.add_node(Node::Module {
+            name: "a".into(),
+            crate_idx,
+        });
+        let b = graph.add_node(Node::Module {
+            name: "b".into(),
+            crate_idx,
+        });
+        let c = graph.add_node(Node::Module {
+            name: "c".into(),
+            crate_idx,
+        });
+
+        graph.add_edge(crate_idx, a, Edge::Contains);
+        graph.add_edge(crate_idx, b, Edge::Contains);
+        graph.add_edge(crate_idx, c, Edge::Contains);
+
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: crate::model::EdgeContext::Production,
+            },
+        );
+
+        let cycles: Vec<Cycle> = vec![];
+        let order = topo_sort(&graph, &cycles);
+        let ir = build_layout(&graph, &order, &cycles);
+
+        let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
+        let pos_a = labels.iter().position(|&l| l == "a").unwrap();
+        let pos_b = labels.iter().position(|&l| l == "b").unwrap();
+        let pos_c = labels.iter().position(|&l| l == "c").unwrap();
+
+        assert!(pos_a < pos_b, "A before B. Labels: {labels:?}");
+        assert!(pos_b < pos_c, "B before C. Labels: {labels:?}");
+    }
 
     #[test]
     fn test_sort_with_cycle_breaking_two_node_cycle() {
