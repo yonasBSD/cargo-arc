@@ -409,6 +409,10 @@ fn walk_module_syn(
         }
     }
 
+    if !ctx.include_tests {
+        dependencies.retain(|d| d.context == EdgeContext::Production);
+    }
+
     // Extract mod declarations from the same AST (no second file read)
     let decls = extract_mod_declarations(&syntax, ctx.include_tests);
 
@@ -1464,6 +1468,77 @@ fn main() {
             )
             .expect("should not error for test-only crate");
             assert!(tree.root.children.is_empty());
+        }
+
+        #[test]
+        fn test_inline_cfg_test_deps_excluded_without_flag() {
+            let tmp = TempDir::new().unwrap();
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            std::fs::write(
+                src.join("lib.rs"),
+                r#"
+mod alpha;
+"#,
+            )
+            .unwrap();
+            std::fs::write(
+                src.join("alpha.rs"),
+                r#"
+use crate::beta::helper;
+
+pub fn process() {}
+
+#[cfg(test)]
+mod tests {
+    use crate::gamma::test_util;
+}
+"#,
+            )
+            .unwrap();
+
+            let mp: ModulePathMap = [(
+                "my_crate".to_string(),
+                HashSet::from(["alpha".into(), "beta".into(), "gamma".into()]),
+            )]
+            .into_iter()
+            .collect();
+            let crate_info = CrateInfo {
+                name: "my_crate".to_string(),
+                path: tmp.path().to_path_buf(),
+                dependencies: vec![],
+                dev_dependencies: vec![],
+            };
+
+            let tree = analyze_modules_syn(
+                &crate_info,
+                &WorkspaceCrates::default(),
+                &mp,
+                &CrateExportMap::default(),
+                false,
+            )
+            .expect("should analyze");
+
+            let alpha = tree
+                .root
+                .children
+                .iter()
+                .find(|m| m.name == "alpha")
+                .expect("alpha module should exist");
+
+            let dep_modules: Vec<&str> = alpha
+                .dependencies
+                .iter()
+                .map(|d| d.target_module.as_str())
+                .collect();
+            assert!(
+                dep_modules.contains(&"beta"),
+                "production dep on beta should be present: {dep_modules:?}"
+            );
+            assert!(
+                !dep_modules.contains(&"gamma"),
+                "test dep on gamma should be excluded without --include-tests: {dep_modules:?}"
+            );
         }
     }
 }
