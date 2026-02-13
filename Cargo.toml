@@ -45,4 +45,5 @@ hir = [
 ]
 
 [dev-dependencies]
+regex = "1.12.3"
 tempfile = "3"

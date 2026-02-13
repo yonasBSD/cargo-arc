@@ -1,5 +1,65 @@
 use cargo_arc::{Args, run};
+use regex::Regex;
 use std::path::PathBuf;
+
+/// Helper: build Args for a fixture with common defaults.
+fn fixture_args(fixture: &str, include_tests: bool) -> (tempfile::NamedTempFile, Args) {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("tests/fixtures/{fixture}/Cargo.toml"));
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let args = Args {
+        output: Some(temp.path().to_path_buf()),
+        manifest_path: fixture_path,
+        features: vec![],
+        all_features: false,
+        no_default_features: false,
+        include_tests,
+        debug: false,
+        volatility: false,
+        no_volatility: true,
+        volatility_months: 6,
+        volatility_low: 2,
+        volatility_high: 10,
+        #[cfg(feature = "hir")]
+        hir: false,
+    };
+    (temp, args)
+}
+
+/// Extract crate names that appear as nodes in the SVG STATIC_DATA.
+fn extract_crate_names(svg: &str) -> Vec<String> {
+    let re = Regex::new(r#"type: "crate", name: "([^"]+)""#).unwrap();
+    re.captures_iter(svg).map(|c| c[1].to_string()).collect()
+}
+
+/// Extract arc entries from STATIC_DATA (from→to with isTest flag).
+fn extract_arcs(svg: &str) -> Vec<(String, String, bool)> {
+    let re =
+        Regex::new(r#""[^"]+": \{ from: "([^"]+)", to: "([^"]+)", isTest: (true|false)"#).unwrap();
+    re.captures_iter(svg)
+        .map(|c| (c[1].to_string(), c[2].to_string(), &c[3] == "true"))
+        .collect()
+}
+
+/// Extract node-id → name mapping from STATIC_DATA.
+fn extract_node_names(svg: &str) -> std::collections::HashMap<String, String> {
+    let re = Regex::new(r#""(\d+)": \{ type: "[^"]+", name: "([^"]+)""#).unwrap();
+    re.captures_iter(svg)
+        .map(|c| (c[1].to_string(), c[2].to_string()))
+        .collect()
+}
+
+/// Resolve arc (from_id, to_id) to (from_name, to_name).
+fn resolve_arc_names(
+    arcs: &[(String, String, bool)],
+    nodes: &std::collections::HashMap<String, String>,
+) -> Vec<(String, String, bool)> {
+    arcs.iter()
+        .filter_map(|(from, to, is_test)| {
+            Some((nodes.get(from)?.clone(), nodes.get(to)?.clone(), *is_test))
+        })
+        .collect()
+}
 
 #[test]
 fn test_multi_crate_fixture() {
@@ -194,5 +254,113 @@ fn test_entry_point_imports() {
     assert!(
         svg.contains("Helper") || svg.contains("Exported"),
         "SVG should contain entry-point symbol names in STATIC_DATA usages"
+    );
+}
+
+/// ca-0213: Dev-dependency crate appears as phantom node without --include-tests.
+///
+/// Fixture topology (dev_dep_sorting):
+///   foundation  — production crate with modules (handler, service, models, common, test_support)
+///   consumer    — only dev-depends on foundation + test_helper
+///   test_helper — standalone test utility, no production deps
+///
+/// Without --include-tests:
+///   - CrateDep edges from dev-dependencies should NOT appear
+///   - test_helper should NOT appear (no production path)
+///   - consumer should NOT appear (no production path)
+///   - Only foundation with its internal module structure should remain
+///
+/// With --include-tests:
+///   - All three crates visible
+///   - consumer→foundation and consumer→test_helper arcs present
+///   - foundation→test_helper arc present
+#[test]
+fn test_dev_dep_crate_hidden_without_include_tests() {
+    let (temp, args) = fixture_args("dev_dep_sorting", false);
+    let result = run(args);
+    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+
+    let svg = std::fs::read_to_string(temp.path()).unwrap();
+    let crates = extract_crate_names(&svg);
+    let nodes = extract_node_names(&svg);
+    let arcs = extract_arcs(&svg);
+    let named_arcs = resolve_arc_names(&arcs, &nodes);
+
+    // test_helper has no production consumers → should be hidden
+    assert!(
+        !crates.contains(&"test_helper".to_string()),
+        "ca-0213: test_helper should NOT appear without --include-tests (phantom node), but found crates: {crates:?}"
+    );
+
+    // shared_lib is only reachable via test_helper's prod dep → transitive test infra → should be hidden
+    assert!(
+        !crates.contains(&"shared_lib".to_string()),
+        "ca-0213: shared_lib should NOT appear without --include-tests (transitive dev-dep), but found crates: {crates:?}"
+    );
+
+    // consumer only has dev-deps → should be hidden too
+    assert!(
+        !crates.contains(&"consumer".to_string()),
+        "ca-0213: consumer should NOT appear without --include-tests (only dev-deps), but found crates: {crates:?}"
+    );
+
+    // No test-context arcs should exist
+    let test_arcs: Vec<_> = named_arcs
+        .iter()
+        .filter(|(_, _, is_test)| *is_test)
+        .collect();
+    assert!(
+        test_arcs.is_empty(),
+        "ca-0213: no test arcs should appear without --include-tests, but found: {test_arcs:?}"
+    );
+
+    // foundation should still be visible with its production modules
+    assert!(
+        crates.contains(&"foundation".to_string()),
+        "foundation should remain visible (production crate)"
+    );
+    assert!(
+        svg.contains("handler"),
+        "foundation::handler should be visible"
+    );
+    assert!(
+        svg.contains("service"),
+        "foundation::service should be visible"
+    );
+    assert!(
+        svg.contains("models"),
+        "foundation::models should be visible"
+    );
+    assert!(
+        svg.contains("common"),
+        "foundation::common should be visible"
+    );
+}
+
+#[test]
+fn test_dev_dep_crate_visible_with_include_tests() {
+    let (temp, args) = fixture_args("dev_dep_sorting", true);
+    let result = run(args);
+    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+
+    let svg = std::fs::read_to_string(temp.path()).unwrap();
+    let crates = extract_crate_names(&svg);
+
+    // All four crates should be visible with --include-tests
+    assert!(
+        crates.contains(&"foundation".to_string()),
+        "foundation should be visible with --include-tests"
+    );
+    assert!(
+        crates.contains(&"consumer".to_string()),
+        "consumer should be visible with --include-tests"
+    );
+    assert!(
+        crates.contains(&"test_helper".to_string()),
+        "test_helper should be visible with --include-tests"
+    );
+    assert!(
+        crates.contains(&"shared_lib".to_string()),
+        "shared_lib should be visible with --include-tests"
     );
 }

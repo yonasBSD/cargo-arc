@@ -1,0 +1,8 @@
+[package]
+name = "consumer"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+foundation = { path = "../foundation" }
+test_helper = { path = "../test_helper" }

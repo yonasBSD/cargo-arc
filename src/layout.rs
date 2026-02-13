@@ -417,6 +417,73 @@ fn collect_children_recursive(
     result
 }
 
+/// Compute the set of production-reachable crate nodes.
+///
+/// A crate is reachable if:
+/// 1. It is an "anchor" — has Contains edges (= has modules to visualize), OR
+/// 2. It is transitively reachable from an anchor via outgoing CrateDep(Production) edges.
+///
+/// Crates not in this set are test infrastructure (dev-dep crates and their
+/// transitive production dependencies) and should be pruned from the layout.
+///
+/// When CrateDep(Test) edges exist in the graph (i.e. --include-tests is active),
+/// all crates are considered reachable — pruning only applies to production views.
+fn compute_production_reachable(
+    graph: &ArcGraph,
+    crate_indices: &[NodeIndex],
+) -> HashSet<NodeIndex> {
+    use crate::model::EdgeContext;
+    use std::collections::VecDeque;
+
+    let crate_set: HashSet<NodeIndex> = crate_indices.iter().copied().collect();
+
+    // If any CrateDep(Test) edges exist, --include-tests is active → no pruning
+    let has_test_edges = graph.edge_indices().any(|ei| {
+        matches!(
+            graph[ei],
+            Edge::CrateDep {
+                context: EdgeContext::Test(_)
+            }
+        )
+    });
+    if has_test_edges {
+        return crate_set;
+    }
+
+    // Step 1: Find anchors — crates that have Contains edges (= have modules)
+    let mut reachable: HashSet<NodeIndex> = HashSet::new();
+    let mut queue: VecDeque<NodeIndex> = VecDeque::new();
+
+    for &ci in crate_indices {
+        let has_modules = graph
+            .edges(ci)
+            .any(|e| matches!(e.weight(), Edge::Contains));
+        if has_modules {
+            reachable.insert(ci);
+            queue.push_back(ci);
+        }
+    }
+
+    // Step 2: Forward-BFS from anchors over outgoing CrateDep(Production)
+    while let Some(current) = queue.pop_front() {
+        for edge in graph.edges(current) {
+            if matches!(
+                edge.weight(),
+                Edge::CrateDep {
+                    context: EdgeContext::Production
+                }
+            ) {
+                let target = edge.target();
+                if crate_set.contains(&target) && reachable.insert(target) {
+                    queue.push_back(target);
+                }
+            }
+        }
+    }
+
+    reachable
+}
+
 /// Build LayoutIR from graph and cycle information.
 /// Converts graph nodes to LayoutItems with proper nesting and edges with cycle markers.
 /// CrateDep edges are skipped when ModuleDep edges exist between the same crates.
@@ -518,12 +585,19 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
         })
     };
 
+    // Compute production-reachable crates (anchors + their transitive prod deps).
+    // Crates not in this set are test infrastructure and get pruned.
+    let reachable = compute_production_reachable(graph, &crate_indices);
+
     // Group modules by their parent crate for proper visual grouping
     // Each crate is followed by its modules before the next crate
     let mut ordered_items: Vec<NodeIndex> = Vec::new();
     let mut added_modules: HashSet<NodeIndex> = HashSet::new();
 
     for crate_idx in &crate_indices {
+        if !reachable.contains(crate_idx) {
+            continue;
+        }
         ordered_items.push(*crate_idx);
         // Hierarchically sorted modules for this crate
         let sorted_modules =
@@ -1548,6 +1622,18 @@ mod tests {
             path: PathBuf::from("/bbb"),
         });
 
+        // Give both crates a module so they become production-reachable anchors
+        let mod_a = graph.add_node(Node::Module {
+            name: "mod_a".to_string(),
+            crate_idx: crate_a,
+        });
+        let mod_b = graph.add_node(Node::Module {
+            name: "mod_b".to_string(),
+            crate_idx: crate_b,
+        });
+        graph.add_edge(crate_a, mod_a, Edge::Contains);
+        graph.add_edge(crate_b, mod_b, Edge::Contains);
+
         // Production: crate_a depends on crate_b → crate_a first
         graph.add_edge(
             crate_a,
@@ -1676,6 +1762,18 @@ mod tests {
             path: PathBuf::from("/path/b"),
         });
 
+        // Give both crates a module so they become production-reachable anchors
+        let dummy_a = graph.add_node(Node::Module {
+            name: "dummy_a".to_string(),
+            crate_idx: crate_a,
+        });
+        let dummy_b = graph.add_node(Node::Module {
+            name: "dummy_b".to_string(),
+            crate_idx: crate_b,
+        });
+        graph.add_edge(crate_a, dummy_a, Edge::Contains);
+        graph.add_edge(crate_b, dummy_b, Edge::Contains);
+
         // CrateDep: crate_a -> crate_b
         graph.add_edge(
             crate_a,
@@ -1737,8 +1835,15 @@ mod tests {
             crate_idx: crate_b,
         });
 
-        // Hierarchy
+        // Hierarchy (crate_b already has mod_b, making it an anchor)
         graph.add_edge(crate_b, mod_b, Edge::Contains);
+
+        // crate_a also needs a module to be an anchor
+        let dummy_a = graph.add_node(Node::Module {
+            name: "dummy_a".to_string(),
+            crate_idx: crate_a,
+        });
+        graph.add_edge(crate_a, dummy_a, Edge::Contains);
 
         // CrateDep: crate_a -> crate_b
         graph.add_edge(

@@ -1,0 +1,3 @@
+[workspace]
+members = ["foundation", "consumer", "test_helper", "shared_lib"]
+resolver = "2"
