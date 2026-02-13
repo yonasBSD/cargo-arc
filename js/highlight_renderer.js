@@ -90,7 +90,7 @@ const HighlightRenderer = {
     for (const nodeId of staticData.getAllNodeIds()) {
       const node = dom.getNode(nodeId);
       if (node) {
-        node.classList.remove(C.selectedCrate, C.selectedModule, C.depNode, C.dependentNode);
+        node.classList.remove(C.selectedCrate, C.selectedModule, C.groupMember, C.depNode, C.dependentNode);
       }
     }
   },

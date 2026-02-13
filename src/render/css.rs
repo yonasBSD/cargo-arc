@@ -161,10 +161,11 @@ fn build_css_rules() -> Vec<CssRule> {
         // CSS-only dimming via has-highlight on SVG root (leaf elements only)
         CssRule::new(
             &format!(
-                "svg.{} rect:not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{})",
+                "svg.{} rect:not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{})",
                 c.relation.has_highlight,
                 c.node_selection.selected_crate,
                 c.node_selection.selected_module,
+                c.node_selection.group_member,
                 c.relation.dep_node,
                 c.relation.dependent_node,
                 c.toolbar.btn,
@@ -844,6 +845,22 @@ mod tests {
         assert!(
             module_section.contains(ORANGE),
             "Module selected should use ORANGE border"
+        );
+    }
+
+    #[test]
+    fn test_css_group_member_excluded_from_dimming() {
+        let css = render_styles();
+        // The rect dimming rule should exclude .group-member so group members are not dimmed
+        // Find the rect dimming rule (svg.has-highlight rect:not(...))
+        let rect_dim_start = css
+            .find("svg.has-highlight rect:not(")
+            .expect("rect dimming rule should exist");
+        let rect_dim_section = &css[rect_dim_start..rect_dim_start + 300];
+        assert!(
+            rect_dim_section.contains(&format!(":not(.{})", CSS.node_selection.group_member)),
+            "rect dimming rule should exclude .group-member, got: {}",
+            rect_dim_section
         );
     }
 

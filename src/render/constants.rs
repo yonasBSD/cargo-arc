@@ -249,6 +249,7 @@ pub(super) struct DirectionClasses {
 pub(super) struct NodeSelectionClasses {
     pub selected_crate: &'static str,
     pub selected_module: &'static str,
+    pub group_member: &'static str,
 }
 
 #[allow(dead_code)]
@@ -345,6 +346,7 @@ pub(super) static CSS: CssClassNames = CssClassNames {
     node_selection: NodeSelectionClasses {
         selected_crate: "selected-crate",
         selected_module: "selected-module",
+        group_member: "group-member",
     },
     relation: RelationClasses {
         highlighted_arc: "highlighted-arc",
@@ -428,6 +430,11 @@ mod tests {
     }
 
     #[test]
+    fn test_group_member_class_exists() {
+        assert_eq!(CSS.node_selection.group_member, "group-member");
+    }
+
+    #[test]
     fn test_css_class_names_not_empty() {
         // Every CSS class name field must be a non-empty string
         assert!(!CSS.nodes.crate_node.is_empty());
@@ -453,6 +460,7 @@ mod tests {
 
         assert!(!CSS.node_selection.selected_crate.is_empty());
         assert!(!CSS.node_selection.selected_module.is_empty());
+        assert!(!CSS.node_selection.group_member.is_empty());
 
         assert!(!CSS.relation.highlighted_arc.is_empty());
         assert!(!CSS.relation.highlighted_arrow.is_empty());

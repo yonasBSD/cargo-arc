@@ -222,6 +222,10 @@ fn generate_static_data(
         CSS.node_selection.selected_module
     ));
     lines.push(format!(
+        "    groupMember: \"{}\",",
+        CSS.node_selection.group_member
+    ));
+    lines.push(format!(
         "    highlightedArc: \"{}\",",
         CSS.relation.highlighted_arc
     ));
@@ -908,6 +912,24 @@ mod tests {
         assert!(
             script.contains("collapseToggle:"),
             "classes should contain collapseToggle"
+        );
+    }
+
+    #[test]
+    fn test_static_data_contains_group_member_class() {
+        let ir = LayoutIR::new();
+        let config = RenderConfig::default();
+        let positioned: Vec<PositionedItem> = vec![];
+        let parents: HashSet<NodeId> = HashSet::new();
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        assert!(
+            script.contains(&format!(
+                "groupMember: \"{}\"",
+                CSS.node_selection.group_member
+            )),
+            "classes should contain groupMember with value from CSS.node_selection.group_member"
         );
     }
 

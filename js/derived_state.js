@@ -188,9 +188,19 @@ const DerivedState = {
       result.nodeHighlights.set(selection.id, { role: 'current', cssClass });
     }
 
+    // Group mode: mark children as group-member so they are not dimmed
+    if (highlightSet.size > 1) {
+      for (const nodeId of highlightSet) {
+        if (nodeId !== selection.id) {
+          result.nodeHighlights.set(nodeId, { role: 'group-member', cssClass: 'groupMember' });
+        }
+      }
+    }
+
+    const groupMode = highlightSet.size > 1;
     const descs = [
-      ...this._collectRegularArcDescs(staticData, hiddenByFilter, highlightSet),
-      ...this._collectVirtualArcDescs(virtualArcUsages, highlightSet)
+      ...this._collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode),
+      ...this._collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode)
     ];
     this._processArcDescriptors(descs, positions, ctx, result);
   },
@@ -221,8 +231,10 @@ const DerivedState = {
     this._processArcDescriptors(descs, positions, ctx, result);
   },
 
-  /** @private Build descriptors for regular arcs connected to highlight set. */
-  _collectRegularArcDescs(staticData, hiddenByFilter, highlightSet) {
+  /** @private Build descriptors for regular arcs connected to highlight set.
+   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set.
+   */
+  _collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode) {
     const descs = [];
     for (const arcId of staticData.getAllArcIds()) {
       if (hiddenByFilter.has(arcId)) continue;
@@ -231,6 +243,7 @@ const DerivedState = {
       const fromInSet = highlightSet.has(arc.from);
       const toInSet = highlightSet.has(arc.to);
       if (!fromInSet && !toInSet) continue;
+      if (groupMode && (!fromInSet || !toInSet)) continue;
       descs.push({
         key: arcId, fromId: arc.from, toId: arc.to, fromInSet, toInSet,
         originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false
@@ -239,14 +252,17 @@ const DerivedState = {
     return descs;
   },
 
-  /** @private Build descriptors for virtual arcs connected to highlight set. */
-  _collectVirtualArcDescs(virtualArcUsages, highlightSet) {
+  /** @private Build descriptors for virtual arcs connected to highlight set.
+   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set.
+   */
+  _collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode) {
     const descs = [];
     for (const [vArcId, usages] of virtualArcUsages) {
       const [fromId, toId] = vArcId.split('-');
       const fromInSet = highlightSet.has(fromId);
       const toInSet = highlightSet.has(toId);
       if (!fromInSet && !toInSet) continue;
+      if (groupMode && (!fromInSet || !toInSet)) continue;
       const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
       descs.push({
         key: 'v:' + vArcId, fromId, toId, fromInSet, toInSet,

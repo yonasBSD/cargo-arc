@@ -391,10 +391,97 @@ describe("DerivedState", () => {
       expect(result).not.toBeNull();
       // mod_a is current
       expect(result.nodeHighlights.get("mod_a").role).toBe("current");
-      // fn_1-fn_3 is connected (fn_1 is in highlight set, fn_3 is outside)
-      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(true);
       // fn_1-fn_2 is internal to highlight set
       expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
+    });
+
+    test("group highlight: children get group-member role", () => {
+      // mod_a expanded → highlight set = {mod_a, fn_1, fn_2}
+      AppState.setSelection(appState, 'node', 'mod_a');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // mod_a is the primary node → 'current' role
+      expect(result.nodeHighlights.get("mod_a").role).toBe("current");
+      // fn_1 and fn_2 are children → 'group-member' role
+      expect(result.nodeHighlights.get("fn_1")).toEqual({
+        role: 'group-member', cssClass: 'groupMember'
+      });
+      expect(result.nodeHighlights.get("fn_2")).toEqual({
+        role: 'group-member', cssClass: 'groupMember'
+      });
+    });
+
+    test("group highlight: child→external arcs suppressed", () => {
+      // mod_a expanded → highlight set = {mod_a, fn_1, fn_2}
+      // fn_1→fn_3 is external (fn_3 not in set) → should NOT be highlighted
+      // fn_1→fn_2 is internal (both in set) → should be highlighted
+      AppState.setSelection(appState, 'node', 'mod_a');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // Internal arc: both endpoints in highlight set → included
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
+      // External arc: fn_1 in set, fn_3 not → suppressed in group mode
+      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(false);
+      // mod_b→mod_a: mod_a in set, mod_b not → suppressed in group mode
+      expect(result.arcHighlights.has("mod_b-mod_a")).toBe(false);
+    });
+
+    test("group highlight: virtual child→external arcs suppressed", () => {
+      // mod_a expanded → highlight set = {mod_a, fn_1, fn_2}
+      // Virtual arc fn_1→fn_3: fn_3 not in set → should NOT be highlighted
+      AppState.setSelection(appState, 'node', 'mod_a');
+      const virtualArcUsages = new Map([
+        ["fn_1-fn_3", [
+          { symbol: "virt", modulePath: null, locations: [{ file: "v.rs", line: 1 }] }
+        ]]
+      ]);
+
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, virtualArcUsages, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // Virtual external arc suppressed in group mode
+      expect(result.arcHighlights.has("v:fn_1-fn_3")).toBe(false);
+    });
+
+    test("single-node selection: leaf shows all connected arcs (no group suppression)", () => {
+      // fn_1 is a leaf → highlightSet = {fn_1} (size 1, NOT group mode)
+      // fn_1→fn_2 and fn_1→fn_3 should both be highlighted
+      AppState.setSelection(appState, 'node', 'fn_1');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.nodeHighlights.get("fn_1").role).toBe("current");
+      // Both arcs included — no group suppression for single-node
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
+      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(true);
+      // Endpoint nodes get dependency roles
+      expect(result.nodeHighlights.has("fn_2")).toBe(true);
+      expect(result.nodeHighlights.has("fn_3")).toBe(true);
+    });
+
+    test("single-node selection: collapsed parent shows all connected arcs", () => {
+      // mod_a collapsed → highlightSet = {mod_a} (size 1, NOT group mode)
+      // mod_b→mod_a should be highlighted
+      appState.collapsed = new Set(["mod_a"]);
+      AppState.setSelection(appState, 'node', 'mod_a');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.nodeHighlights.get("mod_a").role).toBe("current");
+      // mod_b→mod_a: mod_a in set → should be highlighted (single-node, no suppression)
+      expect(result.arcHighlights.has("mod_b-mod_a")).toBe(true);
     });
 
     test("hover vs click: click takes priority", () => {
