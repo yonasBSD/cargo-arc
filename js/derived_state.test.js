@@ -420,10 +420,8 @@ describe("DerivedState", () => {
       });
     });
 
-    test("group highlight: child→external arcs suppressed", () => {
+    test("group highlight: child→external arcs suppressed, parent edges kept", () => {
       // mod_a expanded → highlight set = {mod_a, fn_1, fn_2}
-      // fn_1→fn_3 is external (fn_3 not in set) → should NOT be highlighted
-      // fn_1→fn_2 is internal (both in set) → should be highlighted
       AppState.setSelection(appState, 'node', 'mod_a');
       const result = DerivedState.deriveHighlightState(
         appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
@@ -432,10 +430,10 @@ describe("DerivedState", () => {
       expect(result).not.toBeNull();
       // Internal arc: both endpoints in highlight set → included
       expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
-      // External arc: fn_1 in set, fn_3 not → suppressed in group mode
+      // Child→external: fn_1 in set, fn_3 not → suppressed in group mode
       expect(result.arcHighlights.has("fn_1-fn_3")).toBe(false);
-      // mod_b→mod_a: mod_a in set, mod_b not → suppressed in group mode
-      expect(result.arcHighlights.has("mod_b-mod_a")).toBe(false);
+      // External→parent: mod_b not in set, but mod_a is the selected node → kept
+      expect(result.arcHighlights.has("mod_b-mod_a")).toBe(true);
     });
 
     test("group highlight: virtual child→external arcs suppressed", () => {

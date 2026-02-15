@@ -199,8 +199,8 @@ const DerivedState = {
 
     const groupMode = highlightSet.size > 1;
     const descs = [
-      ...this._collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode),
-      ...this._collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode)
+      ...this._collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode, selection.id),
+      ...this._collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode, selection.id)
     ];
     this._processArcDescriptors(descs, positions, ctx, result);
   },
@@ -232,9 +232,11 @@ const DerivedState = {
   },
 
   /** @private Build descriptors for regular arcs connected to highlight set.
-   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set.
+   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set,
+   *    unless one endpoint is the selected node itself (parent edges stay visible).
+   *  @param {string} selectionId - The primarily selected node (used to exempt parent edges in group mode).
    */
-  _collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode) {
+  _collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode, selectionId) {
     const descs = [];
     for (const arcId of staticData.getAllArcIds()) {
       if (hiddenByFilter.has(arcId)) continue;
@@ -243,7 +245,7 @@ const DerivedState = {
       const fromInSet = highlightSet.has(arc.from);
       const toInSet = highlightSet.has(arc.to);
       if (!fromInSet && !toInSet) continue;
-      if (groupMode && (!fromInSet || !toInSet)) continue;
+      if (groupMode && arc.from !== selectionId && arc.to !== selectionId && (!fromInSet || !toInSet)) continue;
       descs.push({
         key: arcId, fromId: arc.from, toId: arc.to, fromInSet, toInSet,
         originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false,
@@ -254,16 +256,18 @@ const DerivedState = {
   },
 
   /** @private Build descriptors for virtual arcs connected to highlight set.
-   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set.
+   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set,
+   *    unless one endpoint is the selected node itself (parent edges stay visible).
+   *  @param {string} selectionId - The primarily selected node (used to exempt parent edges in group mode).
    */
-  _collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode) {
+  _collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode, selectionId) {
     const descs = [];
     for (const [vArcId, usages] of virtualArcUsages) {
       const [fromId, toId] = vArcId.split('-');
       const fromInSet = highlightSet.has(fromId);
       const toInSet = highlightSet.has(toId);
       if (!fromInSet && !toInSet) continue;
-      if (groupMode && (!fromInSet || !toInSet)) continue;
+      if (groupMode && fromId !== selectionId && toId !== selectionId && (!fromInSet || !toInSet)) continue;
       const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
       descs.push({
         key: 'v:' + vArcId, fromId, toId, fromInSet, toInSet,
