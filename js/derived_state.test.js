@@ -45,6 +45,21 @@ const TEST_STATIC_DATA = {
     ]},
     "mod_b-mod_a": { from: "mod_b", to: "mod_a", context: { kind: "production", subKind: null, features: [] }, usages: [
       { symbol: "init", modulePath: null, locations: [{ file: "lib.rs", line: 5 }] }
+    ]},
+    "crate-mod_a": { from: "crate", to: "mod_a", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "mod_a", modulePath: null, locations: [{ file: "lib.rs", line: 1 }] }
+    ]},
+    "crate-mod_b": { from: "crate", to: "mod_b", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "mod_b", modulePath: null, locations: [{ file: "lib.rs", line: 2 }] }
+    ]},
+    "mod_a-fn_1": { from: "mod_a", to: "fn_1", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "fn_1", modulePath: null, locations: [{ file: "mod_a.rs", line: 1 }] }
+    ]},
+    "mod_a-fn_2": { from: "mod_a", to: "fn_2", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "fn_2", modulePath: null, locations: [{ file: "mod_a.rs", line: 2 }] }
+    ]},
+    "mod_b-fn_3": { from: "mod_b", to: "fn_3", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "fn_3", modulePath: null, locations: [{ file: "mod_b.rs", line: 1 }] }
     ]}
   }
 };
@@ -78,6 +93,32 @@ function createMockStaticData(data = TEST_STATIC_DATA) {
     }
   };
 }
+
+// Fixture for parent→child arc filtering tests.
+// Parent `p` with 4 children: c1, c2, c3, c4
+// p has arcs to c1 and c2 (directly used)
+// c1→c3 exists (child-to-child, but c3 is NOT a direct target of p)
+// No arcs from p to c3 or c4
+const PARENT_ARC_DATA = {
+  nodes: {
+    p: { type: "module", parent: null, x: 0, y: 0, width: 100, height: 20, hasChildren: true },
+    c1: { type: "function", parent: "p", x: 20, y: 30, width: 100, height: 20, hasChildren: false },
+    c2: { type: "function", parent: "p", x: 20, y: 60, width: 100, height: 20, hasChildren: false },
+    c3: { type: "function", parent: "p", x: 20, y: 90, width: 100, height: 20, hasChildren: false },
+    c4: { type: "function", parent: "p", x: 20, y: 120, width: 100, height: 20, hasChildren: false },
+  },
+  arcs: {
+    "p-c1": { from: "p", to: "c1", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "c1_fn", modulePath: null, locations: [{ file: "p.rs", line: 1 }] }
+    ]},
+    "p-c2": { from: "p", to: "c2", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "c2_fn", modulePath: null, locations: [{ file: "p.rs", line: 2 }] }
+    ]},
+    "c1-c3": { from: "c1", to: "c3", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "c3_fn", modulePath: null, locations: [{ file: "c1.rs", line: 5 }] }
+    ]},
+  }
+};
 
 describe("DerivedState", () => {
   let staticData;
@@ -273,6 +314,44 @@ describe("DerivedState", () => {
       expect(result.size).toBe(1);
       expect(result.has("fn_1")).toBe(true);
     });
+
+    test("expanded parent includes only arc-connected descendants", () => {
+      const sd = createMockStaticData(PARENT_ARC_DATA);
+      const collapsed = new Set();
+      const result = DerivedState.deriveHighlightSet("p", collapsed, sd);
+
+      // p has arcs to c1 and c2 only
+      expect(result.has("p")).toBe(true);
+      expect(result.has("c1")).toBe(true);
+      expect(result.has("c2")).toBe(true);
+      // c3 and c4 are NOT direct targets of p
+      expect(result.has("c3")).toBe(false);
+      expect(result.has("c4")).toBe(false);
+      expect(result.size).toBe(3);
+    });
+
+    test("expanded parent without outgoing arcs returns only {nodeId}", () => {
+      // Parent with children but no outgoing arcs from parent itself
+      const noArcData = {
+        nodes: {
+          parent: { type: "module", parent: null, x: 0, y: 0, width: 100, height: 20, hasChildren: true },
+          child1: { type: "function", parent: "parent", x: 20, y: 30, width: 100, height: 20, hasChildren: false },
+          child2: { type: "function", parent: "parent", x: 20, y: 60, width: 100, height: 20, hasChildren: false },
+        },
+        arcs: {
+          // Only child-to-child arc, no parent→child arcs
+          "child1-child2": { from: "child1", to: "child2", context: { kind: "production", subKind: null, features: [] }, usages: [
+            { symbol: "helper", modulePath: null, locations: [{ file: "test.rs", line: 1 }] }
+          ]}
+        }
+      };
+      const sd = createMockStaticData(noArcData);
+      const collapsed = new Set();
+      const result = DerivedState.deriveHighlightSet("parent", collapsed, sd);
+
+      expect(result.has("parent")).toBe(true);
+      expect(result.size).toBe(1);
+    });
   });
 
   describe("deriveHighlightState", () => {
@@ -387,7 +466,74 @@ describe("DerivedState", () => {
       expect(result.promotedHitareas.has("fn_1-fn_3")).toBe(true);
     });
 
-    test("group highlight: expanded parent includes descendants", () => {
+    test("expanded parent: only parent's own arcs shown, child→external suppressed", () => {
+      // mod_a expanded → highlightSet = {mod_a, fn_1, fn_2}
+      // fn_1→fn_3: child→external, neither endpoint is mod_a → suppressed
+      AppState.setSelection(appState, 'node', 'mod_a');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // Child→external arc suppressed (only parent's own arcs shown)
+      expect(result.arcHighlights.has("fn_1-fn_3")).toBe(false);
+      // mod_a's own arcs are shown
+      expect(result.arcHighlights.has("mod_a-fn_1")).toBe(true);
+      expect(result.arcHighlights.has("mod_a-fn_2")).toBe(true);
+      // External→parent arc kept (mod_b→mod_a: to=selectionId)
+      expect(result.arcHighlights.has("mod_b-mod_a")).toBe(true);
+    });
+
+    test("expanded parent: internal child-to-child arcs suppressed", () => {
+      // mod_a expanded → highlightSet = {mod_a, fn_1, fn_2}
+      // fn_1→fn_2: both in set → internal arc, should be suppressed
+      AppState.setSelection(appState, 'node', 'mod_a');
+      const result = DerivedState.deriveHighlightState(
+        appState, staticData, emptyVirtualArcs, emptyHidden, positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // Internal child-to-child arc must NOT be highlighted in group mode
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(false);
+    });
+
+    test("expanded crate: only crate's own arcs shown", () => {
+      // Extended fixture with ext_crate outside the crate
+      const extData = {
+        nodes: {
+          ...TEST_STATIC_DATA.nodes,
+          ext_crate: { type: "crate", parent: null, x: 200, y: 300, width: 100, height: 24, hasChildren: false }
+        },
+        arcs: {
+          ...TEST_STATIC_DATA.arcs,
+          "crate-ext_crate": { from: "crate", to: "ext_crate", context: { kind: "production", subKind: null, features: [] }, usages: [
+            { symbol: "external_call", modulePath: null, locations: [{ file: "lib.rs", line: 30 }] }
+          ]}
+        }
+      };
+      const sd = createMockStaticData(extData);
+      const extPositions = new Map([
+        ...positions,
+        ["ext_crate", { x: 200, y: 300, width: 100, height: 24 }]
+      ]);
+
+      // crate expanded → highlightSet = {crate, mod_a, mod_b, fn_1, fn_2, fn_3}
+      AppState.setSelection(appState, 'node', 'crate');
+      const result = DerivedState.deriveHighlightState(
+        appState, sd, emptyVirtualArcs, emptyHidden, extPositions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // Crate's own arc to ext_crate highlighted (from=selectionId)
+      expect(result.arcHighlights.has("crate-ext_crate")).toBe(true);
+      // Crate's own arcs to children highlighted
+      expect(result.arcHighlights.has("crate-mod_a")).toBe(true);
+      expect(result.arcHighlights.has("crate-mod_b")).toBe(true);
+      // Child→child and child→external NOT highlighted (neither endpoint is crate)
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(false);
+    });
+
+    test("group highlight: expanded parent highlights descendants, suppresses internal arcs", () => {
       // mod_a is expanded → highlight set = {mod_a, fn_1, fn_2}
       AppState.setSelection(appState, 'node', 'mod_a');
       const result = DerivedState.deriveHighlightState(
@@ -397,8 +543,8 @@ describe("DerivedState", () => {
       expect(result).not.toBeNull();
       // mod_a is current
       expect(result.nodeHighlights.get("mod_a").role).toBe("current");
-      // fn_1-fn_2 is internal to highlight set
-      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
+      // fn_1-fn_2 is internal to highlight set → suppressed in group mode
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(false);
     });
 
     test("group highlight: children get group-member role", () => {
@@ -411,16 +557,16 @@ describe("DerivedState", () => {
       expect(result).not.toBeNull();
       // mod_a is the primary node → 'current' role
       expect(result.nodeHighlights.get("mod_a").role).toBe("current");
-      // fn_1 and fn_2 are children → 'group-member' role
+      // fn_1 and fn_2 are arc targets of mod_a → depNode (green border)
       expect(result.nodeHighlights.get("fn_1")).toEqual({
-        role: 'group-member', cssClass: 'groupMember'
+        role: 'dependency', cssClass: 'depNode'
       });
       expect(result.nodeHighlights.get("fn_2")).toEqual({
-        role: 'group-member', cssClass: 'groupMember'
+        role: 'dependency', cssClass: 'depNode'
       });
     });
 
-    test("group highlight: child→external arcs suppressed, parent edges kept", () => {
+    test("group highlight: only parent edges kept, all child arcs suppressed", () => {
       // mod_a expanded → highlight set = {mod_a, fn_1, fn_2}
       AppState.setSelection(appState, 'node', 'mod_a');
       const result = DerivedState.deriveHighlightState(
@@ -428,21 +574,27 @@ describe("DerivedState", () => {
       );
 
       expect(result).not.toBeNull();
-      // Internal arc: both endpoints in highlight set → included
-      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(true);
-      // Child→external: fn_1 in set, fn_3 not → suppressed in group mode
+      // Child arcs suppressed (neither endpoint is mod_a)
+      expect(result.arcHighlights.has("fn_1-fn_2")).toBe(false);
       expect(result.arcHighlights.has("fn_1-fn_3")).toBe(false);
-      // External→parent: mod_b not in set, but mod_a is the selected node → kept
+      // Parent's own arcs kept (from=selectionId)
+      expect(result.arcHighlights.has("mod_a-fn_1")).toBe(true);
+      expect(result.arcHighlights.has("mod_a-fn_2")).toBe(true);
+      // External→parent: mod_b→mod_a kept (to=selectionId)
       expect(result.arcHighlights.has("mod_b-mod_a")).toBe(true);
     });
 
-    test("group highlight: virtual child→external arcs suppressed", () => {
+    test("group highlight: virtual arcs suppressed unless parent is endpoint", () => {
       // mod_a expanded → highlight set = {mod_a, fn_1, fn_2}
-      // Virtual arc fn_1→fn_3: fn_3 not in set → should NOT be highlighted
+      // Virtual arc fn_1→fn_3: neither endpoint is mod_a → suppressed
+      // Virtual arc mod_a→fn_3: from=selectionId → shown
       AppState.setSelection(appState, 'node', 'mod_a');
       const virtualArcUsages = new Map([
         ["fn_1-fn_3", [
           { symbol: "virt", modulePath: null, locations: [{ file: "v.rs", line: 1 }] }
+        ]],
+        ["mod_a-fn_3", [
+          { symbol: "virt2", modulePath: null, locations: [{ file: "v.rs", line: 2 }] }
         ]]
       ]);
 
@@ -451,8 +603,10 @@ describe("DerivedState", () => {
       );
 
       expect(result).not.toBeNull();
-      // Virtual external arc suppressed in group mode
+      // Child virtual arc suppressed (neither endpoint is mod_a)
       expect(result.arcHighlights.has("v:fn_1-fn_3")).toBe(false);
+      // Parent virtual arc shown (from=selectionId)
+      expect(result.arcHighlights.has("v:mod_a-fn_3")).toBe(true);
     });
 
     test("single-node selection: leaf shows all connected arcs (no group suppression)", () => {
@@ -650,6 +804,59 @@ describe("DerivedState", () => {
       expect(result.arcHighlights.has("X-Y")).toBe(true);
       // Y should NOT get a node role from the test arc
       expect(result.nodeHighlights.has("Y")).toBe(false);
+    });
+
+    test("expanded parent: unconnected children not in nodeHighlights", () => {
+      const sd = createMockStaticData(PARENT_ARC_DATA);
+      const parentPositions = new Map([
+        ["p", { x: 0, y: 60, width: 100, height: 20 }],
+        ["c1", { x: 20, y: 90, width: 100, height: 20 }],
+        ["c2", { x: 20, y: 120, width: 100, height: 20 }],
+        ["c3", { x: 20, y: 150, width: 100, height: 20 }],
+        ["c4", { x: 20, y: 180, width: 100, height: 20 }],
+      ]);
+
+      const state = AppState.create();
+      AppState.setSelection(state, 'node', 'p');
+
+      const result = DerivedState.deriveHighlightState(
+        state, sd, new Map(), new Set(), parentPositions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // p is current
+      expect(result.nodeHighlights.get("p").role).toBe("current");
+      // c1 and c2 are arc targets of p → depNode (green border)
+      expect(result.nodeHighlights.get("c1")).toEqual({ role: 'dependency', cssClass: 'depNode' });
+      expect(result.nodeHighlights.get("c2")).toEqual({ role: 'dependency', cssClass: 'depNode' });
+      // c3 and c4 NOT in nodeHighlights (child arcs suppressed, only p's own arcs shown)
+      expect(result.nodeHighlights.has("c3")).toBe(false);
+      expect(result.nodeHighlights.has("c4")).toBe(false);
+    });
+
+    test("expanded parent: only parent's own arcs highlighted", () => {
+      const sd = createMockStaticData(PARENT_ARC_DATA);
+      const parentPositions = new Map([
+        ["p", { x: 0, y: 60, width: 100, height: 20 }],
+        ["c1", { x: 20, y: 90, width: 100, height: 20 }],
+        ["c2", { x: 20, y: 120, width: 100, height: 20 }],
+        ["c3", { x: 20, y: 150, width: 100, height: 20 }],
+        ["c4", { x: 20, y: 180, width: 100, height: 20 }],
+      ]);
+
+      const state = AppState.create();
+      AppState.setSelection(state, 'node', 'p');
+
+      const result = DerivedState.deriveHighlightState(
+        state, sd, new Map(), new Set(), parentPositions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // Parent's own arcs: p→c1 and p→c2 highlighted
+      expect(result.arcHighlights.has("p-c1")).toBe(true);
+      expect(result.arcHighlights.has("p-c2")).toBe(true);
+      // c1→c3: neither endpoint is p → suppressed in group mode
+      expect(result.arcHighlights.has("c1-c3")).toBe(false);
     });
   });
 });

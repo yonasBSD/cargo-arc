@@ -115,6 +115,10 @@ fn build_css_rules() -> Vec<CssRule> {
             &format!(".{}", c.node_selection.selected_module),
             &[("fill", ns.module_fill), ("stroke-width", "3")],
         ),
+        CssRule::new(
+            &format!(".{}", c.node_selection.group_member),
+            &[("stroke", r.dependency), ("stroke-width", "2")],
+        ),
         // Highlighted arc (marker class)
         CssRule::new(&format!(".{}", c.relation.highlighted_arc), &[]),
         // Glow classes

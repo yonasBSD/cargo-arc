@@ -69,7 +69,7 @@ const DerivedState = {
   /**
    * Derive the set of node IDs that should be highlighted when a node is pinned.
    * - Collapsed node → {nodeId} (children hidden, virtual arcs cover them)
-   * - Expanded node → {nodeId, ...visible descendants}
+   * - Expanded node → {nodeId, ...directly arc-connected visible descendants}
    * - Leaf node → {nodeId}
    * @param {string} nodeId - The pinned node ID
    * @param {Set<string>} collapsed - Set of collapsed node IDs
@@ -84,14 +84,34 @@ const DerivedState = {
       return result;
     }
 
-    // Expanded parent → add visible descendants recursively
+    // Build outgoing-targets map once: sourceId → Set of targetIds
+    const outgoing = new Map();
+    for (const arcId of staticData.getAllArcIds()) {
+      const arc = staticData.getArc(arcId);
+      if (!arc) continue;
+      if (!outgoing.has(arc.from)) outgoing.set(arc.from, new Set());
+      outgoing.get(arc.from).add(arc.to);
+    }
+
+    // Transitive walk: expand through arc-connected, expanded descendants
     const parentMap = staticData.buildParentMap();
-    const descendants = TreeLogic.getDescendants(nodeId, parentMap);
-    for (const descId of descendants) {
-      // Only include if the descendant is visible (no collapsed ancestor between it and nodeId)
-      const visibleAncestor = TreeLogic.getVisibleAncestor(descId, collapsed, parentMap);
-      if (visibleAncestor === descId) {
+    const queue = [nodeId];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const targets = outgoing.get(current);
+      if (!targets) continue;
+
+      const descendants = TreeLogic.getDescendants(current, parentMap);
+      for (const descId of descendants) {
+        if (result.has(descId)) continue;
+        if (!targets.has(descId)) continue;
+        const visibleAncestor = TreeLogic.getVisibleAncestor(descId, collapsed, parentMap);
+        if (visibleAncestor !== descId) continue;
+
         result.add(descId);
+        if (!collapsed.has(descId) && staticData.hasChildren(descId)) {
+          queue.push(descId);
+        }
       }
     }
 
@@ -232,9 +252,10 @@ const DerivedState = {
   },
 
   /** @private Build descriptors for regular arcs connected to highlight set.
-   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set,
-   *    unless one endpoint is the selected node itself (parent edges stay visible).
-   *  @param {string} selectionId - The primarily selected node (used to exempt parent edges in group mode).
+   *  @param {boolean} groupMode - When true, only keep arcs where selectionId is an endpoint.
+   *    All other arcs (child-to-child, child-to-external) are suppressed so only the
+   *    parent's own dependency arcs are shown.
+   *  @param {string} selectionId - The primarily selected node (parent).
    */
   _collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode, selectionId) {
     const descs = [];
@@ -245,7 +266,7 @@ const DerivedState = {
       const fromInSet = highlightSet.has(arc.from);
       const toInSet = highlightSet.has(arc.to);
       if (!fromInSet && !toInSet) continue;
-      if (groupMode && arc.from !== selectionId && arc.to !== selectionId && (!fromInSet || !toInSet)) continue;
+      if (groupMode && arc.from !== selectionId && arc.to !== selectionId) continue;
       descs.push({
         key: arcId, fromId: arc.from, toId: arc.to, fromInSet, toInSet,
         originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false,
@@ -256,9 +277,8 @@ const DerivedState = {
   },
 
   /** @private Build descriptors for virtual arcs connected to highlight set.
-   *  @param {boolean} groupMode - When true, only include arcs where BOTH endpoints are in the set,
-   *    unless one endpoint is the selected node itself (parent edges stay visible).
-   *  @param {string} selectionId - The primarily selected node (used to exempt parent edges in group mode).
+   *  @param {boolean} groupMode - When true, only keep arcs where selectionId is an endpoint.
+   *  @param {string} selectionId - The primarily selected node (parent).
    */
   _collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode, selectionId) {
     const descs = [];
@@ -267,7 +287,7 @@ const DerivedState = {
       const fromInSet = highlightSet.has(fromId);
       const toInSet = highlightSet.has(toId);
       if (!fromInSet && !toInSet) continue;
-      if (groupMode && fromId !== selectionId && toId !== selectionId && (!fromInSet || !toInSet)) continue;
+      if (groupMode && fromId !== selectionId && toId !== selectionId) continue;
       const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
       descs.push({
         key: 'v:' + vArcId, fromId, toId, fromInSet, toInSet,
@@ -328,12 +348,16 @@ const DerivedState = {
     };
   },
 
-  /** @private Set CSS classes for arc endpoint nodes not in the highlight set. */
+  /** @private Set CSS classes for arc endpoint nodes.
+   *  depNode/dependentNode may override group-member (to give green/purple border).
+   */
   _markEndpointNodes(fromId, toId, fromInSet, toInSet, nodeHighlights) {
-    if (!fromInSet && !nodeHighlights.has(fromId)) {
+    const fromRole = nodeHighlights.get(fromId)?.role;
+    if (!fromRole || fromRole === 'group-member') {
       nodeHighlights.set(fromId, { role: 'dependent', cssClass: 'dependentNode' });
     }
-    if (!toInSet && !nodeHighlights.has(toId)) {
+    const toRole = nodeHighlights.get(toId)?.role;
+    if (!toRole || toRole === 'group-member') {
       nodeHighlights.set(toId, { role: 'dependency', cssClass: 'depNode' });
     }
   },
