@@ -87,10 +87,11 @@ const HighlightRenderer = {
    * Remove highlight CSS classes from all nodes (data-iteration).
    */
   _resetNodeClasses(dom, C, staticData) {
+    const nodeClasses = [C.selectedCrate, C.selectedModule, C.groupMember, C.cycleMember, C.depNode, C.dependentNode];
     for (const nodeId of staticData.getAllNodeIds()) {
       const node = dom.getNode(nodeId);
       if (node) {
-        node.classList.remove(C.selectedCrate, C.selectedModule, C.groupMember, C.depNode, C.dependentNode);
+        for (const cls of nodeClasses) node.classList.remove(cls);
       }
     }
   },

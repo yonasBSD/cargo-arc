@@ -478,14 +478,11 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
 
     let mut ir = LayoutIR::new();
 
-    // Build set of cycle member pairs for quick lookup
-    let cycle_pairs: HashSet<(NodeIndex, NodeIndex)> = cycles
+    // Map each node to its cycle index for cycle_id propagation
+    let node_to_cycle: HashMap<NodeIndex, usize> = cycles
         .iter()
-        .flat_map(|c| {
-            c.nodes
-                .iter()
-                .flat_map(|&a| c.nodes.iter().map(move |&b| (a, b)))
-        })
+        .enumerate()
+        .flat_map(|(i, c)| c.nodes.iter().map(move |&n| (n, i)))
         .collect();
 
     // Map graph NodeIndex to LayoutIR NodeId
@@ -668,12 +665,24 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
                     } else {
                         EdgeDirection::Upward
                     };
-                    let cycle = if cycle_pairs.contains(&(src, dst)) {
+                    let shared_cycle = match (node_to_cycle.get(&src), node_to_cycle.get(&dst)) {
+                        (Some(a), Some(b)) if a == b => Some(*a),
+                        _ => None,
+                    };
+                    let cycle = if shared_cycle.is_some() {
                         Some(CycleKind::Transitive)
                     } else {
                         None
                     };
-                    ir.add_edge(from, to, direction, cycle, vec![], context.clone());
+                    ir.add_edge(
+                        from,
+                        to,
+                        direction,
+                        cycle,
+                        shared_cycle,
+                        vec![],
+                        context.clone(),
+                    );
                 }
             }
             Edge::ModuleDep { locations, context } => {
@@ -684,9 +693,12 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
                     } else {
                         EdgeDirection::Upward
                     };
-                    let cycle = if cycle_pairs.contains(&(src, dst)) {
-                        if cycle_pairs.contains(&(dst, src))
-                            && graph.contains_edge(dst, src)
+                    let shared_cycle = match (node_to_cycle.get(&src), node_to_cycle.get(&dst)) {
+                        (Some(a), Some(b)) if a == b => Some(*a),
+                        _ => None,
+                    };
+                    let cycle = if shared_cycle.is_some() {
+                        if graph.contains_edge(dst, src)
                             && matches!(
                                 graph[graph.find_edge(dst, src).unwrap()],
                                 Edge::ModuleDep { .. }
@@ -704,6 +716,7 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
                         to,
                         direction,
                         cycle,
+                        shared_cycle,
                         locations.clone(),
                         context.clone(),
                     );
@@ -796,6 +809,7 @@ pub struct LayoutEdge {
     pub to: NodeId,
     pub direction: EdgeDirection,
     pub cycle: Option<CycleKind>,
+    pub cycle_id: Option<usize>,
     pub source_locations: Vec<SourceLocation>,
     pub context: EdgeContext,
 }
@@ -823,12 +837,14 @@ impl LayoutIR {
         id
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_edge(
         &mut self,
         from: NodeId,
         to: NodeId,
         direction: EdgeDirection,
         cycle: Option<CycleKind>,
+        cycle_id: Option<usize>,
         source_locations: Vec<SourceLocation>,
         context: EdgeContext,
     ) {
@@ -837,6 +853,7 @@ impl LayoutIR {
             to,
             direction,
             cycle,
+            cycle_id,
             source_locations,
             context,
         });
@@ -858,6 +875,7 @@ mod tests {
             to: 1,
             direction: EdgeDirection::Downward,
             cycle: None,
+            cycle_id: None,
             source_locations: vec![],
             context: EdgeContext::production(),
         };
@@ -868,6 +886,7 @@ mod tests {
             to: 1,
             direction: EdgeDirection::Downward,
             cycle: None,
+            cycle_id: None,
             source_locations: vec![],
             context: EdgeContext::test(TestKind::Unit),
         };
@@ -881,6 +900,7 @@ mod tests {
             to: 1,
             direction: EdgeDirection::Downward,
             cycle: None,
+            cycle_id: None,
             source_locations: vec![SourceLocation {
                 file: PathBuf::from("src/cli.rs"),
                 line: 42,
@@ -1172,6 +1192,145 @@ mod tests {
     }
 
     #[test]
+    fn test_cycle_id_propagation() {
+        use std::path::PathBuf;
+
+        // Build graph: crate with 5 modules, two independent cycles
+        let mut graph = ArcGraph::new();
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test".to_string(),
+            path: PathBuf::from("/test"),
+        });
+        let a = graph.add_node(Node::Module {
+            name: "a".to_string(),
+            crate_idx,
+        });
+        let b = graph.add_node(Node::Module {
+            name: "b".to_string(),
+            crate_idx,
+        });
+        let c = graph.add_node(Node::Module {
+            name: "c".to_string(),
+            crate_idx,
+        });
+        let d = graph.add_node(Node::Module {
+            name: "d".to_string(),
+            crate_idx,
+        });
+        let e = graph.add_node(Node::Module {
+            name: "e".to_string(),
+            crate_idx,
+        });
+        // Non-cycle module
+        let f = graph.add_node(Node::Module {
+            name: "f".to_string(),
+            crate_idx,
+        });
+        graph.add_edge(crate_idx, a, Edge::Contains);
+        graph.add_edge(crate_idx, b, Edge::Contains);
+        graph.add_edge(crate_idx, c, Edge::Contains);
+        graph.add_edge(crate_idx, d, Edge::Contains);
+        graph.add_edge(crate_idx, e, Edge::Contains);
+        graph.add_edge(crate_idx, f, Edge::Contains);
+
+        // Cycle 1: A → B → C → A
+        graph.add_edge(
+            a,
+            b,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: EdgeContext::production(),
+            },
+        );
+        graph.add_edge(
+            b,
+            c,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: EdgeContext::production(),
+            },
+        );
+        graph.add_edge(
+            c,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: EdgeContext::production(),
+            },
+        );
+
+        // Cycle 2: D → E → D
+        graph.add_edge(
+            d,
+            e,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: EdgeContext::production(),
+            },
+        );
+        graph.add_edge(
+            e,
+            d,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: EdgeContext::production(),
+            },
+        );
+
+        // Non-cycle edge: F → A
+        graph.add_edge(
+            f,
+            a,
+            Edge::ModuleDep {
+                locations: vec![],
+                context: EdgeContext::production(),
+            },
+        );
+
+        let cycles = detect_cycles(&graph);
+        let ir = build_layout(&graph, &cycles);
+
+        // Cycle edges should have a cycle_id
+        let cycle_edges: Vec<_> = ir.edges.iter().filter(|e| e.cycle.is_some()).collect();
+        assert!(
+            cycle_edges.len() >= 5,
+            "Should have at least 5 cycle edges (3 from cycle 1 + 2 from cycle 2), got {}",
+            cycle_edges.len()
+        );
+
+        // All cycle edges should have cycle_id set
+        for edge in &cycle_edges {
+            assert!(
+                edge.cycle_id.is_some(),
+                "Cycle edge {}->{} should have cycle_id",
+                edge.from,
+                edge.to
+            );
+        }
+
+        // Edges within same cycle should share the same cycle_id
+        let cycle_ids: Vec<usize> = cycle_edges.iter().filter_map(|e| e.cycle_id).collect();
+        let unique_ids: HashSet<usize> = cycle_ids.iter().copied().collect();
+        assert_eq!(
+            unique_ids.len(),
+            2,
+            "Should have exactly 2 distinct cycle IDs, got {:?}",
+            unique_ids
+        );
+
+        // Non-cycle edge (F → A) should have cycle_id = None
+        let non_cycle_edges: Vec<_> = ir.edges.iter().filter(|e| e.cycle.is_none()).collect();
+        for edge in &non_cycle_edges {
+            assert!(
+                edge.cycle_id.is_none(),
+                "Non-cycle edge {}->{} should have cycle_id = None",
+                edge.from,
+                edge.to
+            );
+        }
+    }
+
+    #[test]
     fn test_upward_edge_direction() {
         // When a module that appears later in topo order depends on one that appears earlier,
         // it should be marked as Downward. When the reverse happens (earlier depends on later),
@@ -1347,6 +1506,7 @@ mod tests {
             to: 1,
             direction: EdgeDirection::Downward,
             cycle: None,
+            cycle_id: None,
             source_locations: vec![],
             context: EdgeContext::production(),
         };
@@ -1355,6 +1515,7 @@ mod tests {
             to: 0,
             direction: EdgeDirection::Downward,
             cycle: Some(CycleKind::Direct),
+            cycle_id: Some(0),
             source_locations: vec![],
             context: EdgeContext::production(),
         };
@@ -1363,6 +1524,7 @@ mod tests {
             to: 3,
             direction: EdgeDirection::Downward,
             cycle: Some(CycleKind::Transitive),
+            cycle_id: Some(1),
             source_locations: vec![],
             context: EdgeContext::production(),
         };
@@ -1388,6 +1550,7 @@ mod tests {
             crate_id,
             mod_id,
             EdgeDirection::Downward,
+            None,
             None,
             vec![],
             EdgeContext::production(),

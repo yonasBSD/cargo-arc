@@ -17,11 +17,11 @@ Object.assign(globalThis.STATIC_DATA.classes, {
   highlightedLabel: "highlightedLabel",
   shadowPath: "shadow-path", glowIncoming: "glowIncoming", glowOutgoing: "glowOutgoing",
   downward: "downward", upward: "upward",
+  groupMember: "group-member", cycleMember: "cycle-member",
 });
 
-import { ArcLogic, ArrowLogic } from "./arc_logic.js";
+import { ArcLogic } from "./arc_logic.js";
 global.ArcLogic = ArcLogic;
-global.ArrowLogic = ArrowLogic;
 
 import { Selectors } from "./selectors.js";
 global.Selectors = Selectors;
@@ -289,6 +289,57 @@ describe("HighlightRenderer", () => {
 
       // After full apply: has-highlight should be present (activateDimming ran last)
       expect(svg.classList.contains(C.hasHighlight)).toBe(true);
+    });
+
+    test("cycle-member: node gets cycle-member CSS class", () => {
+      const nodeEl = createFakeElement('g');
+      dom._registerElement(Selectors.nodeId("n1"), nodeEl);
+
+      const staticData = createRendererStaticData(["n1"], {});
+      const state = {
+        nodeHighlights: new Map([["n1", { role: "cycle-member", cssClass: "cycleMember" }]]),
+        arcHighlights: new Map(),
+        shadowData: new Map(),
+        promotedHitareas: new Set(),
+      };
+
+      HighlightRenderer.apply(dom, staticData, new Map(), state);
+
+      expect(nodeEl.classList.contains(C.cycleMember)).toBe(true);
+    });
+
+    test("cycle-member: resetToBase removes cycle-member class", () => {
+      const nodeEl = createFakeElement('g');
+      nodeEl.classList.add(C.cycleMember);
+      dom._registerElement(Selectors.nodeId("n1"), nodeEl);
+
+      const staticData = createRendererStaticData(["n1"], {});
+      HighlightRenderer.apply(dom, staticData, new Map(), null);
+
+      expect(nodeEl.classList.contains(C.cycleMember)).toBe(false);
+    });
+
+    test("cycle-member: multiple nodes get cycle-member simultaneously", () => {
+      const nodeA = createFakeElement('g');
+      const nodeB = createFakeElement('g');
+      dom._registerElement(Selectors.nodeId("a"), nodeA);
+      dom._registerElement(Selectors.nodeId("b"), nodeB);
+
+      const staticData = createRendererStaticData(["a", "b"], {});
+      const state = {
+        nodeHighlights: new Map([
+          ["a", { role: "cycle-member", cssClass: "cycleMember" }],
+          ["b", { role: "cycle-member", cssClass: "cycleMember" }],
+        ]),
+        arcHighlights: new Map(),
+        shadowData: new Map(),
+        promotedHitareas: new Set(),
+      };
+
+      HighlightRenderer.apply(dom, staticData, new Map(), state);
+
+      expect(nodeA.classList.contains(C.cycleMember)).toBe(true);
+      expect(nodeB.classList.contains(C.cycleMember)).toBe(true);
     });
   });
 });

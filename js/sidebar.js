@@ -52,6 +52,11 @@ const SidebarLogic = {
   buildContent(arcId, overrideData) {
     const arc = overrideData || STATIC_DATA.arcs[arcId];
     if (!arc) return "";
+
+    // Cycle view: show all cycle arcs when clicking a cycle arc
+    if (!overrideData && arc.cycleId !== undefined && STATIC_DATA.cycles) {
+      return this._buildCycleContent(arcId, arc.cycleId);
+    }
     const groups = arc.usages || [];
 
     const fromNode = StaticData.getNode(arc.from);
@@ -365,6 +370,63 @@ const SidebarLogic = {
     clearTimeout(this._debounceTimer);
     this._cachedX = this._calcX();
     this.updatePosition();
+  },
+
+  /**
+   * Build HTML for cycle view: all cycle arcs sorted by source-location count.
+   * @param {string} selectedArcId - The clicked arc ID
+   * @param {number} cycleId - Index into STATIC_DATA.cycles
+   * @returns {string}
+   */
+  _buildCycleContent(selectedArcId, cycleId) {
+    const cycle = STATIC_DATA.cycles[cycleId];
+    if (!cycle) return "";
+
+    const arcInfos = cycle.arcs.map(arcId => {
+      const arc = STATIC_DATA.arcs[arcId];
+      const usages = arc?.usages || [];
+      const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
+      return { arcId, arc, count, usages };
+    });
+    arcInfos.sort((a, b) => a.count - b.count);
+
+    let html = `<div class="sidebar-header">`;
+    html += `<span class="sidebar-title">Cycle (${cycle.arcs.length} edges)</span>`;
+    html += `<button class="sidebar-close">&#x2715;</button>`;
+    html += `</div>`;
+
+    html += `<div class="sidebar-content">`;
+    for (const info of arcInfos) {
+      const isSelected = info.arcId === selectedArcId;
+      const fromNode = StaticData.getNode(info.arc.from);
+      const toNode = StaticData.getNode(info.arc.to);
+      const fromName = fromNode ? fromNode.name : info.arc.from;
+      const toName = toNode ? toNode.name : info.arc.to;
+
+      html += `<div class="sidebar-usage-group${isSelected ? ' sidebar-selected-arc' : ''}">`;
+      html += `<div class="sidebar-symbol">`;
+      html += `<span class="sidebar-toggle">&#x25BE;</span>`;
+      html += `<span class="sidebar-symbol-name">${fromName}</span>`;
+      html += `<span class="sidebar-arrow">&#x2192;</span>`;
+      html += `<span class="sidebar-symbol-name">${toName}</span>`;
+      html += `<span class="sidebar-ref-count">${info.count}</span>`;
+      html += `</div>`;
+
+      html += `<div class="sidebar-locations">`;
+      for (const group of info.usages) {
+        for (const loc of group.locations) {
+          html += `<div class="sidebar-location">${loc.file}<span class="sidebar-line-badge">:${loc.line}</span></div>`;
+        }
+      }
+      html += `</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+
+    const totalLocs = arcInfos.reduce((sum, info) => sum + info.count, 0);
+    html += `<div class="sidebar-footer">${totalLocs} references \u00b7 ${cycle.arcs.length} edges</div>`;
+
+    return html;
   },
 
   _setupCollapseHandlers(root) {

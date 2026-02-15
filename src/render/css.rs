@@ -88,7 +88,7 @@ fn build_css_rules() -> Vec<CssRule> {
             &[
                 ("fill", "none"),
                 ("stroke", d.cycle),
-                ("stroke-width", "0.5"),
+                ("stroke-width", "1.0"),
             ],
         ),
         CssRule::new(
@@ -118,6 +118,10 @@ fn build_css_rules() -> Vec<CssRule> {
         CssRule::new(
             &format!(".{}", c.node_selection.group_member),
             &[("stroke", r.dependency), ("stroke-width", "2")],
+        ),
+        CssRule::new(
+            &format!(".{}", c.node_selection.cycle_member),
+            &[("stroke", d.cycle), ("stroke-width", "1.5")],
         ),
         // Highlighted arc (marker class)
         CssRule::new(&format!(".{}", c.relation.highlighted_arc), &[]),
@@ -165,11 +169,12 @@ fn build_css_rules() -> Vec<CssRule> {
         // CSS-only dimming via has-highlight on SVG root (leaf elements only)
         CssRule::new(
             &format!(
-                "svg.{} rect:not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{})",
+                "svg.{} rect:not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{}):not(.{})",
                 c.relation.has_highlight,
                 c.node_selection.selected_crate,
                 c.node_selection.selected_module,
                 c.node_selection.group_member,
+                c.node_selection.cycle_member,
                 c.relation.dep_node,
                 c.relation.dependent_node,
                 c.toolbar.btn,
@@ -253,11 +258,7 @@ fn build_css_rules() -> Vec<CssRule> {
         // Virtual arcs
         CssRule::new(
             &format!(".{}", c.direction.virtual_arc),
-            &[
-                ("fill", "none"),
-                ("stroke-width", "0.5"),
-                ("stroke-dasharray", "4,2"),
-            ],
+            &[("fill", "none"), ("stroke-width", "0.5")],
         ),
         CssRule::new(
             &format!(".{}.{}", c.direction.virtual_arc, c.direction.downward),
@@ -865,6 +866,23 @@ mod tests {
             rect_dim_section.contains(&format!(":not(.{})", CSS.node_selection.group_member)),
             "rect dimming rule should exclude .group-member, got: {}",
             rect_dim_section
+        );
+    }
+
+    #[test]
+    fn test_css_contains_cycle_member() {
+        let css = render_styles();
+        assert!(
+            css.contains(&format!(".{}", CSS.node_selection.cycle_member)),
+            "CSS should contain .cycle-member class"
+        );
+        // cycle-member should use the cycle color for stroke
+        assert!(
+            css.contains(&format!(
+                ".{} {{ stroke: {};",
+                CSS.node_selection.cycle_member, COLORS.direction.cycle
+            )),
+            "cycle-member should use cycle color for stroke"
         );
     }
 

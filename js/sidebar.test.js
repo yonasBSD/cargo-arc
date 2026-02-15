@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { createFakeElement } from "./dom_adapter.js";
 import { SidebarLogic } from "./sidebar.js";
 
@@ -1017,6 +1017,84 @@ describe("SidebarLogic", () => {
       const configIdx = html.indexOf("Config");
       const parseIdx = html.indexOf("parse");
       expect(configIdx).toBeLessThan(parseIdx);
+    });
+  });
+
+  describe("buildContent — cycle view", () => {
+    let savedArcs, savedCycles;
+
+    beforeEach(() => {
+      savedArcs = globalThis.STATIC_DATA.arcs;
+      savedCycles = globalThis.STATIC_DATA.cycles;
+
+      // Cycle: A → B → C → A (cycleId=0)
+      globalThis.STATIC_DATA.arcs = {
+        ...savedArcs,
+        "A-B": { from: "A", to: "B", cycleId: 0, usages: [
+          { symbol: "sym1", modulePath: null, locations: [{ file: "a.rs", line: 1 }] }
+        ]},
+        "B-C": { from: "B", to: "C", cycleId: 0, usages: [
+          { symbol: "sym2", modulePath: null, locations: [{ file: "b.rs", line: 1 }, { file: "b.rs", line: 2 }, { file: "b.rs", line: 3 }] }
+        ]},
+        "C-A": { from: "C", to: "A", cycleId: 0, usages: [
+          { symbol: "sym3", modulePath: null, locations: [{ file: "c.rs", line: 1 }, { file: "c.rs", line: 2 }] }
+        ]},
+      };
+      globalThis.STATIC_DATA.nodes = {
+        ...globalThis.STATIC_DATA.nodes,
+        A: { type: "module", name: "mod_a", parent: null },
+        B: { type: "module", name: "mod_b", parent: null },
+        C: { type: "module", name: "mod_c", parent: null },
+      };
+      globalThis.STATIC_DATA.cycles = [
+        { nodes: ["A", "B", "C"], arcs: ["A-B", "B-C", "C-A"] }
+      ];
+    });
+
+    afterEach(() => {
+      globalThis.STATIC_DATA.arcs = savedArcs;
+      globalThis.STATIC_DATA.cycles = savedCycles;
+    });
+
+    test("cycle-arc: header shows 'Cycle' with edge count", () => {
+      const html = SidebarLogic.buildContent("A-B");
+      expect(html).toContain("Cycle");
+      expect(html).toContain("3 edges");
+    });
+
+    test("cycle-arc: all cycle arcs listed", () => {
+      const html = SidebarLogic.buildContent("A-B");
+      expect(html).toContain("mod_a");
+      expect(html).toContain("mod_b");
+      expect(html).toContain("mod_c");
+      // All three arcs should have their source locations
+      expect(html).toContain("a.rs");
+      expect(html).toContain("b.rs");
+      expect(html).toContain("c.rs");
+    });
+
+    test("cycle-arc: sorted ascending by source-location count (weakest link first)", () => {
+      const html = SidebarLogic.buildContent("A-B");
+      // A→B has 1 loc, C→A has 2 locs, B→C has 3 locs
+      // Ascending order: A→B (1) first, then C→A (2), then B→C (3)
+      const aIdx = html.indexOf("a.rs");
+      const cIdx = html.indexOf("c.rs");
+      const bIdx = html.indexOf("b.rs");
+      expect(aIdx).toBeLessThan(cIdx);
+      expect(cIdx).toBeLessThan(bIdx);
+    });
+
+    test("cycle-arc: clicked arc highlighted", () => {
+      const html = SidebarLogic.buildContent("A-B");
+      expect(html).toContain("sidebar-selected-arc");
+    });
+
+    test("non-cycle arc: normal single-arc layout (regression)", () => {
+      const html = SidebarLogic.buildContent("crate_a-crate_b");
+      expect(html).not.toContain("Cycle (");
+      expect(html).toContain("sidebar-header");
+      expect(html).toContain("crate_a");
+      expect(html).toContain("crate_b");
     });
   });
 });

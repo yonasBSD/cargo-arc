@@ -250,6 +250,7 @@ pub(super) struct NodeSelectionClasses {
     pub selected_crate: &'static str,
     pub selected_module: &'static str,
     pub group_member: &'static str,
+    pub cycle_member: &'static str,
 }
 
 #[allow(dead_code)]
@@ -347,6 +348,7 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         selected_crate: "selected-crate",
         selected_module: "selected-module",
         group_member: "group-member",
+        cycle_member: "cycle-member",
     },
     relation: RelationClasses {
         highlighted_arc: "highlighted-arc",

@@ -94,6 +94,7 @@ mod tests {
             b,
             EdgeDirection::Downward,
             None,
+            None,
             vec![],
             EdgeContext::production(),
         );
@@ -127,6 +128,7 @@ mod tests {
             b,
             EdgeDirection::Downward,
             Some(CycleKind::Direct),
+            Some(0),
             vec![],
             EdgeContext::production(),
         );
@@ -158,12 +160,17 @@ mod tests {
             b2,
             EdgeDirection::Downward,
             Some(CycleKind::Transitive),
+            Some(0),
             vec![],
             EdgeContext::production(),
         );
         let svg2 = render(&ir2, &RenderConfig::default());
         assert!(svg2.contains("cycle-arc"));
-        assert!(svg2.contains("stroke-dasharray"));
+        // Transitive cycle arcs use solid lines (no dasharray) for uniform style
+        assert!(
+            !svg2.contains("stroke-dasharray"),
+            "Transitive cycle arcs should NOT have stroke-dasharray"
+        );
     }
 
     #[test]
@@ -203,6 +210,7 @@ mod tests {
             a,
             b,
             EdgeDirection::Downward,
+            None,
             None,
             vec![],
             EdgeContext::production(),
@@ -259,6 +267,7 @@ mod tests {
             b,
             EdgeDirection::Downward,
             None,
+            None,
             vec![],
             EdgeContext::production(),
         );
@@ -278,6 +287,96 @@ mod tests {
         assert!(
             base_arcs_content.contains("<polygon"),
             "base-arcs-layer should contain arrow polygons"
+        );
+    }
+
+    #[test]
+    fn test_arc_z_order() {
+        use crate::model::TestKind;
+
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        let d = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "d".into(),
+        );
+        let e = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "e".into(),
+        );
+
+        // Add edges in "wrong" order: cycle first, then production, then test
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            Some(CycleKind::Direct),
+            Some(0),
+            vec![],
+            EdgeContext::production(),
+        );
+        ir.add_edge(
+            b,
+            d,
+            EdgeDirection::Downward,
+            None,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
+        ir.add_edge(
+            d,
+            e,
+            EdgeDirection::Downward,
+            None,
+            None,
+            vec![],
+            EdgeContext::test(TestKind::Unit),
+        );
+
+        let svg = render(&ir, &RenderConfig::default());
+
+        // In SVG, elements rendered later appear on top (higher z-order).
+        // Expected order: Test arcs first (back), then Production, then Cycle (front).
+        let test_arc_pos = svg.find(r#"id="edge-3-4""#).expect("test arc should exist");
+        let prod_arc_pos = svg
+            .find(r#"id="edge-2-3""#)
+            .expect("production arc should exist");
+        let cycle_arc_pos = svg
+            .find(r#"id="edge-1-2""#)
+            .expect("cycle arc should exist");
+
+        assert!(
+            test_arc_pos < prod_arc_pos,
+            "Test arc (pos {}) should appear before production arc (pos {}) in SVG",
+            test_arc_pos,
+            prod_arc_pos
+        );
+        assert!(
+            prod_arc_pos < cycle_arc_pos,
+            "Production arc (pos {}) should appear before cycle arc (pos {}) in SVG",
+            prod_arc_pos,
+            cycle_arc_pos
         );
     }
 
@@ -303,6 +402,7 @@ mod tests {
             a,
             b,
             EdgeDirection::Downward,
+            None,
             None,
             vec![],
             EdgeContext::production(),

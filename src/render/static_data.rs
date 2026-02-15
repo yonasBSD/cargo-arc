@@ -161,19 +161,62 @@ fn generate_static_data(
             format!("[{}]", group_strs.join(", "))
         };
 
+        let cycle_id_str = match edge.cycle_id {
+            Some(id) => format!(", cycleId: {}", id),
+            None => String::new(),
+        };
+
         let comma = if i < ir.edges.len() - 1 { "," } else { "" };
 
         lines.push(format!(
-            "    \"{}\": {{ from: \"{}\", to: \"{}\", context: {}, usages: {} }}{}",
+            "    \"{}\": {{ from: \"{}\", to: \"{}\", context: {}, usages: {}{} }}{}",
             arc_id,
             edge.from,
             edge.to,
             edge.context.format_js(),
             usages_str,
+            cycle_id_str,
             comma
         ));
     }
     lines.push("  },".to_string());
+
+    // Generate cycles array from edges with cycle_id
+    {
+        use std::collections::BTreeMap;
+        let mut cycle_map: BTreeMap<usize, (Vec<NodeId>, Vec<String>)> = BTreeMap::new();
+        for edge in &ir.edges {
+            if let Some(cid) = edge.cycle_id {
+                let entry = cycle_map
+                    .entry(cid)
+                    .or_insert_with(|| (Vec::new(), Vec::new()));
+                // Collect unique node IDs
+                if !entry.0.contains(&edge.from) {
+                    entry.0.push(edge.from);
+                }
+                if !entry.0.contains(&edge.to) {
+                    entry.0.push(edge.to);
+                }
+                // Collect arc IDs
+                let arc_id = format!("{}-{}", edge.from, edge.to);
+                entry.1.push(arc_id);
+            }
+        }
+        lines.push("  cycles: [".to_string());
+        let cycle_count = cycle_map.len();
+        for (i, (_cid, (nodes, arcs))) in cycle_map.iter().enumerate() {
+            let nodes_str: Vec<String> = nodes.iter().map(|n| format!("\"{}\"", n)).collect();
+            let arcs_str: Vec<String> = arcs.iter().map(|a| format!("\"{}\"", a)).collect();
+            let comma = if i < cycle_count - 1 { "," } else { "" };
+            lines.push(format!(
+                "    {{ nodes: [{}], arcs: [{}] }}{}",
+                nodes_str.join(", "),
+                arcs_str.join(", "),
+                comma
+            ));
+        }
+        lines.push("  ],".to_string());
+    }
 
     // Generate classes object (CSS class names for JS)
     lines.push("  classes: {".to_string());
@@ -229,6 +272,10 @@ fn generate_static_data(
     lines.push(format!(
         "    groupMember: \"{}\",",
         CSS.node_selection.group_member
+    ));
+    lines.push(format!(
+        "    cycleMember: \"{}\",",
+        CSS.node_selection.cycle_member
     ));
     lines.push(format!(
         "    highlightedArc: \"{}\",",
@@ -654,6 +701,7 @@ mod tests {
             b,
             EdgeDirection::Downward,
             None,
+            None,
             vec![SourceLocation {
                 file: PathBuf::from("src/a.rs"),
                 line: 5,
@@ -712,6 +760,7 @@ mod tests {
             b,
             EdgeDirection::Downward,
             None,
+            None,
             vec![],
             EdgeContext::test(crate::model::TestKind::Unit),
         );
@@ -750,6 +799,7 @@ mod tests {
             a,
             b,
             EdgeDirection::Downward,
+            None,
             None,
             vec![],
             EdgeContext::production(),
@@ -792,6 +842,7 @@ mod tests {
             a,
             b,
             EdgeDirection::Downward,
+            None,
             None,
             vec![
                 SourceLocation {
@@ -920,6 +971,7 @@ mod tests {
             a,
             b,
             EdgeDirection::Downward,
+            None,
             None,
             vec![SourceLocation {
                 file: PathBuf::from("src/a.rs"),
@@ -1214,6 +1266,7 @@ mod tests {
             b,
             EdgeDirection::Downward,
             None,
+            None,
             vec![SourceLocation {
                 file: PathBuf::from("src/a.rs"),
                 line: 5,
@@ -1248,6 +1301,120 @@ mod tests {
         assert!(
             script.contains("aggregatedLocations") || script.contains("hiddenEdgeData"),
             "Script should collect locations from hidden edges for virtual arcs"
+        );
+    }
+
+    #[test]
+    fn test_static_data_cycle_info() {
+        // Graph with a cycle: A → B → C → A (cycle_id=0)
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        let m_c = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "m_c".into(),
+        );
+        // Cycle edges with cycle_id=0
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            Some(crate::layout::CycleKind::Transitive),
+            Some(0),
+            vec![],
+            EdgeContext::production(),
+        );
+        ir.add_edge(
+            b,
+            m_c,
+            EdgeDirection::Downward,
+            Some(crate::layout::CycleKind::Transitive),
+            Some(0),
+            vec![],
+            EdgeContext::production(),
+        );
+        ir.add_edge(
+            m_c,
+            a,
+            EdgeDirection::Upward,
+            Some(crate::layout::CycleKind::Transitive),
+            Some(0),
+            vec![],
+            EdgeContext::production(),
+        );
+        // Non-cycle edge (no cycle_id)
+        ir.add_edge(
+            a,
+            m_c,
+            EdgeDirection::Downward,
+            None,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
+
+        let config = RenderConfig::default();
+        let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
+        let parents: HashSet<NodeId> = HashSet::from([0]);
+
+        let script = render_script(&config, &ir, &positioned, &parents);
+
+        // STATIC_DATA must have a cycles array
+        assert!(
+            script.contains("cycles: ["),
+            "STATIC_DATA should have cycles array"
+        );
+
+        // Cycle 0 should list the 3 nodes involved
+        assert!(
+            script.contains(r#""1""#) && script.contains(r#""2""#) && script.contains(r#""3""#),
+            "Cycle should reference node IDs 1, 2, 3"
+        );
+
+        // Cycle 0 should list the arc IDs
+        assert!(
+            script.contains(r#""1-2""#)
+                && script.contains(r#""2-3""#)
+                && script.contains(r#""3-1""#),
+            "Cycle should reference arc IDs"
+        );
+
+        // Cycle arcs should have cycleId field in their arc entry
+        // Find the arc entry for "1-2" and check it has cycleId: 0
+        let arc_section_start = script.find("arcs: {").expect("should have arcs section");
+        let arc_section = &script[arc_section_start..];
+        let arc_1_2_pos = arc_section.find(r#""1-2""#).expect("should have arc 1-2");
+        let arc_1_2_region = &arc_section[arc_1_2_pos..arc_1_2_pos + 200];
+        assert!(
+            arc_1_2_region.contains("cycleId: 0"),
+            "Cycle arc 1-2 should have cycleId: 0, got: {}",
+            arc_1_2_region
+        );
+
+        // Non-cycle arc should NOT have cycleId
+        let arc_1_3_pos = arc_section.find(r#""1-3""#).expect("should have arc 1-3");
+        let arc_1_3_region =
+            &arc_section[arc_1_3_pos..arc_1_3_pos + 200.min(arc_section.len() - arc_1_3_pos)];
+        assert!(
+            !arc_1_3_region.contains("cycleId:"),
+            "Non-cycle arc 1-3 should NOT have cycleId, got: {}",
+            arc_1_3_region
         );
     }
 }

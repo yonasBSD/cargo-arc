@@ -223,9 +223,23 @@ const DerivedState = {
       ...this._collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode, selection.id)
     ];
     this._processArcDescriptors(descs, positions, ctx, result);
+
+    // Direct-cycle detection: mark bidirectional cycle partners with cycle-member
+    for (const arcId of staticData.getAllArcIds()) {
+      const arc = staticData.getArc(arcId);
+      if (!arc || arc.cycleId === undefined || arc.from !== selection.id) continue;
+      const partner = arc.to;
+      const reverseArc = staticData.getArc(`${partner}-${selection.id}`);
+      if (reverseArc && reverseArc.cycleId !== undefined) {
+        const existing = result.nodeHighlights.get(partner);
+        if (!existing || existing.role !== 'current') {
+          result.nodeHighlights.set(partner, { role: 'cycle-member', cssClass: 'cycleMember' });
+        }
+      }
+    }
   },
 
-  /** @private Arc-selection: specific arc + its virtual variant. */
+  /** @private Arc-selection: specific arc + its virtual variant + cycle expansion. */
   _deriveForArcSelection(selection, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result) {
     const arcId = selection.id;
     const [fromId, toId] = arcId.split('-');
@@ -234,7 +248,8 @@ const DerivedState = {
     result.nodeHighlights.set(toId, { role: 'dependency', cssClass: 'depNode' });
 
     const descs = [];
-    if (staticData.getArc(arcId) && !hiddenByFilter.has(arcId)) {
+    const arc = staticData.getArc(arcId);
+    if (arc && !hiddenByFilter.has(arcId)) {
       descs.push({
         key: arcId, fromId, toId, fromInSet: true, toInSet: true,
         originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false
@@ -248,6 +263,30 @@ const DerivedState = {
         originalWidth: ArcLogic.calculateStrokeWidth(count), isVirtual: true
       });
     }
+
+    // Cycle expansion: highlight all arcs and nodes in the same cycle
+    if (arc && arc.cycleId !== undefined && typeof STATIC_DATA !== 'undefined' && STATIC_DATA.cycles) {
+      const cycle = STATIC_DATA.cycles[arc.cycleId];
+      if (cycle) {
+        for (const nodeId of cycle.nodes) {
+          if (!result.nodeHighlights.has(nodeId)) {
+            result.nodeHighlights.set(nodeId, { role: 'cycle-member', cssClass: 'cycleMember' });
+          }
+        }
+        for (const cycleArcId of cycle.arcs) {
+          if (cycleArcId === arcId) continue;
+          const cycleArc = staticData.getArc(cycleArcId);
+          if (cycleArc && !hiddenByFilter.has(cycleArcId)) {
+            descs.push({
+              key: cycleArcId, fromId: cycleArc.from, toId: cycleArc.to,
+              fromInSet: true, toInSet: true,
+              originalWidth: staticData.getArcStrokeWidth(cycleArcId), isVirtual: false
+            });
+          }
+        }
+      }
+    }
+
     this._processArcDescriptors(descs, positions, ctx, result);
   },
 

@@ -1,6 +1,7 @@
-use super::constants::{COLORS, CSS, LAYOUT, RenderConfig};
+use super::constants::{COLORS, CSS, LAYOUT};
 use super::positioning::PositionedItem;
 use crate::layout::{CycleKind, EdgeDirection, ItemKind, LayoutIR, NodeId};
+use crate::model::DependencyKind;
 use std::collections::HashSet;
 
 pub(super) fn render_header(width: f32, height: f32) -> String {
@@ -217,7 +218,21 @@ pub(super) fn render_edges(
         .map(|p| p.x + p.width)
         .fold(0.0_f32, |a, b| a.max(b));
 
-    for edge in &ir.edges {
+    // Sort edges by type for z-order: Test/Build (back) → Downward Production →
+    // Upward Production → Cycle (front). In SVG, later elements render on top.
+    let mut edge_order: Vec<usize> = (0..ir.edges.len()).collect();
+    edge_order.sort_by_key(|&i| {
+        let edge = &ir.edges[i];
+        match (edge.cycle, edge.direction, &edge.context.kind) {
+            (_, _, DependencyKind::Test(_) | DependencyKind::Build) => 0,
+            (None, EdgeDirection::Downward, DependencyKind::Production) => 1,
+            (None, EdgeDirection::Upward, DependencyKind::Production) => 2,
+            (Some(_), _, _) => 3,
+        }
+    });
+
+    for &idx in &edge_order {
+        let edge = &ir.edges[idx];
         let from_pos = positioned.iter().find(|p| p.id == edge.from);
         let to_pos = positioned.iter().find(|p| p.id == edge.to);
 
@@ -246,30 +261,19 @@ pub(super) fn render_edges(
             );
 
             let cd = &CSS.direction;
-            let (base_arc_class, arrow_class, extra_style, direction) =
-                match (edge.cycle, edge.direction) {
-                    (Some(CycleKind::Direct), _) => {
-                        (cd.cycle_arc.to_string(), cd.cycle_arrow, "", "cycle")
-                    }
-                    (Some(CycleKind::Transitive), _) => (
-                        cd.cycle_arc.to_string(),
-                        cd.cycle_arrow,
-                        " stroke-dasharray=\"4,2\"",
-                        "cycle",
-                    ),
-                    (None, EdgeDirection::Downward) => (
-                        format!("{} {}", cd.dep_arc, cd.downward),
-                        cd.dep_arrow,
-                        "",
-                        "downward",
-                    ),
-                    (None, EdgeDirection::Upward) => (
-                        format!("{} {}", cd.dep_arc, cd.upward),
-                        cd.upward_arrow,
-                        "",
-                        "upward",
-                    ),
-                };
+            let (base_arc_class, arrow_class, direction) = match (edge.cycle, edge.direction) {
+                (Some(_), _) => (cd.cycle_arc.to_string(), cd.cycle_arrow, "cycle"),
+                (None, EdgeDirection::Downward) => (
+                    format!("{} {}", cd.dep_arc, cd.downward),
+                    cd.dep_arrow,
+                    "downward",
+                ),
+                (None, EdgeDirection::Upward) => (
+                    format!("{} {}", cd.dep_arc, cd.upward),
+                    cd.upward_arrow,
+                    "upward",
+                ),
+            };
 
             // Add crate-dep-arc class for Crate-to-Crate edges
             let is_crate_dep = matches!((&from.kind, &to.kind), (ItemKind::Crate, ItemKind::Crate));
@@ -280,17 +284,21 @@ pub(super) fn render_edges(
             };
 
             let edge_id = format!("{}-{}", edge.from, edge.to);
+            let cycle_id_attr = match edge.cycle_id {
+                Some(id) => format!(r#" data-cycle-id="{}""#, id),
+                None => String::new(),
+            };
 
             // Hit-area path (invisible, 12px wide, receives pointer events) → hitareas layer
             // Note: source-locations are read from STATIC_DATA in JavaScript, not DOM attributes
             let hitarea = cd.arc_hitarea;
             hitareas.push_str(&format!(
-                "    <path class=\"{hitarea}\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" data-direction=\"{direction}\" d=\"{path}\"/>\n",
+                "    <path class=\"{hitarea}\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" data-direction=\"{direction}\"{cycle_id_attr} d=\"{path}\"/>\n",
                 edge.from, edge.to
             ));
             // Visible path (styled, no pointer events) → base-arcs layer
             base_arcs.push_str(&format!(
-                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" data-direction=\"{direction}\" d=\"{path}\"{extra_style}/>\n"
+                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" data-direction=\"{direction}\"{cycle_id_attr} d=\"{path}\"/>\n"
             ));
 
             // Arrow head pointing to target → base-arcs layer
@@ -354,9 +362,8 @@ fn escape_xml(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::positioning::{
-        calculate_box_width, calculate_canvas_size, calculate_max_arc_width, calculate_positions,
-    };
+    use super::super::constants::RenderConfig;
+    use super::super::positioning::{calculate_box_width, calculate_positions};
     use super::*;
     use crate::model::EdgeContext;
 
@@ -401,7 +408,7 @@ mod tests {
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
-        let output = render_tree_lines(&positioned, &ir, &config);
+        let output = render_tree_lines(&positioned, &ir);
         assert!(output.contains("tree-line"));
     }
 
@@ -419,7 +426,7 @@ mod tests {
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
-        let output = render_tree_lines(&positioned, &ir, &config);
+        let output = render_tree_lines(&positioned, &ir);
         assert!(
             output.contains(r#"class="tree-line""#) && output.contains(r#"data-parent="0""#),
             "Tree lines should have data-parent attribute"
@@ -603,15 +610,15 @@ mod tests {
             b,
             EdgeDirection::Downward,
             None,
+            None,
             vec![],
             EdgeContext::production(),
         );
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
-        let max_arc_width = calculate_max_arc_width(&positioned, &ir, config.row_height);
-        let (canvas_width, _) = calculate_canvas_size(&positioned, &config, max_arc_width);
-        let output = render_edges(&positioned, &ir, canvas_width, config.row_height);
+
+        let output = render_edges(&positioned, &ir, config.row_height);
         assert!(output.contains(r#"id="edge-1-2""#), "Edge should have id");
         assert!(
             output.contains(r#"data-from="1""#),
@@ -650,15 +657,15 @@ mod tests {
             b,
             EdgeDirection::Downward,
             None,
+            None,
             vec![],
             EdgeContext::production(),
         );
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
-        let max_arc_width = calculate_max_arc_width(&positioned, &ir, config.row_height);
-        let (canvas_width, _) = calculate_canvas_size(&positioned, &config, max_arc_width);
-        let output = render_edges(&positioned, &ir, canvas_width, config.row_height);
+
+        let output = render_edges(&positioned, &ir, config.row_height);
 
         assert!(
             output.contains(r#"class="arc-hitarea""#),
@@ -697,18 +704,115 @@ mod tests {
             c2,
             EdgeDirection::Downward,
             None,
+            None,
             vec![],
             EdgeContext::production(),
         );
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
-        let max_arc_width = calculate_max_arc_width(&positioned, &ir, config.row_height);
-        let (canvas_width, _) = calculate_canvas_size(&positioned, &config, max_arc_width);
-        let output = render_edges(&positioned, &ir, canvas_width, config.row_height);
+
+        let output = render_edges(&positioned, &ir, config.row_height);
         assert!(
             output.contains("crate-dep-arc"),
             "Crate-to-crate edges should have crate-dep-arc class"
+        );
+    }
+
+    #[test]
+    fn test_data_cycle_id_attribute() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "b".into(),
+        );
+        let m = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "m".into(),
+        );
+        // Cycle edge with cycle_id=0
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            Some(CycleKind::Direct),
+            Some(0),
+            vec![],
+            EdgeContext::production(),
+        );
+        // Non-cycle edge
+        ir.add_edge(
+            a,
+            m,
+            EdgeDirection::Downward,
+            None,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
+
+        let config = RenderConfig::default();
+        let box_width = calculate_box_width(&ir);
+        let positioned = calculate_positions(&ir, &config, box_width);
+
+        let output = render_edges(&positioned, &ir, config.row_height);
+
+        // Cycle arc path should have data-cycle-id="0"
+        let cycle_path = output
+            .lines()
+            .find(|l| l.contains("cycle-arc") && l.contains("id=\"edge-1-2\""))
+            .expect("Should find cycle-arc path for edge 1-2");
+        assert!(
+            cycle_path.contains(r#"data-cycle-id="0""#),
+            "Cycle arc path should have data-cycle-id attribute, got: {}",
+            cycle_path
+        );
+
+        // Hitarea for cycle arc should also have data-cycle-id
+        let cycle_hitarea = output
+            .lines()
+            .find(|l| l.contains("arc-hitarea") && l.contains(r#"data-arc-id="1-2""#))
+            .expect("Should find hitarea for edge 1-2");
+        assert!(
+            cycle_hitarea.contains(r#"data-cycle-id="0""#),
+            "Cycle arc hitarea should have data-cycle-id attribute, got: {}",
+            cycle_hitarea
+        );
+
+        // Non-cycle arc should NOT have data-cycle-id
+        let normal_path = output
+            .lines()
+            .find(|l| l.contains("id=\"edge-1-3\""))
+            .expect("Should find normal arc path for edge 1-3");
+        assert!(
+            !normal_path.contains("data-cycle-id"),
+            "Non-cycle arc should NOT have data-cycle-id, got: {}",
+            normal_path
+        );
+
+        // Non-cycle hitarea should NOT have data-cycle-id
+        let normal_hitarea = output
+            .lines()
+            .find(|l| l.contains("arc-hitarea") && l.contains(r#"data-arc-id="1-3""#))
+            .expect("Should find hitarea for edge 1-3");
+        assert!(
+            !normal_hitarea.contains("data-cycle-id"),
+            "Non-cycle hitarea should NOT have data-cycle-id, got: {}",
+            normal_hitarea
         );
     }
 }

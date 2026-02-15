@@ -1,13 +1,12 @@
-import { test, expect, describe, beforeEach } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { TreeLogic } from "./tree_logic.js";
-import { ArcLogic, ArrowLogic } from "./arc_logic.js";
+import { ArcLogic } from "./arc_logic.js";
 import { HighlightLogic } from "./highlight_logic.js";
 import { AppState } from "./app_state.js";
 
 // Set globals (simulating browser environment where modules are loaded before derived_state.js)
 global.TreeLogic = TreeLogic;
 global.ArcLogic = ArcLogic;
-global.ArrowLogic = ArrowLogic;
 global.HighlightLogic = HighlightLogic;
 global.AppState = AppState;
 
@@ -857,6 +856,203 @@ describe("DerivedState", () => {
       expect(result.arcHighlights.has("p-c2")).toBe(true);
       // c1→c3: neither endpoint is p → suppressed in group mode
       expect(result.arcHighlights.has("c1-c3")).toBe(false);
+    });
+  });
+
+  describe("cycle expansion (arc selection)", () => {
+    const ROW_HEIGHT = 30;
+
+    // Cycle: A → B → C → A (cycleId=0), plus non-cycle A → D
+    const CYCLE_DATA = {
+      nodes: {
+        A: { type: "module", parent: null, x: 20, y: 60, width: 100, height: 20, hasChildren: false },
+        B: { type: "module", parent: null, x: 20, y: 90, width: 100, height: 20, hasChildren: false },
+        C: { type: "module", parent: null, x: 20, y: 120, width: 100, height: 20, hasChildren: false },
+        D: { type: "module", parent: null, x: 20, y: 150, width: 100, height: 20, hasChildren: false },
+      },
+      arcs: {
+        "A-B": { from: "A", to: "B", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+          { symbol: "sym1", modulePath: null, locations: [{ file: "a.rs", line: 1 }] }
+        ]},
+        "B-C": { from: "B", to: "C", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+          { symbol: "sym2", modulePath: null, locations: [{ file: "b.rs", line: 1 }, { file: "b.rs", line: 2 }] }
+        ]},
+        "C-A": { from: "C", to: "A", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+          { symbol: "sym3", modulePath: null, locations: [{ file: "c.rs", line: 1 }] }
+        ]},
+        "A-D": { from: "A", to: "D", context: { kind: "production", subKind: null, features: [] }, usages: [
+          { symbol: "sym4", modulePath: null, locations: [{ file: "a.rs", line: 5 }] }
+        ]},
+      },
+    };
+
+    const CYCLE_POSITIONS = new Map([
+      ["A", { x: 20, y: 60, width: 100, height: 20 }],
+      ["B", { x: 20, y: 90, width: 100, height: 20 }],
+      ["C", { x: 20, y: 120, width: 100, height: 20 }],
+      ["D", { x: 20, y: 150, width: 100, height: 20 }],
+    ]);
+
+    let savedStaticData;
+
+    beforeEach(() => {
+      savedStaticData = globalThis.STATIC_DATA;
+      globalThis.STATIC_DATA = {
+        cycles: [
+          { nodes: ["A", "B", "C"], arcs: ["A-B", "B-C", "C-A"] }
+        ]
+      };
+    });
+
+    afterEach(() => {
+      globalThis.STATIC_DATA = savedStaticData;
+    });
+
+    test("cycle-arc selection: all cycle arcs in arcHighlights", () => {
+      const sd = createMockStaticData(CYCLE_DATA);
+      const state = AppState.create();
+      AppState.setSelection(state, 'arc', 'A-B');
+
+      const result = DerivedState.deriveHighlightState(
+        state, sd, new Map(), new Set(), CYCLE_POSITIONS, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.arcHighlights.has("A-B")).toBe(true);
+      expect(result.arcHighlights.has("B-C")).toBe(true);
+      expect(result.arcHighlights.has("C-A")).toBe(true);
+    });
+
+    test("cycle-arc selection: cycle nodes get cycle-member role", () => {
+      const sd = createMockStaticData(CYCLE_DATA);
+      const state = AppState.create();
+      AppState.setSelection(state, 'arc', 'A-B');
+
+      const result = DerivedState.deriveHighlightState(
+        state, sd, new Map(), new Set(), CYCLE_POSITIONS, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      // Primary arc endpoints keep their roles
+      expect(result.nodeHighlights.get("A").role).toBe("dependent");
+      expect(result.nodeHighlights.get("B").role).toBe("dependency");
+      // Other cycle node gets cycle-member
+      expect(result.nodeHighlights.get("C")).toEqual({
+        role: 'cycle-member', cssClass: 'cycleMember'
+      });
+    });
+
+    test("non-cycle arc: no cycle expansion (regression)", () => {
+      const sd = createMockStaticData(CYCLE_DATA);
+      const state = AppState.create();
+      AppState.setSelection(state, 'arc', 'A-D');
+
+      const result = DerivedState.deriveHighlightState(
+        state, sd, new Map(), new Set(), CYCLE_POSITIONS, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.arcHighlights.has("A-D")).toBe(true);
+      expect(result.arcHighlights.has("A-B")).toBe(false);
+      expect(result.arcHighlights.has("B-C")).toBe(false);
+      expect(result.arcHighlights.has("C-A")).toBe(false);
+      expect(result.nodeHighlights.has("C")).toBe(false);
+    });
+  });
+
+  describe("node hover direct-cycle", () => {
+    const ROW_HEIGHT = 30;
+    let savedStaticData;
+
+    beforeEach(() => {
+      savedStaticData = globalThis.STATIC_DATA;
+    });
+
+    afterEach(() => {
+      globalThis.STATIC_DATA = savedStaticData;
+    });
+
+    test("direct-cycle node hover: partner gets cycle-member", () => {
+      // Direct cycle: X ↔ Y (both directions, cycleId=0)
+      const DIRECT_DATA = {
+        nodes: {
+          X: { type: "module", parent: null, x: 20, y: 60, width: 100, height: 20, hasChildren: false },
+          Y: { type: "module", parent: null, x: 20, y: 90, width: 100, height: 20, hasChildren: false },
+        },
+        arcs: {
+          "X-Y": { from: "X", to: "Y", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+            { symbol: "sym1", modulePath: null, locations: [{ file: "x.rs", line: 1 }] }
+          ]},
+          "Y-X": { from: "Y", to: "X", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+            { symbol: "sym2", modulePath: null, locations: [{ file: "y.rs", line: 1 }] }
+          ]},
+        },
+      };
+      globalThis.STATIC_DATA = {
+        cycles: [{ nodes: ["X", "Y"], arcs: ["X-Y", "Y-X"] }]
+      };
+      const sd = createMockStaticData(DIRECT_DATA);
+      const positions = new Map([
+        ["X", { x: 20, y: 60, width: 100, height: 20 }],
+        ["Y", { x: 20, y: 90, width: 100, height: 20 }],
+      ]);
+      const state = AppState.create();
+      AppState.setHover(state, 'node', 'X');
+
+      const result = DerivedState.deriveHighlightState(
+        state, sd, new Map(), new Set(), positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.nodeHighlights.get("X").role).toBe("current");
+      expect(result.nodeHighlights.get("Y")).toEqual({
+        role: 'cycle-member', cssClass: 'cycleMember'
+      });
+    });
+
+    test("transitive-only cycle: no cycle-member on partner", () => {
+      // Transitive cycle: P → Q → R → P (no direct P↔Q)
+      const TRANS_DATA = {
+        nodes: {
+          P: { type: "module", parent: null, x: 20, y: 60, width: 100, height: 20, hasChildren: false },
+          Q: { type: "module", parent: null, x: 20, y: 90, width: 100, height: 20, hasChildren: false },
+          R: { type: "module", parent: null, x: 20, y: 120, width: 100, height: 20, hasChildren: false },
+        },
+        arcs: {
+          "P-Q": { from: "P", to: "Q", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+            { symbol: "sym1", modulePath: null, locations: [{ file: "p.rs", line: 1 }] }
+          ]},
+          "Q-R": { from: "Q", to: "R", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+            { symbol: "sym2", modulePath: null, locations: [{ file: "q.rs", line: 1 }] }
+          ]},
+          "R-P": { from: "R", to: "P", cycleId: 0, context: { kind: "production", subKind: null, features: [] }, usages: [
+            { symbol: "sym3", modulePath: null, locations: [{ file: "r.rs", line: 1 }] }
+          ]},
+        },
+      };
+      globalThis.STATIC_DATA = {
+        cycles: [{ nodes: ["P", "Q", "R"], arcs: ["P-Q", "Q-R", "R-P"] }]
+      };
+      const sd = createMockStaticData(TRANS_DATA);
+      const positions = new Map([
+        ["P", { x: 20, y: 60, width: 100, height: 20 }],
+        ["Q", { x: 20, y: 90, width: 100, height: 20 }],
+        ["R", { x: 20, y: 120, width: 100, height: 20 }],
+      ]);
+      const state = AppState.create();
+      AppState.setHover(state, 'node', 'P');
+
+      const result = DerivedState.deriveHighlightState(
+        state, sd, new Map(), new Set(), positions, ROW_HEIGHT
+      );
+
+      expect(result).not.toBeNull();
+      expect(result.nodeHighlights.get("P").role).toBe("current");
+      // No cycle-member on partners (transitive only)
+      const qRole = result.nodeHighlights.get("Q")?.role;
+      expect(qRole).not.toBe("cycle-member");
+      const rRole = result.nodeHighlights.get("R")?.role;
+      expect(rRole).not.toBe("cycle-member");
     });
   });
 });
