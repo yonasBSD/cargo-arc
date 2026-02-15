@@ -364,13 +364,8 @@ fn collect_children_recursive(
         let child_subtree = &subtrees[&child];
         for &node in child_subtree {
             for edge in graph.edges(node) {
-                if matches!(
-                    edge.weight(),
-                    Edge::ModuleDep {
-                        context: crate::model::EdgeContext::Production,
-                        ..
-                    }
-                ) {
+                if matches!(edge.weight(), Edge::ModuleDep { context, .. } if context.kind == crate::model::DependencyKind::Production)
+                {
                     let target = edge.target();
                     // Find which sibling's subtree contains the target
                     for (&sibling, sibling_subtree) in &subtrees {
@@ -432,19 +427,13 @@ fn compute_production_reachable(
     graph: &ArcGraph,
     crate_indices: &[NodeIndex],
 ) -> HashSet<NodeIndex> {
-    use crate::model::EdgeContext;
     use std::collections::VecDeque;
 
     let crate_set: HashSet<NodeIndex> = crate_indices.iter().copied().collect();
 
     // If any CrateDep(Test) edges exist, --include-tests is active → no pruning
     let has_test_edges = graph.edge_indices().any(|ei| {
-        matches!(
-            graph[ei],
-            Edge::CrateDep {
-                context: EdgeContext::Test(_)
-            }
-        )
+        matches!(graph[ei], Edge::CrateDep { ref context } if matches!(context.kind, crate::model::DependencyKind::Test(_)))
     });
     if has_test_edges {
         return crate_set;
@@ -467,12 +456,8 @@ fn compute_production_reachable(
     // Step 2: Forward-BFS from anchors over outgoing CrateDep(Production)
     while let Some(current) = queue.pop_front() {
         for edge in graph.edges(current) {
-            if matches!(
-                edge.weight(),
-                Edge::CrateDep {
-                    context: EdgeContext::Production
-                }
-            ) {
+            if matches!(edge.weight(), Edge::CrateDep { context } if context.kind == crate::model::DependencyKind::Production)
+            {
                 let target = edge.target();
                 if crate_set.contains(&target) && reachable.insert(target) {
                     queue.push_back(target);
@@ -554,13 +539,9 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
         // Add edges from both CrateDep and ModuleDep (aggregated to crate level)
         for edge_idx in graph.edge_indices() {
             match &graph[edge_idx] {
-                Edge::CrateDep {
-                    context: crate::model::EdgeContext::Production,
-                }
-                | Edge::ModuleDep {
-                    context: crate::model::EdgeContext::Production,
-                    ..
-                } => {
+                Edge::CrateDep { context } | Edge::ModuleDep { context, .. }
+                    if context.kind == crate::model::DependencyKind::Production =>
+                {
                     let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
                     let src_crate = crate_of(src);
                     let dst_crate = crate_of(dst);
@@ -692,8 +673,7 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
                     } else {
                         None
                     };
-                    let is_test = !matches!(context, crate::model::EdgeContext::Production);
-                    ir.add_edge(from, to, direction, cycle, vec![], is_test);
+                    ir.add_edge(from, to, direction, cycle, vec![], context.clone());
                 }
             }
             Edge::ModuleDep { locations, context } => {
@@ -719,8 +699,14 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
                     } else {
                         None
                     };
-                    let is_test = !matches!(context, crate::model::EdgeContext::Production);
-                    ir.add_edge(from, to, direction, cycle, locations.clone(), is_test);
+                    ir.add_edge(
+                        from,
+                        to,
+                        direction,
+                        cycle,
+                        locations.clone(),
+                        context.clone(),
+                    );
                 }
             }
             Edge::Contains => {} // Skip hierarchy edges
@@ -745,20 +731,15 @@ pub fn detect_cycles(graph: &ArcGraph) -> Vec<Cycle> {
 
     // Copy only Production ModuleDep edges
     for edge_idx in graph.edge_indices() {
-        if matches!(
-            &graph[edge_idx],
-            Edge::ModuleDep {
-                context: crate::model::EdgeContext::Production,
-                ..
-            }
-        ) {
+        if matches!(&graph[edge_idx], Edge::ModuleDep { context, .. } if context.kind == crate::model::DependencyKind::Production)
+        {
             let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
             filtered.add_edge(
                 node_map[&src],
                 node_map[&dst],
                 Edge::ModuleDep {
                     locations: vec![],
-                    context: crate::model::EdgeContext::Production,
+                    context: crate::model::EdgeContext::production(),
                 },
             );
         }
@@ -807,7 +788,7 @@ pub enum CycleKind {
     Transitive,
 }
 
-use crate::model::SourceLocation;
+use crate::model::{EdgeContext, SourceLocation};
 
 #[derive(Debug, Clone)]
 pub struct LayoutEdge {
@@ -816,7 +797,7 @@ pub struct LayoutEdge {
     pub direction: EdgeDirection,
     pub cycle: Option<CycleKind>,
     pub source_locations: Vec<SourceLocation>,
-    pub is_test: bool,
+    pub context: EdgeContext,
 }
 
 #[derive(Debug, Default)]
@@ -849,7 +830,7 @@ impl LayoutIR {
         direction: EdgeDirection,
         cycle: Option<CycleKind>,
         source_locations: Vec<SourceLocation>,
-        is_test: bool,
+        context: EdgeContext,
     ) {
         self.edges.push(LayoutEdge {
             from,
@@ -857,7 +838,7 @@ impl LayoutIR {
             direction,
             cycle,
             source_locations,
-            is_test,
+            context,
         });
     }
 }
@@ -866,9 +847,32 @@ impl LayoutIR {
 mod tests {
     use super::*;
     use crate::graph::{ArcGraph, Edge, Node};
-    use crate::model::SourceLocation;
+    use crate::model::{DependencyKind, EdgeContext, SourceLocation, TestKind};
     use petgraph::graph::NodeIndex;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_layout_edge_carries_edge_context() {
+        let prod_edge = LayoutEdge {
+            from: 0,
+            to: 1,
+            direction: EdgeDirection::Downward,
+            cycle: None,
+            source_locations: vec![],
+            context: EdgeContext::production(),
+        };
+        assert_eq!(prod_edge.context.kind, DependencyKind::Production);
+
+        let test_edge = LayoutEdge {
+            from: 0,
+            to: 1,
+            direction: EdgeDirection::Downward,
+            cycle: None,
+            source_locations: vec![],
+            context: EdgeContext::test(TestKind::Unit),
+        };
+        assert_eq!(test_edge.context.kind, DependencyKind::Test(TestKind::Unit));
+    }
 
     #[test]
     fn test_layout_edge_has_source_locations() {
@@ -883,7 +887,7 @@ mod tests {
                 symbols: vec![],
                 module_path: String::new(),
             }],
-            is_test: false,
+            context: EdgeContext::production(),
         };
         assert_eq!(edge.source_locations.len(), 1);
         assert_eq!(edge.source_locations[0].line, 42);
@@ -912,7 +916,7 @@ mod tests {
             b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -920,7 +924,7 @@ mod tests {
             c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -945,7 +949,7 @@ mod tests {
             b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -953,7 +957,7 @@ mod tests {
             a,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -985,7 +989,7 @@ mod tests {
             b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -993,7 +997,7 @@ mod tests {
             c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -1001,7 +1005,7 @@ mod tests {
             a,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1038,7 +1042,7 @@ mod tests {
             b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -1046,7 +1050,7 @@ mod tests {
             a,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1056,7 +1060,7 @@ mod tests {
             d,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -1064,7 +1068,7 @@ mod tests {
             c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1110,7 +1114,7 @@ mod tests {
             mod_b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1142,7 +1146,7 @@ mod tests {
             b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -1150,7 +1154,7 @@ mod tests {
             a,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         ); // cycle
 
@@ -1196,7 +1200,7 @@ mod tests {
             mod_b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1261,7 +1265,7 @@ mod tests {
             crate_a,
             crate_b,
             Edge::CrateDep {
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1344,7 +1348,7 @@ mod tests {
             direction: EdgeDirection::Downward,
             cycle: None,
             source_locations: vec![],
-            is_test: false,
+            context: EdgeContext::production(),
         };
         let direct = LayoutEdge {
             from: 1,
@@ -1352,7 +1356,7 @@ mod tests {
             direction: EdgeDirection::Downward,
             cycle: Some(CycleKind::Direct),
             source_locations: vec![],
-            is_test: false,
+            context: EdgeContext::production(),
         };
         let trans = LayoutEdge {
             from: 2,
@@ -1360,7 +1364,7 @@ mod tests {
             direction: EdgeDirection::Downward,
             cycle: Some(CycleKind::Transitive),
             source_locations: vec![],
-            is_test: false,
+            context: EdgeContext::production(),
         };
 
         assert_eq!(normal.from, 0);
@@ -1386,7 +1390,7 @@ mod tests {
             EdgeDirection::Downward,
             None,
             vec![],
-            false,
+            EdgeContext::production(),
         );
 
         assert_eq!(ir.items.len(), 2);
@@ -1533,7 +1537,7 @@ mod tests {
             beta,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -1541,7 +1545,7 @@ mod tests {
             alpha,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1596,7 +1600,7 @@ mod tests {
             beta,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         // Test: beta depends on alpha (reverse direction) → must NOT affect order
@@ -1605,7 +1609,7 @@ mod tests {
             alpha,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Test(crate::model::TestKind::Unit),
+                context: crate::model::EdgeContext::test(crate::model::TestKind::Unit),
             },
         );
 
@@ -1656,7 +1660,7 @@ mod tests {
             crate_a,
             crate_b,
             Edge::CrateDep {
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         // Test: crate_b depends on crate_a (reverse) → must NOT affect order
@@ -1664,7 +1668,7 @@ mod tests {
             crate_b,
             crate_a,
             Edge::CrateDep {
-                context: crate::model::EdgeContext::Test(crate::model::TestKind::Unit),
+                context: crate::model::EdgeContext::test(crate::model::TestKind::Unit),
             },
         );
 
@@ -1713,7 +1717,7 @@ mod tests {
             crate_a,
             crate_b,
             Edge::CrateDep {
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1728,7 +1732,7 @@ mod tests {
                     symbols: vec!["Helper".to_string()],
                     module_path: "crate_b".to_string(),
                 }],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1796,7 +1800,7 @@ mod tests {
             crate_a,
             crate_b,
             Edge::CrateDep {
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1811,7 +1815,7 @@ mod tests {
                     symbols: vec!["Config".to_string()],
                     module_path: "crate_b".to_string(),
                 }],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1867,7 +1871,7 @@ mod tests {
             crate_a,
             crate_b,
             Edge::CrateDep {
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1882,7 +1886,7 @@ mod tests {
                     symbols: vec!["parse".to_string()],
                     module_path: "mod_b".to_string(),
                 }],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -1955,7 +1959,7 @@ mod tests {
             child_b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -2015,7 +2019,7 @@ mod tests {
             mod_b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -2289,7 +2293,7 @@ mod tests {
             mod_c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -2297,7 +2301,7 @@ mod tests {
             b1,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -2307,7 +2311,7 @@ mod tests {
             d2,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -2315,7 +2319,7 @@ mod tests {
             b1,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -2325,7 +2329,7 @@ mod tests {
             b2,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -2333,7 +2337,7 @@ mod tests {
             mod_c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -2422,7 +2426,7 @@ mod tests {
             c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -2430,7 +2434,7 @@ mod tests {
             d,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         // B→C, B→D (B depends on C and D)
@@ -2439,7 +2443,7 @@ mod tests {
             c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -2447,7 +2451,7 @@ mod tests {
             d,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -2510,7 +2514,7 @@ mod tests {
             d,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -2518,7 +2522,7 @@ mod tests {
             c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 
@@ -2568,7 +2572,7 @@ mod tests {
             b,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
         graph.add_edge(
@@ -2576,7 +2580,7 @@ mod tests {
             c,
             Edge::ModuleDep {
                 locations: vec![],
-                context: crate::model::EdgeContext::Production,
+                context: crate::model::EdgeContext::production(),
             },
         );
 

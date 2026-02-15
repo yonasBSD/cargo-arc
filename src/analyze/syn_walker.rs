@@ -1,7 +1,7 @@
 //! Module discovery via syn + filesystem walk.
 
 use anyhow::{Context, Result, bail};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::use_parser::{
@@ -9,8 +9,8 @@ use super::use_parser::{
 };
 use crate::model::normalize_crate_name;
 use crate::model::{
-    CrateExportMap, CrateInfo, EdgeContext, ModuleInfo, ModulePathMap, ModuleTree, TestKind,
-    WorkspaceCrates,
+    CrateExportMap, CrateInfo, DependencyKind, EdgeContext, ModuleInfo, ModulePathMap, ModuleTree,
+    TestKind, WorkspaceCrates,
 };
 
 /// Find root source files (lib.rs and/or main.rs) for a crate.
@@ -311,7 +311,7 @@ pub(crate) fn collect_crate_exports(crate_root: &Path) -> HashSet<String> {
 // ---------------------------------------------------------------------------
 
 /// Invariant parameters shared across the recursive module walk.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct WalkContext<'a> {
     crate_name: &'a str,
     crate_root: &'a Path,
@@ -374,7 +374,7 @@ fn walk_module_syn(
         .unwrap_or("");
 
     // Extract use items from all scopes (top-level + fn bodies + nested blocks)
-    let use_items = super::use_parser::collect_all_use_items(&syntax, ctx.base_context);
+    let use_items = super::use_parser::collect_all_use_items(&syntax, ctx.base_context.clone());
     let use_deps = parse_workspace_dependencies(
         &use_items,
         ctx.crate_name,
@@ -386,7 +386,7 @@ fn walk_module_syn(
     );
 
     // Extract qualified path references (e.g. my_lib::run(), let x: my_lib::Config)
-    let path_refs = collect_all_path_refs(&syntax, ctx.base_context);
+    let path_refs = collect_all_path_refs(&syntax, ctx.base_context.clone());
     let path_deps = parse_path_ref_dependencies(
         &path_refs,
         ctx.crate_name,
@@ -397,20 +397,28 @@ fn walk_module_syn(
         current_module_path,
     );
 
-    // Merge: use-dependencies first (have priority), then path-dependencies (dedup by (full_target, context))
-    let mut seen: HashSet<(String, EdgeContext)> = use_deps
+    // Merge: use-dependencies first (have priority), then path-dependencies (dedup by (full_target, kind))
+    let mut seen: HashMap<(String, DependencyKind), usize> = use_deps
         .iter()
-        .map(|d| (d.full_target(), d.context))
+        .enumerate()
+        .map(|(i, d)| ((d.full_target(), d.context.kind), i))
         .collect();
     let mut dependencies = use_deps;
     for dep in path_deps {
-        if seen.insert((dep.full_target(), dep.context)) {
+        let dedup_key = (dep.full_target(), dep.context.kind);
+        if let Some(&idx) = seen.get(&dedup_key) {
+            dependencies[idx]
+                .context
+                .features
+                .extend(dep.context.features);
+        } else {
+            seen.insert(dedup_key, dependencies.len());
             dependencies.push(dep);
         }
     }
 
     if !ctx.include_tests {
-        dependencies.retain(|d| d.context == EdgeContext::Production);
+        dependencies.retain(|d| d.context.kind == DependencyKind::Production);
     }
 
     // Extract mod declarations from the same AST (no second file read)
@@ -465,7 +473,7 @@ pub(crate) fn analyze_modules_syn(
         all_module_paths,
         crate_exports,
         include_tests,
-        base_context: EdgeContext::Production,
+        base_context: EdgeContext::production(),
     };
 
     let mut root: Option<ModuleInfo> = None;
@@ -485,6 +493,8 @@ pub(crate) fn analyze_modules_syn(
                         existing.children.push(child);
                     }
                 }
+                // Dedup via PartialEq (compares kind + features). With empty
+                // features this is correct; ca-0134 may need feature-merge here.
                 for dep in tree.dependencies {
                     if !existing.dependencies.contains(&dep) {
                         existing.dependencies.push(dep);
@@ -507,8 +517,8 @@ pub(crate) fn analyze_modules_syn(
     // Walk integration test files (tests/*.rs) when --include-tests is active
     if include_tests {
         let test_ctx = WalkContext {
-            base_context: EdgeContext::Test(TestKind::Integration),
-            ..ctx
+            base_context: EdgeContext::test(TestKind::Integration),
+            ..ctx.clone()
         };
         let test_files = find_integration_test_files(&crate_info.path);
         let root = root.as_mut().unwrap();
@@ -1381,7 +1391,7 @@ fn main() {
             for dep in &smoke.dependencies {
                 assert_eq!(
                     dep.context,
-                    EdgeContext::Test(TestKind::Integration),
+                    EdgeContext::test(TestKind::Integration),
                     "integration test deps should have Integration context: {dep:?}"
                 );
             }

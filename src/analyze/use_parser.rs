@@ -1,10 +1,10 @@
 //! Syn-based use statement parsing for workspace dependency extraction.
 
 use crate::model::{
-    CrateExportMap, DependencyRef, EdgeContext, ModulePathMap, TestKind, WorkspaceCrates,
-    normalize_crate_name,
+    CrateExportMap, DependencyKind, DependencyRef, EdgeContext, ModulePathMap, TestKind,
+    WorkspaceCrates, normalize_crate_name,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use syn::UseTree;
 use syn::visit::Visit;
@@ -42,10 +42,13 @@ pub(crate) fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
 
 /// Promote any context to a test context. Production becomes Unit test;
 /// already-test contexts are preserved (idempotent for test contexts).
-fn promote_to_test(base: EdgeContext) -> EdgeContext {
-    match base {
-        EdgeContext::Production => EdgeContext::Test(TestKind::Unit),
-        already_test => already_test,
+fn promote_to_test(base: &EdgeContext) -> EdgeContext {
+    EdgeContext {
+        kind: match base.kind {
+            DependencyKind::Production => DependencyKind::Test(TestKind::Unit),
+            already_test => already_test,
+        },
+        features: base.features.clone(),
     }
 }
 
@@ -54,10 +57,10 @@ fn promote_to_test(base: EdgeContext) -> EdgeContext {
 macro_rules! impl_cfg_test_visit_item_mod {
     () => {
         fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-            let prev_context = self.context;
+            let prev_context = self.context.clone();
             let prev_depth = self.inline_depth;
             if is_cfg_test(&node.attrs) {
-                self.context = promote_to_test(self.context);
+                self.context = promote_to_test(&self.context);
             }
             // Inline modules (with body) add nesting depth; `mod foo;` (external) does not
             if node.content.is_some() {
@@ -89,9 +92,9 @@ pub(crate) fn collect_all_use_items(
     impl<'ast> Visit<'ast> for UseCollector {
         fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
             let ctx = if is_cfg_test(&node.attrs) {
-                promote_to_test(self.context)
+                promote_to_test(&self.context)
             } else {
-                self.context
+                self.context.clone()
             };
             self.uses.push((node.clone(), ctx, self.inline_depth));
         }
@@ -135,7 +138,7 @@ pub(crate) fn collect_all_path_refs(
                     .map(|s| s.ident.span().start().line)
                     .unwrap_or(0);
                 self.paths
-                    .push((path_str, line, self.context, self.inline_depth));
+                    .push((path_str, line, self.context.clone(), self.inline_depth));
             }
             // Continue visiting nested paths (e.g. in generics)
             syn::visit::visit_path(self, node);
@@ -236,7 +239,7 @@ fn parse_crate_local_import(
     source_file: &Path,
     line_num: usize,
     all_module_paths: &ModulePathMap,
-    context: EdgeContext,
+    context: &EdgeContext,
 ) -> Option<DependencyRef> {
     let after_crate = path.strip_prefix("crate::")?;
     let parts: Vec<&str> = after_crate.split("::").collect();
@@ -258,7 +261,7 @@ fn parse_crate_local_import(
         target_item: extract_item_from_parts(&parts, prefix_len),
         source_file: source_file.to_path_buf(),
         line: line_num,
-        context,
+        context: context.clone(),
     })
 }
 
@@ -276,7 +279,7 @@ fn parse_bare_module_import(
     source_file: &Path,
     line_num: usize,
     all_module_paths: &ModulePathMap,
-    context: EdgeContext,
+    context: &EdgeContext,
     current_module_path: &str,
 ) -> Option<DependencyRef> {
     let parts: Vec<&str> = path.split("::").collect();
@@ -318,7 +321,7 @@ fn parse_bare_module_import(
         target_item: extract_item_from_parts(&effective_parts, prefix_len),
         source_file: source_file.to_path_buf(),
         line: line_num,
-        context,
+        context: context.clone(),
     })
 }
 
@@ -330,7 +333,7 @@ fn parse_workspace_import(
     line_num: usize,
     all_module_paths: &ModulePathMap,
     crate_exports: &CrateExportMap,
-    context: EdgeContext,
+    context: &EdgeContext,
 ) -> Option<DependencyRef> {
     let parts: Vec<&str> = path.split("::").collect();
     let crate_name = parts.first()?.trim();
@@ -365,7 +368,7 @@ fn parse_workspace_import(
             target_item: Some(module_segment.to_string()),
             source_file: source_file.to_path_buf(),
             line: line_num,
-            context,
+            context: context.clone(),
         });
     }
 
@@ -375,7 +378,7 @@ fn parse_workspace_import(
         target_item: extract_item_from_parts(&parts, 1 + prefix_len),
         source_file: source_file.to_path_buf(),
         line: line_num,
-        context,
+        context: context.clone(),
     })
 }
 
@@ -447,7 +450,7 @@ fn resolve_single_path(
     source_file: &Path,
     all_module_paths: &ModulePathMap,
     crate_exports: &CrateExportMap,
-    context: EdgeContext,
+    context: &EdgeContext,
     current_module_path: &str,
     inline_depth: usize,
 ) -> Option<DependencyRef> {
@@ -522,7 +525,7 @@ fn resolve_single_path(
                 target_item: None,
                 source_file: source_file.to_path_buf(),
                 line: line_num,
-                context,
+                context: context.clone(),
             })
         } else {
             None
@@ -547,7 +550,7 @@ pub(crate) fn parse_workspace_dependencies(
     current_module_path: &str,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
-    let mut seen_targets: HashSet<(String, EdgeContext)> = HashSet::new();
+    let mut seen_targets: HashMap<(String, DependencyKind), usize> = HashMap::new();
 
     for (item, context, inline_depth) in use_items {
         let line_num = item.use_token.span.start().line;
@@ -562,12 +565,15 @@ pub(crate) fn parse_workspace_dependencies(
                 source_file,
                 all_module_paths,
                 crate_exports,
-                *context,
+                context,
                 current_module_path,
                 *inline_depth,
             ) {
-                let dedup_key = (dep.full_target(), dep.context);
-                if seen_targets.insert(dedup_key) {
+                let dedup_key = (dep.full_target(), dep.context.kind);
+                if let Some(&idx) = seen_targets.get(&dedup_key) {
+                    deps[idx].context.features.extend(dep.context.features);
+                } else {
+                    seen_targets.insert(dedup_key, deps.len());
                     deps.push(dep);
                 }
             }
@@ -592,7 +598,7 @@ pub(crate) fn parse_path_ref_dependencies(
     current_module_path: &str,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
-    let mut seen_targets: HashSet<(String, EdgeContext)> = HashSet::new();
+    let mut seen_targets: HashMap<(String, DependencyKind), usize> = HashMap::new();
 
     for (path, line_num, context, inline_depth) in paths {
         if let Some(dep) = resolve_single_path(
@@ -603,12 +609,15 @@ pub(crate) fn parse_path_ref_dependencies(
             source_file,
             all_module_paths,
             crate_exports,
-            *context,
+            context,
             current_module_path,
             *inline_depth,
         ) {
-            let dedup_key = (dep.full_target(), dep.context);
-            if seen_targets.insert(dedup_key) {
+            let dedup_key = (dep.full_target(), dep.context.kind);
+            if let Some(&idx) = seen_targets.get(&dedup_key) {
+                deps[idx].context.features.extend(dep.context.features);
+            } else {
+                seen_targets.insert(dedup_key, deps.len());
                 deps.push(dep);
             }
         }
@@ -633,7 +642,7 @@ pub(crate) fn parse_workspace_dependencies_from_source(
         Ok(f) => f,
         Err(_) => return Vec::new(),
     };
-    let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+    let uses = collect_all_use_items(&syntax, EdgeContext::production());
     parse_workspace_dependencies(
         &uses,
         current_crate,
@@ -651,7 +660,7 @@ mod tests {
     use std::path::Path;
 
     fn parse_test_uses(source: &str) -> Vec<(syn::ItemUse, EdgeContext, usize)> {
-        collect_all_use_items(&syn::parse_file(source).unwrap(), EdgeContext::Production)
+        collect_all_use_items(&syn::parse_file(source).unwrap(), EdgeContext::production())
     }
 
     mod normalize_tests {
@@ -1235,7 +1244,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 1,
                 &mp,
-                EdgeContext::Production,
+                &EdgeContext::production(),
                 "",
             );
             let dep = dep.expect("should parse bare module import");
@@ -1255,7 +1264,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 1,
                 &mp,
-                EdgeContext::Production,
+                &EdgeContext::production(),
                 "",
             );
             assert!(dep.is_none(), "external crate should not match");
@@ -1275,7 +1284,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 1,
                 &mp,
-                EdgeContext::Production,
+                &EdgeContext::production(),
                 "",
             );
             let dep = dep.expect("should parse deep bare module import");
@@ -1295,7 +1304,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 1,
                 &mp,
-                EdgeContext::Production,
+                &EdgeContext::production(),
                 "",
             );
             let dep = dep.expect("should parse module-only bare import");
@@ -1424,7 +1433,7 @@ use serde::Serialize;
                 Path::new("src/render/mod.rs"),
                 1,
                 &mp,
-                EdgeContext::Production,
+                &EdgeContext::production(),
                 "render",
             );
             let dep = dep.expect("should resolve child module");
@@ -1478,7 +1487,7 @@ use serde::Serialize;
                 Path::new("src/lib.rs"),
                 1,
                 &mp,
-                EdgeContext::Production,
+                &EdgeContext::production(),
                 "",
             );
             let dep = dep.expect("should parse bare module from root");
@@ -1501,7 +1510,7 @@ use serde::Serialize;
                 Path::new("src/a/b/mod.rs"),
                 1,
                 &mp,
-                EdgeContext::Production,
+                &EdgeContext::production(),
                 "a::b",
             );
             let dep = dep.expect("should resolve deeply nested child");
@@ -1692,7 +1701,7 @@ use serde::Serialize;
         #[test]
         fn top_level_use_found() {
             let syntax = syn::parse_file("use foo::Bar;").unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
         }
 
@@ -1704,7 +1713,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1, "use inside fn body must be found");
         }
 
@@ -1718,7 +1727,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1, "use in nested block must be found");
         }
 
@@ -1732,7 +1741,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(
                 uses.len(),
                 2,
@@ -1752,7 +1761,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(
                 uses.len(),
                 2,
@@ -1774,9 +1783,9 @@ mod tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
-            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+            assert_eq!(uses[0].1, EdgeContext::test(crate::model::TestKind::Unit));
         }
 
         #[test]
@@ -1787,9 +1796,9 @@ mod normal {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
-            assert_eq!(uses[0].1, EdgeContext::Production);
+            assert_eq!(uses[0].1, EdgeContext::production());
         }
 
         #[test]
@@ -1799,9 +1808,9 @@ mod normal {
 use other_crate::test_helper;
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
-            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+            assert_eq!(uses[0].1, EdgeContext::test(crate::model::TestKind::Unit));
         }
 
         #[test]
@@ -1815,9 +1824,9 @@ mod tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
-            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+            assert_eq!(uses[0].1, EdgeContext::test(crate::model::TestKind::Unit));
         }
 
         #[test]
@@ -1829,9 +1838,9 @@ mod hir_tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
-            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+            assert_eq!(uses[0].1, EdgeContext::test(crate::model::TestKind::Unit));
         }
 
         #[test]
@@ -1843,9 +1852,9 @@ mod hir_tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
-            assert_eq!(uses[0].1, EdgeContext::Test(crate::model::TestKind::Unit));
+            assert_eq!(uses[0].1, EdgeContext::test(crate::model::TestKind::Unit));
         }
 
         /// Known limitation: `#[cfg(test)]` on `fn` items is NOT detected —
@@ -1860,10 +1869,10 @@ fn test_helper() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 1);
             // fn-level cfg(test) is NOT propagated — use is tagged Production
-            assert_eq!(uses[0].1, EdgeContext::Production);
+            assert_eq!(uses[0].1, EdgeContext::production());
         }
     }
 
@@ -1878,7 +1887,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             assert!(
                 refs.iter().any(|(p, _, _, _)| p == "my_server::run"),
                 "should collect my_server::run, found: {refs:?}"
@@ -1893,7 +1902,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             assert!(
                 refs.iter().any(|(p, _, _, _)| p == "my_lib::Config"),
                 "should collect my_lib::Config, found: {refs:?}"
@@ -1912,7 +1921,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             assert!(
                 refs.iter().any(|(p, _, _, _)| p == "my_lib::check"),
                 "should collect my_lib::check, found: {refs:?}"
@@ -1925,7 +1934,7 @@ fn main() {
 fn process<T: my_lib::Trait>(_t: T) {}
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             assert!(
                 refs.iter().any(|(p, _, _, _)| p == "my_lib::Trait"),
                 "should collect my_lib::Trait, found: {refs:?}"
@@ -1940,7 +1949,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             assert!(
                 refs.iter().any(|(p, _, _, _)| p == "my_lib::Config"),
                 "should collect my_lib::Config from struct literal, found: {refs:?}"
@@ -1956,7 +1965,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             // "println" is a single segment → not collected
             assert!(
                 !refs.iter().any(|(p, _, _, _)| p == "println"),
@@ -1972,7 +1981,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             assert!(
                 refs.iter()
                     .any(|(p, _, _, _)| p == "my_lib::Config::default"),
@@ -1989,7 +1998,7 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             assert!(
                 refs.iter().any(|(p, _, _, _)| p == "my_server::run"),
                 "should collect my_server::run, found: {refs:?}"
@@ -2016,7 +2025,7 @@ mod tests {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             let matching: Vec<_> = refs
                 .iter()
                 .filter(|(p, _, _, _)| p == "other_crate::module::helper")
@@ -2024,7 +2033,7 @@ mod tests {
             assert_eq!(matching.len(), 1);
             assert_eq!(
                 matching[0].2,
-                EdgeContext::Test(crate::model::TestKind::Unit)
+                EdgeContext::test(crate::model::TestKind::Unit)
             );
         }
 
@@ -2036,13 +2045,13 @@ fn main() {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let refs = collect_all_path_refs(&syntax, EdgeContext::Production);
+            let refs = collect_all_path_refs(&syntax, EdgeContext::production());
             let matching: Vec<_> = refs
                 .iter()
                 .filter(|(p, _, _, _)| p == "other_crate::module::run")
                 .collect();
             assert_eq!(matching.len(), 1);
-            assert_eq!(matching[0].2, EdgeContext::Production);
+            assert_eq!(matching[0].2, EdgeContext::production());
         }
     }
 
@@ -2059,7 +2068,7 @@ fn main() {
             let paths = vec![(
                 "other_crate::module::item".to_string(),
                 5,
-                EdgeContext::Production,
+                EdgeContext::production(),
                 0,
             )];
             let deps = parse_path_ref_dependencies(
@@ -2091,7 +2100,7 @@ fn main() {
             let paths = vec![(
                 "crate::module::item".to_string(),
                 3,
-                EdgeContext::Production,
+                EdgeContext::production(),
                 0,
             )];
             let deps = parse_path_ref_dependencies(
@@ -2115,7 +2124,7 @@ fn main() {
             let mp: ModulePathMap = [("my_crate".to_string(), HashSet::from(["cli".into()]))]
                 .into_iter()
                 .collect();
-            let paths = vec![("cli::Args".to_string(), 1, EdgeContext::Production, 0)];
+            let paths = vec![("cli::Args".to_string(), 1, EdgeContext::production(), 0)];
             let deps = parse_path_ref_dependencies(
                 &paths,
                 "my_crate",
@@ -2136,12 +2145,17 @@ fn main() {
             let ws = WorkspaceCrates::default();
             let mp = ModulePathMap::default();
             let paths = vec![
-                ("std::io::Read".to_string(), 1, EdgeContext::Production, 0),
-                ("anyhow::Result".to_string(), 2, EdgeContext::Production, 0),
+                ("std::io::Read".to_string(), 1, EdgeContext::production(), 0),
+                (
+                    "anyhow::Result".to_string(),
+                    2,
+                    EdgeContext::production(),
+                    0,
+                ),
                 (
                     "serde::Serialize".to_string(),
                     3,
-                    EdgeContext::Production,
+                    EdgeContext::production(),
                     0,
                 ),
             ];
@@ -2170,7 +2184,7 @@ fn main() {
             let paths = vec![(
                 "other_crate::MyStruct".to_string(),
                 7,
-                EdgeContext::Production,
+                EdgeContext::production(),
                 0,
             )];
             let deps = parse_path_ref_dependencies(
@@ -2198,13 +2212,13 @@ fn main() {
                 (
                     "other_crate::module::item".to_string(),
                     5,
-                    EdgeContext::Production,
+                    EdgeContext::production(),
                     0,
                 ),
                 (
                     "other_crate::module::item".to_string(),
                     10,
-                    EdgeContext::Production,
+                    EdgeContext::production(),
                     0,
                 ),
             ];
@@ -2516,7 +2530,7 @@ mod inner {
 }
 "#;
             let syntax = syn::parse_file(source).unwrap();
-            let uses = collect_all_use_items(&syntax, EdgeContext::Production);
+            let uses = collect_all_use_items(&syntax, EdgeContext::production());
             assert_eq!(uses.len(), 3);
             // top-level use: depth 0
             assert_eq!(uses[0].2, 0, "top-level use should have depth 0");
@@ -2547,8 +2561,8 @@ mod inner {
                 })
                 .unwrap();
             let uses = vec![
-                (item.clone(), EdgeContext::Production, 0),
-                (item, EdgeContext::Test(TestKind::Unit), 0),
+                (item.clone(), EdgeContext::production(), 0),
+                (item, EdgeContext::test(TestKind::Unit), 0),
             ];
             let deps = parse_workspace_dependencies(
                 &uses,
@@ -2564,10 +2578,10 @@ mod inner {
                 2,
                 "prod + test on same target must not be deduped: {deps:?}"
             );
-            assert!(deps.iter().any(|d| d.context == EdgeContext::Production));
+            assert!(deps.iter().any(|d| d.context == EdgeContext::production()));
             assert!(
                 deps.iter()
-                    .any(|d| d.context == EdgeContext::Test(TestKind::Unit))
+                    .any(|d| d.context == EdgeContext::test(TestKind::Unit))
             );
         }
 
@@ -2582,13 +2596,13 @@ mod inner {
                 (
                     "other_crate::module::item".to_string(),
                     5,
-                    EdgeContext::Production,
+                    EdgeContext::production(),
                     0,
                 ),
                 (
                     "other_crate::module::item".to_string(),
                     10,
-                    EdgeContext::Test(TestKind::Unit),
+                    EdgeContext::test(TestKind::Unit),
                     0,
                 ),
             ];
@@ -2606,10 +2620,10 @@ mod inner {
                 2,
                 "prod + test on same target must not be deduped: {deps:?}"
             );
-            assert!(deps.iter().any(|d| d.context == EdgeContext::Production));
+            assert!(deps.iter().any(|d| d.context == EdgeContext::production()));
             assert!(
                 deps.iter()
-                    .any(|d| d.context == EdgeContext::Test(TestKind::Unit))
+                    .any(|d| d.context == EdgeContext::test(TestKind::Unit))
             );
         }
 
@@ -2624,13 +2638,13 @@ mod inner {
                 (
                     "other_crate::module::item".to_string(),
                     5,
-                    EdgeContext::Production,
+                    EdgeContext::production(),
                     0,
                 ),
                 (
                     "other_crate::module::item".to_string(),
                     10,
-                    EdgeContext::Production,
+                    EdgeContext::production(),
                     0,
                 ),
             ];
@@ -2647,6 +2661,112 @@ mod inner {
                 deps.len(),
                 1,
                 "same context same target should still dedup: {deps:?}"
+            );
+        }
+
+        #[test]
+        fn test_dedup_merges_features_path_ref() {
+            // Same target+kind with different features → one dep with merged features
+            let ws: WorkspaceCrates = ["other_crate".to_string()].into_iter().collect();
+            let mp: ModulePathMap = [("other_crate".to_string(), HashSet::from(["module".into()]))]
+                .into_iter()
+                .collect();
+            let paths = vec![
+                (
+                    "other_crate::module::item".to_string(),
+                    5,
+                    EdgeContext {
+                        kind: DependencyKind::Production,
+                        features: vec!["feat-a".into()],
+                    },
+                    0,
+                ),
+                (
+                    "other_crate::module::item".to_string(),
+                    10,
+                    EdgeContext {
+                        kind: DependencyKind::Production,
+                        features: vec!["feat-b".into()],
+                    },
+                    0,
+                ),
+            ];
+            let deps = parse_path_ref_dependencies(
+                &paths,
+                "my_crate",
+                &ws,
+                Path::new("src/main.rs"),
+                &mp,
+                &CrateExportMap::default(),
+                "",
+            );
+            assert_eq!(
+                deps.len(),
+                1,
+                "same target+kind should dedup to one: {deps:?}"
+            );
+            let mut features = deps[0].context.features.clone();
+            features.sort();
+            assert_eq!(
+                features,
+                vec!["feat-a".to_string(), "feat-b".to_string()],
+                "features should be merged: {features:?}"
+            );
+        }
+
+        #[test]
+        fn test_dedup_merges_features_use() {
+            // Same target+kind via use-items with different features → merged
+            let ws = WorkspaceCrates::default();
+            let mp = ModulePathMap::default();
+            let source = "use crate::graph::Node;";
+            let syntax = syn::parse_file(source).unwrap();
+            let item = syntax
+                .items
+                .into_iter()
+                .find_map(|i| match i {
+                    syn::Item::Use(u) => Some(u),
+                    _ => None,
+                })
+                .unwrap();
+            let uses = vec![
+                (
+                    item.clone(),
+                    EdgeContext {
+                        kind: DependencyKind::Production,
+                        features: vec!["feat-a".into()],
+                    },
+                    0,
+                ),
+                (
+                    item,
+                    EdgeContext {
+                        kind: DependencyKind::Production,
+                        features: vec!["feat-b".into()],
+                    },
+                    0,
+                ),
+            ];
+            let deps = parse_workspace_dependencies(
+                &uses,
+                "my_crate",
+                &ws,
+                Path::new("src/lib.rs"),
+                &mp,
+                &CrateExportMap::default(),
+                "",
+            );
+            assert_eq!(
+                deps.len(),
+                1,
+                "same target+kind should dedup to one: {deps:?}"
+            );
+            let mut features = deps[0].context.features.clone();
+            features.sort();
+            assert_eq!(
+                features,
+                vec!["feat-a".to_string(), "feat-b".to_string()],
+                "features should be merged: {features:?}"
             );
         }
     }

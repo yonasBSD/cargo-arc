@@ -1,7 +1,8 @@
 //! Graph Types & Builder
 
 use crate::model::{
-    CrateInfo, DependencyRef, EdgeContext, ModuleInfo, ModuleTree, SourceLocation, TestKind,
+    CrateInfo, DependencyKind, DependencyRef, EdgeContext, ModuleInfo, ModuleTree, SourceLocation,
+    TestKind,
 };
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
@@ -82,7 +83,7 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
                         from_idx,
                         to_idx,
                         Edge::CrateDep {
-                            context: EdgeContext::Production,
+                            context: EdgeContext::production(),
                         },
                     );
                 }
@@ -93,7 +94,7 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
                         from_idx,
                         to_idx,
                         Edge::CrateDep {
-                            context: EdgeContext::Test(TestKind::Unit),
+                            context: EdgeContext::test(TestKind::Unit),
                         },
                     );
                 }
@@ -121,14 +122,17 @@ pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
             sorted_targets.sort_by(|(a, _), (b, _)| a.cmp(b));
 
             for (target, target_deps) in sorted_targets {
-                // Derive context: Production wins over Test
+                // Derive context: Production wins over Test.
+                // Note: creates a fresh context with empty features. When we
+                // populate features in context of feature exclusion, we need to
+                // collect them from all production dependencies here.
                 let context = if target_deps
                     .iter()
-                    .any(|d| d.context == EdgeContext::Production)
+                    .any(|d| d.context.kind == DependencyKind::Production)
                 {
-                    EdgeContext::Production
+                    EdgeContext::production()
                 } else {
-                    target_deps[0].context
+                    target_deps[0].context.clone()
                 };
                 if let Some(&to_idx) = module_map
                     .get(&target)
@@ -251,7 +255,7 @@ mod tests {
                     module_path: String::new(),
                 },
             ],
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         if let Edge::ModuleDep {
             locations: locs, ..
@@ -290,11 +294,11 @@ mod tests {
     fn test_edge_types() {
         let edges = [
             Edge::CrateDep {
-                context: EdgeContext::Production,
+                context: EdgeContext::production(),
             },
             Edge::ModuleDep {
                 locations: vec![],
-                context: EdgeContext::Production,
+                context: EdgeContext::production(),
             },
             Edge::Contains,
         ];
@@ -442,7 +446,7 @@ mod tests {
                             target_item: None,
                             source_file: PathBuf::from("src/bar.rs"),
                             line: 1,
-                            context: EdgeContext::Production,
+                            context: EdgeContext::production(),
                         }],
                     },
                 ],
@@ -508,7 +512,7 @@ mod tests {
                             target_item: None,
                             source_file: PathBuf::from("src/beta.rs"),
                             line: 1,
-                            context: EdgeContext::Production,
+                            context: EdgeContext::production(),
                         }],
                     }],
                     dependencies: vec![],
@@ -591,7 +595,7 @@ mod tests {
                     target_item: None,
                     source_file: PathBuf::from("src/lib.rs"),
                     line: 5,
-                    context: EdgeContext::Production,
+                    context: EdgeContext::production(),
                 }],
             },
         }];
@@ -658,7 +662,7 @@ mod tests {
                             target_item: Some("Widget".to_string()),
                             source_file: PathBuf::from("src/beta.rs"),
                             line: 3,
-                            context: EdgeContext::Production,
+                            context: EdgeContext::production(),
                         }],
                     }],
                     dependencies: vec![],
@@ -732,7 +736,7 @@ mod tests {
                         target_item: None,
                         source_file: PathBuf::from("src/lib.rs"),
                         line: 2,
-                        context: EdgeContext::Production,
+                        context: EdgeContext::production(),
                     }],
                 },
             },
@@ -806,7 +810,7 @@ mod tests {
                         target_item: Some("Config".to_string()),
                         source_file: PathBuf::from("src/lib.rs"),
                         line: 1,
-                        context: EdgeContext::Production,
+                        context: EdgeContext::production(),
                     }],
                 },
             },
@@ -880,7 +884,7 @@ mod tests {
                             target_item: Some("helper".to_string()),
                             source_file: PathBuf::from("src/bar.rs"),
                             line: 5,
-                            context: EdgeContext::Test(TestKind::Unit),
+                            context: EdgeContext::test(TestKind::Unit),
                         }],
                     },
                 ],
@@ -893,7 +897,7 @@ mod tests {
         let mut found_test_edge = false;
         for edge_idx in graph.edge_indices() {
             if let Edge::ModuleDep { context, .. } = &graph[edge_idx] {
-                if *context == EdgeContext::Test(TestKind::Unit) {
+                if *context == EdgeContext::test(TestKind::Unit) {
                     found_test_edge = true;
                 }
             }
@@ -938,7 +942,7 @@ mod tests {
                                 target_item: Some("run".to_string()),
                                 source_file: PathBuf::from("src/bar.rs"),
                                 line: 1,
-                                context: EdgeContext::Production,
+                                context: EdgeContext::production(),
                             },
                             DependencyRef {
                                 target_crate: "crate".to_string(),
@@ -946,7 +950,7 @@ mod tests {
                                 target_item: Some("test_helper".to_string()),
                                 source_file: PathBuf::from("src/bar.rs"),
                                 line: 10,
-                                context: EdgeContext::Test(TestKind::Unit),
+                                context: EdgeContext::test(TestKind::Unit),
                             },
                         ],
                     },
@@ -969,7 +973,7 @@ mod tests {
                     && matches!(&graph[to], Node::Module { name, .. } if name == "foo")
                 {
                     edge_count += 1;
-                    context_is_production = *context == EdgeContext::Production;
+                    context_is_production = *context == EdgeContext::production();
                     location_count = locations.len();
                 }
             }

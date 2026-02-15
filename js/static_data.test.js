@@ -13,20 +13,20 @@ const TEST_STATIC_DATA = {
     fn_2: { type: "function", parent: "mod_a", x: 40, y: 80, width: 100, height: 20, hasChildren: false }
   },
   arcs: {
-    "fn_1-fn_2": { from: "fn_1", to: "fn_2", usages: [
+    "fn_1-fn_2": { from: "fn_1", to: "fn_2", context: { kind: "production", subKind: null, features: [] }, usages: [
       { symbol: "call_fn2", modulePath: null, locations: [{ file: "mod_a.rs", line: 10 }] }
     ] },
-    "mod_a-crate": { from: "mod_a", to: "crate", usages: [
+    "mod_a-crate": { from: "mod_a", to: "crate", context: { kind: "production", subKind: null, features: [] }, usages: [
       { symbol: "use_crate", modulePath: null, locations: [
         { file: "lib.rs", line: 5 }, { file: "lib.rs", line: 10 }, { file: "lib.rs", line: 15 }
       ] }
     ] },
-    "fn_1-crate": { from: "fn_1", to: "crate", usages: [
+    "fn_1-crate": { from: "fn_1", to: "crate", context: { kind: "production", subKind: null, features: [] }, usages: [
       { symbol: "use_root", modulePath: null, locations: [
         { file: "mod_a.rs", line: 20 }, { file: "mod_a.rs", line: 25 }
       ] }
     ] },
-    "crate-fn_1": { from: "crate", to: "fn_1", usages: [
+    "crate-fn_1": { from: "crate", to: "fn_1", context: { kind: "production", subKind: null, features: [] }, usages: [
       { symbol: "call_fn1", modulePath: null, locations: [
         { file: "lib.rs", line: 30 }, { file: "lib.rs", line: 35 }, { file: "lib.rs", line: 40 },
         { file: "lib.rs", line: 45 }, { file: "lib.rs", line: 50 }
@@ -130,20 +130,20 @@ describe("StaticData", () => {
     });
   });
 
-  describe("isTest field", () => {
-    test("arc isTest field is accessible via getArc", () => {
+  describe("context field", () => {
+    test("arc context field is accessible via getArc", () => {
       // Add a test arc to STATIC_DATA
       TEST_STATIC_DATA.arcs["test-arc"] = {
-        from: "fn_1", to: "fn_2", isTest: true,
+        from: "fn_1", to: "fn_2", context: { kind: "test", subKind: "unit", features: [] },
         usages: [{ symbol: "test_fn", modulePath: null, locations: [{ file: "test.rs", line: 1 }] }]
       };
 
       const arc = StaticData.getArc("test-arc");
-      expect(arc.isTest).toBe(true);
+      expect(arc.context.kind).toBe("test");
 
-      // Production arc should have isTest undefined or false
+      // Production arc should have context.kind "production"
       const prodArc = StaticData.getArc("fn_1-fn_2");
-      expect(prodArc.isTest).toBeFalsy();
+      expect(prodArc.context.kind).toBe("production");
 
       // Cleanup
       delete TEST_STATIC_DATA.arcs["test-arc"];

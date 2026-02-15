@@ -52,6 +52,7 @@ pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
 mod tests {
     use super::*;
     use crate::layout::{CycleKind, EdgeDirection};
+    use crate::model::EdgeContext;
 
     #[test]
     fn test_render_empty() {
@@ -88,7 +89,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
         let svg = render(&ir, &RenderConfig::default());
         assert!(svg.contains(" Q ")); // Bezier
         assert!(svg.contains("<polygon")); // Arrow
@@ -120,7 +128,7 @@ mod tests {
             EdgeDirection::Downward,
             Some(CycleKind::Direct),
             vec![],
-            false,
+            EdgeContext::production(),
         );
         let svg = render(&ir, &RenderConfig::default());
         assert!(svg.contains("cycle-arc"));
@@ -151,7 +159,7 @@ mod tests {
             EdgeDirection::Downward,
             Some(CycleKind::Transitive),
             vec![],
-            false,
+            EdgeContext::production(),
         );
         let svg2 = render(&ir2, &RenderConfig::default());
         assert!(svg2.contains("cycle-arc"));
@@ -191,7 +199,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
         let svg = render(&ir, &RenderConfig::default());
 
         // Verify all 6 layers exist
@@ -239,7 +254,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
         let svg = render(&ir, &RenderConfig::default());
 
         // Find base-arcs-layer content
@@ -277,7 +299,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
         let svg = render(&ir, &RenderConfig::default());
 
         // Find hitareas-layer content

@@ -95,9 +95,76 @@ impl FromIterator<(String, HashSet<String>)> for CrateExportMap {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EdgeContext {
+pub enum DependencyKind {
     Production,
     Test(TestKind),
+    Build,
+}
+
+impl DependencyKind {
+    pub fn kind_js(&self) -> &str {
+        match self {
+            Self::Production => "production",
+            Self::Test(_) => "test",
+            Self::Build => "build",
+        }
+    }
+
+    pub fn sub_kind_js(&self) -> Option<&str> {
+        match self {
+            Self::Test(TestKind::Unit) => Some("unit"),
+            Self::Test(TestKind::Integration) => Some("integration"),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeContext {
+    pub kind: DependencyKind,
+    pub features: Vec<String>,
+}
+
+impl EdgeContext {
+    pub fn production() -> Self {
+        Self {
+            kind: DependencyKind::Production,
+            features: vec![],
+        }
+    }
+    pub fn test(kind: TestKind) -> Self {
+        Self {
+            kind: DependencyKind::Test(kind),
+            features: vec![],
+        }
+    }
+    pub fn build() -> Self {
+        Self {
+            kind: DependencyKind::Build,
+            features: vec![],
+        }
+    }
+
+    /// Serialize to JS object literal. No escaping needed: Cargo feature names
+    /// are `[a-zA-Z0-9_-]+` only, and the field is currently always empty.
+    /// ca-0118 replaces this with serde_json.
+    pub fn format_js(&self) -> String {
+        let kind = self.kind.kind_js();
+        let sub_kind_str = match self.kind.sub_kind_js() {
+            Some(s) => format!("\"{}\"", s),
+            None => "null".to_string(),
+        };
+        let features_str = self
+            .features
+            .iter()
+            .map(|f| format!("\"{}\"", f))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{{ kind: \"{}\", subKind: {}, features: [{}] }}",
+            kind, sub_kind_str, features_str
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -168,6 +235,90 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn test_edgecontext_struct_basics() {
+        let ctx = EdgeContext::production();
+        assert_eq!(ctx.kind, DependencyKind::Production);
+        assert!(ctx.features.is_empty());
+        let test_ctx = EdgeContext::test(TestKind::Unit);
+        assert_eq!(test_ctx.kind, DependencyKind::Test(TestKind::Unit));
+        assert_ne!(ctx, test_ctx);
+        let cloned = ctx.clone();
+        assert_eq!(ctx, cloned);
+    }
+
+    #[test]
+    fn test_dependency_kind_js_strings() {
+        assert_eq!(DependencyKind::Production.kind_js(), "production");
+        assert_eq!(DependencyKind::Production.sub_kind_js(), None);
+
+        assert_eq!(DependencyKind::Test(TestKind::Unit).kind_js(), "test");
+        assert_eq!(
+            DependencyKind::Test(TestKind::Unit).sub_kind_js(),
+            Some("unit")
+        );
+
+        assert_eq!(
+            DependencyKind::Test(TestKind::Integration).kind_js(),
+            "test"
+        );
+        assert_eq!(
+            DependencyKind::Test(TestKind::Integration).sub_kind_js(),
+            Some("integration")
+        );
+
+        assert_eq!(DependencyKind::Build.kind_js(), "build");
+        assert_eq!(DependencyKind::Build.sub_kind_js(), None);
+    }
+
+    #[test]
+    fn test_edge_context_format_js() {
+        let prod = EdgeContext::production();
+        assert_eq!(
+            prod.format_js(),
+            r#"{ kind: "production", subKind: null, features: [] }"#
+        );
+
+        let test_unit = EdgeContext::test(TestKind::Unit);
+        assert_eq!(
+            test_unit.format_js(),
+            r#"{ kind: "test", subKind: "unit", features: [] }"#
+        );
+
+        let test_int = EdgeContext::test(TestKind::Integration);
+        assert_eq!(
+            test_int.format_js(),
+            r#"{ kind: "test", subKind: "integration", features: [] }"#
+        );
+
+        let build = EdgeContext::build();
+        assert_eq!(
+            build.format_js(),
+            r#"{ kind: "build", subKind: null, features: [] }"#
+        );
+
+        let with_features = EdgeContext {
+            kind: DependencyKind::Production,
+            features: vec!["serde".to_string(), "derive".to_string()],
+        };
+        assert_eq!(
+            with_features.format_js(),
+            r#"{ kind: "production", subKind: null, features: ["serde", "derive"] }"#
+        );
+    }
+
+    #[test]
+    fn test_dependency_kind_is_copy_and_hash() {
+        use std::collections::HashSet;
+        let a = DependencyKind::Production;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        let mut set = HashSet::new();
+        set.insert(DependencyKind::Test(TestKind::Unit));
+        set.insert(DependencyKind::Build);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
     fn test_dependency_ref_carries_context() {
         let prod_dep = DependencyRef {
             target_crate: "my_crate".to_string(),
@@ -175,9 +326,9 @@ mod tests {
             target_item: None,
             source_file: PathBuf::from("src/lib.rs"),
             line: 1,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
-        assert_eq!(prod_dep.context, EdgeContext::Production);
+        assert_eq!(prod_dep.context, EdgeContext::production());
 
         let test_dep = DependencyRef {
             target_crate: "my_crate".to_string(),
@@ -185,9 +336,9 @@ mod tests {
             target_item: None,
             source_file: PathBuf::from("src/lib.rs"),
             line: 1,
-            context: EdgeContext::Test(TestKind::Unit),
+            context: EdgeContext::test(TestKind::Unit),
         };
-        assert_eq!(test_dep.context, EdgeContext::Test(TestKind::Unit));
+        assert_eq!(test_dep.context, EdgeContext::test(TestKind::Unit));
 
         // Different context → not equal (PartialEq includes context)
         assert_ne!(prod_dep, test_dep);
@@ -201,7 +352,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::from("src/cli.rs"),
             line: 42,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         assert_eq!(dep.target_crate, "my_crate");
         assert_eq!(dep.target_module, "graph");
@@ -218,7 +369,7 @@ mod tests {
             target_item: Some("build".to_string()),
             source_file: PathBuf::new(),
             line: 1,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         assert_eq!(dep.full_target(), "crate::graph::build");
     }
@@ -231,7 +382,7 @@ mod tests {
             target_item: Some("build".to_string()),
             source_file: PathBuf::new(),
             line: 1,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         assert_eq!(dep.module_target(), "crate::graph");
     }
@@ -244,7 +395,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         assert_eq!(dep.full_target(), "crate::graph");
     }
@@ -257,7 +408,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         assert_eq!(dep.module_target(), "crate_b");
     }
@@ -270,7 +421,7 @@ mod tests {
             target_item: Some("Symbol".to_string()),
             source_file: PathBuf::new(),
             line: 1,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         assert_eq!(dep.full_target(), "crate_b::Symbol");
     }
@@ -283,7 +434,7 @@ mod tests {
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
-            context: EdgeContext::Production,
+            context: EdgeContext::production(),
         };
         assert_eq!(dep.full_target(), "crate_b");
     }
@@ -338,7 +489,7 @@ mod tests {
                 target_item: None,
                 source_file: PathBuf::from("src/cli.rs"),
                 line: 5,
-                context: EdgeContext::Production,
+                context: EdgeContext::production(),
             }],
         };
         assert!(

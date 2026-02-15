@@ -6,7 +6,7 @@
 //! - Seed crate discovery based on feature configuration
 //! - BFS traversal to collect reachable workspace crates
 
-use cargo_metadata::{DependencyKind, Metadata, NodeDep};
+use cargo_metadata::{DependencyKind as CargoDependencyKind, Metadata, NodeDep};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{debug, instrument};
 
@@ -47,19 +47,19 @@ impl<'a> DepInfo<'a> {
         let kind = if dep
             .dep_kinds
             .iter()
-            .any(|dk| matches!(dk.kind, DependencyKind::Normal))
+            .any(|dk| matches!(dk.kind, CargoDependencyKind::Normal))
         {
             DepKind::Normal
         } else if dep
             .dep_kinds
             .iter()
-            .any(|dk| matches!(dk.kind, DependencyKind::Development))
+            .any(|dk| matches!(dk.kind, CargoDependencyKind::Development))
         {
             DepKind::Dev
         } else if dep
             .dep_kinds
             .iter()
-            .any(|dk| matches!(dk.kind, DependencyKind::Build))
+            .any(|dk| matches!(dk.kind, CargoDependencyKind::Build))
         {
             DepKind::Build
         } else {

@@ -164,8 +164,13 @@ fn generate_static_data(
         let comma = if i < ir.edges.len() - 1 { "," } else { "" };
 
         lines.push(format!(
-            "    \"{}\": {{ from: \"{}\", to: \"{}\", isTest: {}, usages: {} }}{}",
-            arc_id, edge.from, edge.to, edge.is_test, usages_str, comma
+            "    \"{}\": {{ from: \"{}\", to: \"{}\", context: {}, usages: {} }}{}",
+            arc_id,
+            edge.from,
+            edge.to,
+            edge.context.format_js(),
+            usages_str,
+            comma
         ));
     }
     lines.push("  },".to_string());
@@ -324,6 +329,7 @@ mod tests {
     use super::super::positioning::{calculate_box_width, calculate_positions};
     use super::*;
     use crate::layout::EdgeDirection;
+    use crate::model::EdgeContext;
 
     // === format_source_locations_by_symbol Tests ===
 
@@ -654,7 +660,7 @@ mod tests {
                 symbols: vec!["MyStruct".to_string()],
                 module_path: String::new(),
             }],
-            false,
+            EdgeContext::production(),
         );
 
         let config = RenderConfig::default();
@@ -663,13 +669,13 @@ mod tests {
 
         let script = render_script(&config, &ir, &positioned, &parents);
 
-        // Arc should have from, to, isTest, usages
+        // Arc should have from, to, context, usages
         assert!(script.contains(r#""1-2": {"#), "Should have arc 1-2");
         assert!(script.contains(r#"from: "1""#), "Arc should have from");
         assert!(script.contains(r#"to: "2""#), "Arc should have to");
         assert!(
-            script.contains("isTest: false"),
-            "Arc should have isTest: false"
+            script.contains(r#"context: { kind: "production", subKind: null, features: [] }"#),
+            "Arc should have production context"
         );
         assert!(script.contains("usages: ["), "Arc should have usages array");
         assert!(
@@ -684,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn test_static_data_arc_is_test_flag() {
+    fn test_static_data_arc_context_field() {
         let mut ir = LayoutIR::new();
         let c = ir.add_item(ItemKind::Crate, "c".into());
         let a = ir.add_item(
@@ -701,7 +707,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], true);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::test(crate::model::TestKind::Unit),
+        );
 
         let config = RenderConfig::default();
         let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
@@ -710,8 +723,8 @@ mod tests {
         let script = render_script(&config, &ir, &positioned, &parents);
 
         assert!(
-            script.contains("isTest: true"),
-            "Test arc should have isTest: true"
+            script.contains(r#"context: { kind: "test", subKind: "unit", features: [] }"#),
+            "Test arc should have context with kind test"
         );
     }
 
@@ -733,7 +746,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
 
         let config = RenderConfig::default();
         let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
@@ -787,7 +807,7 @@ mod tests {
                     module_path: String::new(),
                 },
             ],
-            false,
+            EdgeContext::production(),
         );
 
         let config = RenderConfig::default();
@@ -907,7 +927,7 @@ mod tests {
                 symbols: vec!["Test\"Quote".to_string()],
                 module_path: String::new(),
             }],
-            false,
+            EdgeContext::production(),
         );
 
         let config = RenderConfig::default();
@@ -1200,7 +1220,7 @@ mod tests {
                 symbols: vec![],
                 module_path: String::new(),
             }],
-            false,
+            EdgeContext::production(),
         );
         let config = RenderConfig::default();
         let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));

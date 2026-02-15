@@ -37,9 +37,15 @@ const TEST_STATIC_DATA = {
     fn_3: { type: "function", parent: "mod_b", x: 40, y: 160, width: 100, height: 20, hasChildren: false }
   },
   arcs: {
-    "fn_1-fn_2": { from: "fn_1", to: "fn_2", usages: ["mod_a.rs:10"] },
-    "fn_1-fn_3": { from: "fn_1", to: "fn_3", usages: ["mod_a.rs:15", "mod_a.rs:20"] },
-    "mod_b-mod_a": { from: "mod_b", to: "mod_a", usages: ["lib.rs:5"] }
+    "fn_1-fn_2": { from: "fn_1", to: "fn_2", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "helper", modulePath: null, locations: [{ file: "mod_a.rs", line: 10 }] }
+    ]},
+    "fn_1-fn_3": { from: "fn_1", to: "fn_3", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "process", modulePath: null, locations: [{ file: "mod_a.rs", line: 15 }, { file: "mod_a.rs", line: 20 }] }
+    ]},
+    "mod_b-mod_a": { from: "mod_b", to: "mod_a", context: { kind: "production", subKind: null, features: [] }, usages: [
+      { symbol: "init", modulePath: null, locations: [{ file: "lib.rs", line: 5 }] }
+    ]}
   }
 };
 
@@ -579,10 +585,10 @@ describe("DerivedState", () => {
           B: { type: "module", parent: null, x: 20, y: 90, width: 100, height: 20, hasChildren: false },
         },
         arcs: {
-          "A-B": { from: "A", to: "B", isTest: false, usages: [
+          "A-B": { from: "A", to: "B", context: { kind: "production", subKind: null, features: [] }, usages: [
             { symbol: "prod_fn", modulePath: null, locations: [{ file: "a.rs", line: 1 }] }
           ]},
-          "B-A": { from: "B", to: "A", isTest: true, usages: [
+          "B-A": { from: "B", to: "A", context: { kind: "test", subKind: "unit", features: [] }, usages: [
             { symbol: "test_fn", modulePath: null, locations: [{ file: "b.rs", line: 1 }] }
           ]}
         }
@@ -621,7 +627,7 @@ describe("DerivedState", () => {
           Y: { type: "module", parent: null, x: 20, y: 90, width: 100, height: 20, hasChildren: false },
         },
         arcs: {
-          "X-Y": { from: "X", to: "Y", isTest: true, usages: [
+          "X-Y": { from: "X", to: "Y", context: { kind: "test", subKind: "unit", features: [] }, usages: [
             { symbol: "test_only", modulePath: null, locations: [{ file: "x.rs", line: 1 }] }
           ]}
         }

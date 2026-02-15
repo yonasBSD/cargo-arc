@@ -358,6 +358,7 @@ mod tests {
         calculate_box_width, calculate_canvas_size, calculate_max_arc_width, calculate_positions,
     };
     use super::*;
+    use crate::model::EdgeContext;
 
     #[test]
     fn test_render_sidebar_basic_structure() {
@@ -597,7 +598,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
@@ -637,7 +645,14 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(a, b, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            a,
+            b,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
@@ -677,7 +692,14 @@ mod tests {
         let mut ir = LayoutIR::new();
         let c1 = ir.add_item(ItemKind::Crate, "crate_a".into());
         let c2 = ir.add_item(ItemKind::Crate, "crate_b".into());
-        ir.add_edge(c1, c2, EdgeDirection::Downward, None, vec![], false);
+        ir.add_edge(
+            c1,
+            c2,
+            EdgeDirection::Downward,
+            None,
+            vec![],
+            EdgeContext::production(),
+        );
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
