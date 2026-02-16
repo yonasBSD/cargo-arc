@@ -367,6 +367,7 @@ mod tests {
     use super::super::constants::RenderConfig;
     use super::super::positioning::{calculate_box_width, calculate_positions};
     use super::*;
+    use crate::layout::LayoutEdge;
     use crate::model::EdgeContext;
 
     #[test]
@@ -607,15 +608,8 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(a, b, EdgeContext::production()));
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
@@ -654,15 +648,8 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(a, b, EdgeContext::production()));
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
@@ -701,15 +688,8 @@ mod tests {
         let mut ir = LayoutIR::new();
         let c1 = ir.add_item(ItemKind::Crate, "crate_a".into());
         let c2 = ir.add_item(ItemKind::Crate, "crate_b".into());
-        ir.add_edge(
-            c1,
-            c2,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(c1, c2, EdgeContext::production()));
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
@@ -747,25 +727,12 @@ mod tests {
             "m".into(),
         );
         // Cycle edge with cycle_ids=[0]
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            Some(CycleKind::Direct),
-            vec![0],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production()).with_cycle(CycleKind::Direct, vec![0]),
         );
         // Non-cycle edge
-        ir.add_edge(
-            a,
-            m,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(a, m, EdgeContext::production()));
 
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);
@@ -837,14 +804,9 @@ mod tests {
             "b".into(),
         );
         // Edge belonging to two cycles
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            Some(CycleKind::Direct),
-            vec![0, 2],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production())
+                .with_cycle(CycleKind::Direct, vec![0, 2]),
         );
 
         let config = RenderConfig::default();

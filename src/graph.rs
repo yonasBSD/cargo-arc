@@ -5,7 +5,8 @@ use crate::model::{
     TestKind,
 };
 use petgraph::graph::{DiGraph, NodeIndex};
-use std::collections::HashMap;
+use petgraph::visit::EdgeRef;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -25,26 +26,182 @@ pub enum Edge {
     Contains,
 }
 
-pub type ArcGraph = DiGraph<Node, Edge>;
+impl Edge {
+    /// Whether this edge represents a production dependency.
+    pub fn is_production(&self) -> bool {
+        match self {
+            Edge::CrateDep { context } | Edge::ModuleDep { context, .. } => {
+                context.kind == DependencyKind::Production
+            }
+            Edge::Contains => false,
+        }
+    }
 
-pub trait ArcGraphExt {
-    /// Subgraph containing only Production ModuleDep edges, with node weights
-    /// mapping back to original `NodeIndex` values.
-    fn production_subgraph(&self) -> DiGraph<NodeIndex, ()>;
+    pub fn is_production_module_dep(&self) -> bool {
+        matches!(self, Edge::ModuleDep { context, .. } if context.kind == DependencyKind::Production)
+    }
+
+    pub fn is_production_crate_dep(&self) -> bool {
+        matches!(self, Edge::CrateDep { context } if context.kind == DependencyKind::Production)
+    }
+
+    pub fn is_test_crate_dep(&self) -> bool {
+        matches!(self, Edge::CrateDep { context } if matches!(context.kind, DependencyKind::Test(_)))
+    }
 }
 
-impl ArcGraphExt for ArcGraph {
-    fn production_subgraph(&self) -> DiGraph<NodeIndex, ()> {
+impl Node {
+    pub fn is_crate(&self) -> bool {
+        matches!(self, Node::Crate { .. })
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Node::Crate { name, .. } | Node::Module { name, .. } => name,
+        }
+    }
+}
+
+/// Directed dependency graph for workspace crates and modules.
+///
+/// Wraps `petgraph::DiGraph<Node, Edge>` with domain-specific methods for
+/// dependency analysis, reachability, and layout ordering.
+pub struct ArcGraph(DiGraph<Node, Edge>);
+
+impl std::ops::Deref for ArcGraph {
+    type Target = DiGraph<Node, Edge>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ArcGraph {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Default for ArcGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for ArcGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ArcGraph")
+            .field(&self.0.node_count())
+            .field(&self.0.edge_count())
+            .finish()
+    }
+}
+
+impl ArcGraph {
+    pub fn new() -> Self {
+        Self(DiGraph::new())
+    }
+
+    /// Subgraph containing only Production ModuleDep edges, with node weights
+    /// mapping back to original `NodeIndex` values.
+    pub fn production_subgraph(&self) -> DiGraph<NodeIndex, ()> {
         self.filter_map(
             |idx, _| Some(idx),
             |_, edge| matches!(edge, Edge::ModuleDep { context, .. } if context.kind == DependencyKind::Production).then_some(()),
         )
     }
+
+    /// Return the crate node that owns `idx`. For `Node::Module` this is
+    /// the stored `crate_idx`; for `Node::Crate` it is `idx` itself.
+    pub fn owning_crate(&self, idx: NodeIndex) -> NodeIndex {
+        match &self[idx] {
+            Node::Module { crate_idx, .. } => *crate_idx,
+            Node::Crate { .. } => idx,
+        }
+    }
+
+    /// Compute the set of production-reachable crate nodes.
+    ///
+    /// A crate is reachable if:
+    /// 1. It is an "anchor" — has Contains edges (= has modules to visualize), OR
+    /// 2. It is transitively reachable from an anchor via production CrateDep edges.
+    ///
+    /// Crates not in this set are test infrastructure (dev-dep crates and their
+    /// transitive production dependencies) and should be pruned from the layout.
+    ///
+    /// When test CrateDep edges exist (--include-tests), all crates are reachable.
+    pub fn production_reachable(&self) -> HashSet<NodeIndex> {
+        use std::collections::VecDeque;
+
+        // If test CrateDep edges exist, all crates are reachable (no pruning)
+        if self.edge_indices().any(|ei| self[ei].is_test_crate_dep()) {
+            return self
+                .node_indices()
+                .filter(|&n| self[n].is_crate())
+                .collect();
+        }
+
+        // Anchors: crates with Contains edges (= have modules to visualize)
+        let anchors: HashSet<NodeIndex> = self
+            .node_indices()
+            .filter(|&n| self[n].is_crate())
+            .filter(|&n| self.edges(n).any(|e| matches!(e.weight(), Edge::Contains)))
+            .collect();
+
+        // Forward-BFS from anchors over production CrateDep edges
+        let mut reachable = anchors.clone();
+        let mut frontier: VecDeque<_> = anchors.into_iter().collect();
+        while let Some(current) = frontier.pop_front() {
+            for target in self
+                .edges(current)
+                .filter(|e| e.weight().is_production_crate_dep())
+                .map(|e| e.target())
+                .filter(|t| self[*t].is_crate())
+            {
+                if reachable.insert(target) {
+                    frontier.push_back(target);
+                }
+            }
+        }
+        reachable
+    }
+
+    /// Collect all descendants of a node (including itself) via Contains edges.
+    pub fn containment_subtree(&self, root: NodeIndex) -> HashSet<NodeIndex> {
+        let mut subtree = HashSet::new();
+        let mut stack = vec![root];
+        while let Some(n) = stack.pop() {
+            if subtree.insert(n) {
+                stack.extend(
+                    self.edges(n)
+                        .filter(|e| matches!(e.weight(), Edge::Contains))
+                        .map(|e| e.target()),
+                );
+            }
+        }
+        subtree
+    }
+
+    /// Whether `parent` has a `Contains` edge pointing to `child`.
+    pub fn contains_child(&self, parent: NodeIndex, child: NodeIndex) -> bool {
+        self.edges(parent)
+            .any(|e| e.target() == child && matches!(e.weight(), Edge::Contains))
+    }
+
+    /// Build a map from child → parent for all `Contains` edges.
+    pub fn parent_map(&self) -> HashMap<NodeIndex, NodeIndex> {
+        self.edge_indices()
+            .filter(|&ei| matches!(self[ei], Edge::Contains))
+            .map(|ei| {
+                let (parent, child) = self.edge_endpoints(ei).unwrap();
+                (child, parent)
+            })
+            .collect()
+    }
 }
 
 /// Build a unified graph from crate and module analysis data.
 pub fn build_graph(crates: &[CrateInfo], modules: &[ModuleTree]) -> ArcGraph {
-    let mut graph = DiGraph::new();
+    let mut graph = ArcGraph::new();
     let mut crate_map: HashMap<String, NodeIndex> = HashMap::new();
     let mut module_map: HashMap<String, NodeIndex> = HashMap::new();
     let mut module_deps: Vec<(String, Vec<DependencyRef>)> = Vec::new();

@@ -8,7 +8,7 @@ use tracing_subscriber::EnvFilter;
 use crate::analyze::{
     AnalysisBackend, FeatureConfig, analyze_workspace, collect_crate_exports, normalize_crate_name,
 };
-use crate::graph::{ArcGraphExt, build_graph};
+use crate::graph::build_graph;
 use crate::layout::{ElementaryCycles, build_layout};
 use crate::model::{CrateExportMap, ModulePathMap, WorkspaceCrates};
 use crate::render::{RenderConfig, render};

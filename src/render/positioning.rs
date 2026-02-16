@@ -105,7 +105,7 @@ pub(super) fn calculate_canvas_size(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{EdgeDirection, ItemKind, LayoutIR};
+    use crate::layout::{ItemKind, LayoutEdge, LayoutIR};
     use crate::model::EdgeContext;
 
     #[test]
@@ -148,15 +148,8 @@ mod tests {
             );
         }
         // Edge von erstem zu letztem Modul (9 Hops)
-        ir.add_edge(
-            1,
-            10,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(1, 10, EdgeContext::production()));
 
         let config = RenderConfig::default();
         let box_width = calculate_box_width(&ir);

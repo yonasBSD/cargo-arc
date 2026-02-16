@@ -2,7 +2,7 @@
 
 use super::cycles::Cycle;
 use super::toposort::stable_toposort;
-use crate::graph::{ArcGraph, Edge};
+use crate::graph::{ArcGraph, Edge, Node};
 use crate::model::{EdgeContext, SourceLocation};
 use crate::volatility::Volatility;
 use petgraph::graph::{DiGraph, NodeIndex};
@@ -11,450 +11,6 @@ use std::collections::{HashMap, HashSet};
 
 /// Index into LayoutIR.items
 pub type NodeId = usize;
-
-/// Collect all descendants of a node (including itself) via Contains edges.
-fn collect_subtree(node: NodeIndex, graph: &ArcGraph) -> HashSet<NodeIndex> {
-    let mut subtree = HashSet::new();
-    let mut stack = vec![node];
-    while let Some(n) = stack.pop() {
-        if subtree.insert(n) {
-            for edge in graph.edges(n) {
-                if matches!(edge.weight(), Edge::Contains) {
-                    stack.push(edge.target());
-                }
-            }
-        }
-    }
-    subtree
-}
-
-/// Hierarchically sorted modules for a parent, collecting children recursively.
-/// Children are sorted topologically by ModuleDep edges, with alphabetical tie-breaker.
-/// Also considers cross-subtree dependencies: if any node in subtree(A) depends on
-/// any node in subtree(B), then A should appear before B.
-fn collect_children_recursive(
-    parent_idx: NodeIndex,
-    graph: &ArcGraph,
-    module_indices: &[NodeIndex],
-    added: &mut HashSet<NodeIndex>,
-) -> Vec<NodeIndex> {
-    use crate::graph::Node;
-
-    let mut result = Vec::new();
-
-    // Find direct children of this parent (via Contains edge)
-    let mut children: Vec<NodeIndex> = module_indices
-        .iter()
-        .filter(|&&m| {
-            !added.contains(&m)
-                && graph
-                    .edges(parent_idx)
-                    .any(|e| e.target() == m && matches!(e.weight(), Edge::Contains))
-        })
-        .copied()
-        .collect();
-
-    // FIRST: Sort alphabetically (provides stable base order for toposort)
-    children.sort_by_key(|&idx| {
-        if let Node::Module { name, .. } = &graph[idx] {
-            name.clone()
-        } else {
-            String::new()
-        }
-    });
-
-    // Collect subtrees for each sibling (child + all descendants)
-    let mut subtrees: HashMap<NodeIndex, HashSet<NodeIndex>> = HashMap::new();
-    for &child in &children {
-        subtrees.insert(child, collect_subtree(child, graph));
-    }
-
-    // Build mini dependency graph for siblings using subtree-aggregated dependencies
-    let mut sibling_deps: DiGraph<NodeIndex, usize> = DiGraph::new();
-    let mut idx_to_node: HashMap<NodeIndex, petgraph::graph::NodeIndex> = HashMap::new();
-
-    for &child in &children {
-        idx_to_node.insert(child, sibling_deps.add_node(child));
-    }
-
-    // Find cross-subtree dependencies: if any node in subtree(child) depends on
-    // any node in subtree(sibling), add edge child -> sibling
-    for &child in &children {
-        let child_subtree = &subtrees[&child];
-        for &node in child_subtree {
-            for edge in graph.edges(node) {
-                if matches!(edge.weight(), Edge::ModuleDep { context, .. } if context.kind == crate::model::DependencyKind::Production)
-                {
-                    let target = edge.target();
-                    // Find which sibling's subtree contains the target
-                    for (&sibling, sibling_subtree) in &subtrees {
-                        if sibling != child && sibling_subtree.contains(&target) {
-                            // child's subtree depends on sibling's subtree
-                            let src = idx_to_node[&child];
-                            let dst = idx_to_node[&sibling];
-                            if let Some(edge_idx) = sibling_deps.find_edge(src, dst) {
-                                sibling_deps[edge_idx] += 1;
-                            } else {
-                                sibling_deps.add_edge(src, dst, 1);
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // THEN: Stable topological sort using Kahn's algorithm
-    // This preserves alphabetical order for independent nodes (tie-breaker)
-    let sorted = stable_toposort(&sibling_deps, &children, |idx| match &graph[idx] {
-        Node::Module { name, .. } => name.clone(),
-        _ => String::new(),
-    });
-    if !sorted.is_empty() {
-        children = sorted;
-    }
-    // On cycles (empty result): keep alphabetical order
-
-    // Add each child + its descendants recursively
-    for child in children {
-        added.insert(child);
-        result.push(child);
-        result.extend(collect_children_recursive(
-            child,
-            graph,
-            module_indices,
-            added,
-        ));
-    }
-
-    result
-}
-
-/// Compute the set of production-reachable crate nodes.
-///
-/// A crate is reachable if:
-/// 1. It is an "anchor" — has Contains edges (= has modules to visualize), OR
-/// 2. It is transitively reachable from an anchor via outgoing CrateDep(Production) edges.
-///
-/// Crates not in this set are test infrastructure (dev-dep crates and their
-/// transitive production dependencies) and should be pruned from the layout.
-///
-/// When CrateDep(Test) edges exist in the graph (i.e. --include-tests is active),
-/// all crates are considered reachable — pruning only applies to production views.
-fn compute_production_reachable(
-    graph: &ArcGraph,
-    crate_indices: &[NodeIndex],
-) -> HashSet<NodeIndex> {
-    use std::collections::VecDeque;
-
-    let crate_set: HashSet<NodeIndex> = crate_indices.iter().copied().collect();
-
-    // If any CrateDep(Test) edges exist, --include-tests is active → no pruning
-    let has_test_edges = graph.edge_indices().any(|ei| {
-        matches!(graph[ei], Edge::CrateDep { ref context } if matches!(context.kind, crate::model::DependencyKind::Test(_)))
-    });
-    if has_test_edges {
-        return crate_set;
-    }
-
-    // Step 1: Find anchors — crates that have Contains edges (= have modules)
-    let mut reachable: HashSet<NodeIndex> = HashSet::new();
-    let mut queue: VecDeque<NodeIndex> = VecDeque::new();
-
-    for &ci in crate_indices {
-        let has_modules = graph
-            .edges(ci)
-            .any(|e| matches!(e.weight(), Edge::Contains));
-        if has_modules {
-            reachable.insert(ci);
-            queue.push_back(ci);
-        }
-    }
-
-    // Step 2: Forward-BFS from anchors over outgoing CrateDep(Production)
-    while let Some(current) = queue.pop_front() {
-        for edge in graph.edges(current) {
-            if matches!(edge.weight(), Edge::CrateDep { context } if context.kind == crate::model::DependencyKind::Production)
-            {
-                let target = edge.target();
-                if crate_set.contains(&target) && reachable.insert(target) {
-                    queue.push_back(target);
-                }
-            }
-        }
-    }
-
-    reachable
-}
-
-/// Build LayoutIR from graph and cycle information.
-/// Converts graph nodes to LayoutItems with proper nesting and edges with cycle markers.
-/// CrateDep edges are skipped when ModuleDep edges exist between the same crates.
-pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
-    use crate::graph::Node;
-
-    let mut ir = LayoutIR::new();
-
-    // Build edge-to-cycles mapping: for each directed edge (src, dst) in any cycle,
-    // record which cycle indices it belongs to. More precise than node-based mapping
-    // because overlapping cycles share nodes but have distinct edge sets.
-    let mut edge_to_cycles: HashMap<(NodeIndex, NodeIndex), Vec<usize>> = HashMap::new();
-    let mut node_to_cycles: HashMap<NodeIndex, Vec<usize>> = HashMap::new();
-    for (cycle_idx, cycle) in cycles.iter().enumerate() {
-        for i in 0..cycle.path.len() {
-            let src = cycle.path[i];
-            let dst = cycle.path[(i + 1) % cycle.path.len()];
-            edge_to_cycles
-                .entry((src, dst))
-                .or_default()
-                .push(cycle_idx);
-            node_to_cycles.entry(src).or_default().push(cycle_idx);
-        }
-    }
-    // Deduplicate node_to_cycles
-    for ids in node_to_cycles.values_mut() {
-        ids.sort_unstable();
-        ids.dedup();
-    }
-
-    // Map graph NodeIndex to LayoutIR NodeId
-    let mut node_map: HashMap<NodeIndex, NodeId> = HashMap::new();
-
-    // Build parent map from Contains edges
-    let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-    for edge_idx in graph.edge_indices() {
-        if matches!(graph[edge_idx], Edge::Contains) {
-            let (parent, child) = graph.edge_endpoints(edge_idx).unwrap();
-            parent_map.insert(child, parent);
-        }
-    }
-
-    // Calculate nesting depth for a node
-    let calc_nesting = |idx: NodeIndex, parent_map: &HashMap<NodeIndex, NodeIndex>| -> u32 {
-        let mut depth = 0u32;
-        let mut current = idx;
-        while let Some(&parent) = parent_map.get(&current) {
-            depth += 1;
-            current = parent;
-        }
-        depth
-    };
-
-    // Separate crates from modules
-    let (crate_indices, module_indices): (Vec<NodeIndex>, Vec<NodeIndex>) = graph
-        .node_indices()
-        .partition(|&idx| matches!(graph[idx], Node::Crate { .. }));
-
-    // Re-sort crates by aggregated inter-crate dependencies (CrateDep + ModuleDep).
-    // topo_sort only constrains module ordering; crate nodes may float freely.
-    let crate_indices = {
-        let crate_of = |idx: NodeIndex| -> NodeIndex {
-            match &graph[idx] {
-                Node::Module { crate_idx, .. } => *crate_idx,
-                Node::Crate { .. } => idx,
-            }
-        };
-
-        // Build crate-level dependency graph
-        let mut crate_graph: DiGraph<NodeIndex, usize> = DiGraph::new();
-        let mut crate_to_node: HashMap<NodeIndex, petgraph::graph::NodeIndex> = HashMap::new();
-        // Add crate nodes in deterministic order (by graph index)
-        let mut sorted_crates = crate_indices.clone();
-        sorted_crates.sort_by_key(|n| n.index());
-        for &ci in &sorted_crates {
-            crate_to_node.insert(ci, crate_graph.add_node(ci));
-        }
-
-        // Add edges from both CrateDep and ModuleDep (aggregated to crate level)
-        for edge_idx in graph.edge_indices() {
-            match &graph[edge_idx] {
-                Edge::CrateDep { context } | Edge::ModuleDep { context, .. }
-                    if context.kind == crate::model::DependencyKind::Production =>
-                {
-                    let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
-                    let src_crate = crate_of(src);
-                    let dst_crate = crate_of(dst);
-                    if src_crate != dst_crate
-                        && let (Some(&sc), Some(&dc)) =
-                            (crate_to_node.get(&src_crate), crate_to_node.get(&dst_crate))
-                    {
-                        if let Some(edge_idx) = crate_graph.find_edge(sc, dc) {
-                            crate_graph[edge_idx] += 1;
-                        } else {
-                            crate_graph.add_edge(sc, dc, 1);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Stable toposort with alphabetical tie-breaking
-        stable_toposort(&crate_graph, &sorted_crates, |idx| match &graph[idx] {
-            Node::Crate { name, .. } | Node::Module { name, .. } => name.clone(),
-        })
-    };
-
-    // Compute production-reachable crates (anchors + their transitive prod deps).
-    // Crates not in this set are test infrastructure and get pruned.
-    let reachable = compute_production_reachable(graph, &crate_indices);
-
-    // Group modules by their parent crate for proper visual grouping
-    // Each crate is followed by its modules before the next crate
-    let mut ordered_items: Vec<NodeIndex> = Vec::new();
-    let mut added_modules: HashSet<NodeIndex> = HashSet::new();
-
-    for crate_idx in &crate_indices {
-        if !reachable.contains(crate_idx) {
-            continue;
-        }
-        ordered_items.push(*crate_idx);
-        // Hierarchically sorted modules for this crate
-        let sorted_modules =
-            collect_children_recursive(*crate_idx, graph, &module_indices, &mut added_modules);
-        ordered_items.extend(sorted_modules);
-    }
-
-    // Add any remaining modules (orphans or modules with crate not in order list)
-    for module_idx in &module_indices {
-        if !added_modules.contains(module_idx) {
-            ordered_items.push(*module_idx);
-        }
-    }
-
-    // Add items in grouped order
-    for &idx in &ordered_items {
-        let (kind, label) = match &graph[idx] {
-            Node::Crate { name, .. } => (ItemKind::Crate, name.clone()),
-            Node::Module { name, .. } => {
-                let nesting = calc_nesting(idx, &parent_map);
-                let parent_layout_id = parent_map
-                    .get(&idx)
-                    .and_then(|&p| node_map.get(&p))
-                    .copied()
-                    .unwrap_or(0);
-                (
-                    ItemKind::Module {
-                        nesting,
-                        parent: parent_layout_id,
-                    },
-                    name.clone(),
-                )
-            }
-        };
-
-        let layout_id = ir.add_item(kind, label);
-        node_map.insert(idx, layout_id);
-
-        // Extract source file path for modules from outgoing ModuleDep edges
-        if matches!(&graph[idx], Node::Module { .. }) {
-            let source_path = graph
-                .edges_directed(idx, petgraph::Direction::Outgoing)
-                .filter_map(|e| match e.weight() {
-                    Edge::ModuleDep {
-                        locations: locs, ..
-                    } => locs.first().map(|l| l.file.display().to_string()),
-                    _ => None,
-                })
-                .next();
-            ir.items[layout_id].source_path = source_path;
-        }
-    }
-
-    // Build set of crate pairs that have ModuleDep edges between them.
-    // Entry-point imports create ModuleDep edges where one or both endpoints
-    // are Node::Crate (not just Node::Module), so we handle all combinations.
-    let crate_of = |node_idx: NodeIndex| -> NodeIndex {
-        match &graph[node_idx] {
-            Node::Module { crate_idx, .. } => *crate_idx,
-            Node::Crate { .. } => node_idx,
-        }
-    };
-    let mut crates_with_module_deps: HashSet<(NodeIndex, NodeIndex)> = HashSet::new();
-    for edge_idx in graph.edge_indices() {
-        if let Edge::ModuleDep { .. } = &graph[edge_idx] {
-            let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
-            let src_crate = crate_of(src);
-            let dst_crate = crate_of(dst);
-            if src_crate != dst_crate {
-                crates_with_module_deps.insert((src_crate, dst_crate));
-            }
-        }
-    }
-
-    // Add dependency edges (CrateDep and ModuleDep only)
-    for edge_idx in graph.edge_indices() {
-        match &graph[edge_idx] {
-            Edge::CrateDep { context } => {
-                let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
-                // Skip CrateDep if ModuleDeps already show this relationship
-                if crates_with_module_deps.contains(&(src, dst)) {
-                    continue;
-                }
-                if let (Some(&from), Some(&to)) = (node_map.get(&src), node_map.get(&dst)) {
-                    let direction = if from < to {
-                        EdgeDirection::Downward
-                    } else {
-                        EdgeDirection::Upward
-                    };
-                    let cycle_ids = edge_to_cycles.get(&(src, dst)).cloned().unwrap_or_default();
-                    let cycle = if !cycle_ids.is_empty() {
-                        Some(CycleKind::Transitive)
-                    } else {
-                        None
-                    };
-                    ir.add_edge(
-                        from,
-                        to,
-                        direction,
-                        cycle,
-                        cycle_ids,
-                        vec![],
-                        context.clone(),
-                    );
-                }
-            }
-            Edge::ModuleDep { locations, context } => {
-                let (src, dst) = graph.edge_endpoints(edge_idx).unwrap();
-                if let (Some(&from), Some(&to)) = (node_map.get(&src), node_map.get(&dst)) {
-                    let direction = if from < to {
-                        EdgeDirection::Downward
-                    } else {
-                        EdgeDirection::Upward
-                    };
-                    let cycle_ids = edge_to_cycles.get(&(src, dst)).cloned().unwrap_or_default();
-                    let cycle = if !cycle_ids.is_empty() {
-                        if graph.contains_edge(dst, src)
-                            && matches!(
-                                graph[graph.find_edge(dst, src).unwrap()],
-                                Edge::ModuleDep { .. }
-                            )
-                        {
-                            Some(CycleKind::Direct)
-                        } else {
-                            Some(CycleKind::Transitive)
-                        }
-                    } else {
-                        None
-                    };
-                    ir.add_edge(
-                        from,
-                        to,
-                        direction,
-                        cycle,
-                        cycle_ids,
-                        locations.clone(),
-                        context.clone(),
-                    );
-                }
-            }
-            Edge::Contains => {} // Skip hierarchy edges
-        }
-    }
-
-    ir
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
@@ -469,6 +25,18 @@ pub struct LayoutItem {
     pub label: String,
     pub source_path: Option<String>,
     pub volatility: Option<(Volatility, usize)>,
+}
+
+impl LayoutItem {
+    pub fn new(id: NodeId, kind: ItemKind, label: impl Into<String>) -> Self {
+        Self {
+            id,
+            kind,
+            label: label.into(),
+            source_path: None,
+            volatility: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -494,6 +62,38 @@ pub struct LayoutEdge {
     pub context: EdgeContext,
 }
 
+impl LayoutEdge {
+    /// Create a new edge with auto-computed direction.
+    /// `Downward` when `from < to`, `Upward` otherwise.
+    pub fn new(from: NodeId, to: NodeId, context: EdgeContext) -> Self {
+        let direction = if from < to {
+            EdgeDirection::Downward
+        } else {
+            EdgeDirection::Upward
+        };
+        Self {
+            from,
+            to,
+            direction,
+            cycle: None,
+            cycle_ids: vec![],
+            source_locations: vec![],
+            context,
+        }
+    }
+
+    pub fn with_cycle(mut self, kind: CycleKind, ids: Vec<usize>) -> Self {
+        self.cycle = Some(kind);
+        self.cycle_ids = ids;
+        self
+    }
+
+    pub fn with_source_locations(mut self, locations: Vec<SourceLocation>) -> Self {
+        self.source_locations = locations;
+        self
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct LayoutIR {
     pub items: Vec<LayoutItem>,
@@ -507,90 +107,523 @@ impl LayoutIR {
 
     pub fn add_item(&mut self, kind: ItemKind, label: String) -> NodeId {
         let id = self.items.len();
-        self.items.push(LayoutItem {
-            id,
-            kind,
-            label,
-            source_path: None,
-            volatility: None,
-        });
+        self.items.push(LayoutItem::new(id, kind, label));
         id
     }
+}
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_edge(
-        &mut self,
-        from: NodeId,
-        to: NodeId,
-        direction: EdgeDirection,
-        cycle: Option<CycleKind>,
-        cycle_ids: Vec<usize>,
-        source_locations: Vec<SourceLocation>,
-        context: EdgeContext,
-    ) {
-        self.edges.push(LayoutEdge {
-            from,
-            to,
-            direction,
-            cycle,
-            cycle_ids,
-            source_locations,
-            context,
-        });
+/// Build LayoutIR from graph and cycle information.
+/// Converts graph nodes to LayoutItems with proper nesting and edges with cycle markers.
+/// CrateDep edges are skipped when ModuleDep edges exist between the same crates.
+pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
+    let mut ir = LayoutIR::new();
+    let edge_to_cycles = build_edge_cycle_index(cycles);
+    let parent_map = graph.parent_map();
+
+    let (crate_indices, module_indices): (Vec<_>, Vec<_>) =
+        graph.node_indices().partition(|&idx| graph[idx].is_crate());
+    let crate_indices = graph.order_crates(&crate_indices);
+    let reachable = graph.production_reachable();
+    let ordered = graph.order_items(&crate_indices, &module_indices, &reachable);
+    let node_map = populate_items(&mut ir, graph, &ordered, &parent_map);
+
+    let suppressed = graph.suppressed_crate_pairs();
+    populate_edges(&mut ir, graph, &node_map, &edge_to_cycles, &suppressed);
+
+    ir
+}
+
+/// Convert graph nodes to LayoutItems, returning the NodeIndex → NodeId map.
+fn populate_items(
+    ir: &mut LayoutIR,
+    graph: &ArcGraph,
+    ordered: &[NodeIndex],
+    parent_map: &HashMap<NodeIndex, NodeIndex>,
+) -> HashMap<NodeIndex, NodeId> {
+    let mut node_map = HashMap::new();
+    for &idx in ordered {
+        let (kind, label, source_path) = match &graph[idx] {
+            Node::Crate { name, .. } => (ItemKind::Crate, name.clone(), None),
+            Node::Module { name, .. } => {
+                let nesting = nesting_depth(idx, parent_map);
+                let parent_layout_id = parent_map
+                    .get(&idx)
+                    .and_then(|&p| node_map.get(&p))
+                    .copied()
+                    .unwrap_or(0);
+                (
+                    ItemKind::Module {
+                        nesting,
+                        parent: parent_layout_id,
+                    },
+                    name.clone(),
+                    module_source_path(graph, idx),
+                )
+            }
+        };
+
+        let layout_id = ir.add_item(kind, label);
+        node_map.insert(idx, layout_id);
+        ir.items[layout_id].source_path = source_path;
+    }
+    node_map
+}
+
+/// Add dependency edges (CrateDep and ModuleDep) to the layout IR.
+/// CrateDep and ModuleDep arms are unified — they share direction + cycle computation
+/// and only differ in suppression check and source locations.
+fn populate_edges(
+    ir: &mut LayoutIR,
+    graph: &ArcGraph,
+    node_map: &HashMap<NodeIndex, NodeId>,
+    edge_to_cycles: &HashMap<(NodeIndex, NodeIndex), Vec<usize>>,
+    suppressed: &HashSet<(NodeIndex, NodeIndex)>,
+) {
+    for edge in graph.edge_references() {
+        let (src, dst) = (edge.source(), edge.target());
+
+        let (locations, context, is_module_dep) = match edge.weight() {
+            Edge::CrateDep { context } => {
+                if suppressed.contains(&(src, dst)) {
+                    continue;
+                }
+                (vec![], context.clone(), false)
+            }
+            Edge::ModuleDep { locations, context } => (locations.clone(), context.clone(), true),
+            Edge::Contains => continue,
+        };
+
+        if let (Some(&from), Some(&to)) = (node_map.get(&src), node_map.get(&dst)) {
+            let (cycle, cycle_ids) =
+                compute_cycle_info(src, dst, edge_to_cycles, graph, is_module_dep);
+            ir.edges.push(LayoutEdge {
+                cycle,
+                cycle_ids,
+                source_locations: locations,
+                ..LayoutEdge::new(from, to, context)
+            });
+        }
+    }
+}
+
+/// Find the source file path for a module by inspecting its outgoing ModuleDep edges.
+fn module_source_path(graph: &ArcGraph, idx: NodeIndex) -> Option<String> {
+    graph
+        .edges_directed(idx, petgraph::Direction::Outgoing)
+        .find_map(|edge| match edge.weight() {
+            Edge::ModuleDep { locations, .. } => {
+                locations.first().map(|loc| loc.file.display().to_string())
+            }
+            _ => None,
+        })
+}
+
+/// Calculate nesting depth for a node by walking up the parent chain.
+fn nesting_depth(idx: NodeIndex, parent_map: &HashMap<NodeIndex, NodeIndex>) -> u32 {
+    let mut depth = 0u32;
+    let mut current = idx;
+    while let Some(&parent) = parent_map.get(&current) {
+        depth += 1;
+        current = parent;
+    }
+    depth
+}
+
+/// Build edge-to-cycles mapping: for each directed edge (src, dst) in any cycle,
+/// record which cycle indices it belongs to.
+fn build_edge_cycle_index(cycles: &[Cycle]) -> HashMap<(NodeIndex, NodeIndex), Vec<usize>> {
+    let mut edge_to_cycles: HashMap<(NodeIndex, NodeIndex), Vec<usize>> = HashMap::new();
+    for (cycle_idx, cycle) in cycles.iter().enumerate() {
+        for (src, dst) in cycle.edges() {
+            edge_to_cycles
+                .entry((src, dst))
+                .or_default()
+                .push(cycle_idx);
+        }
+    }
+    edge_to_cycles
+}
+
+/// Determine cycle kind and cycle IDs for an edge.
+/// CrateDep edges are always `Transitive` when in a cycle.
+/// ModuleDep edges check for a back-edge to distinguish `Direct` vs `Transitive`.
+fn compute_cycle_info(
+    src: NodeIndex,
+    dst: NodeIndex,
+    edge_to_cycles: &HashMap<(NodeIndex, NodeIndex), Vec<usize>>,
+    graph: &ArcGraph,
+    is_module_dep: bool,
+) -> (Option<CycleKind>, Vec<usize>) {
+    let cycle_ids = edge_to_cycles.get(&(src, dst)).cloned().unwrap_or_default();
+    if cycle_ids.is_empty() {
+        return (None, cycle_ids);
+    }
+
+    let has_reverse_module_dep = is_module_dep
+        && graph
+            .find_edge(dst, src)
+            .is_some_and(|ei| matches!(graph[ei], Edge::ModuleDep { .. }));
+
+    let kind = if has_reverse_module_dep {
+        CycleKind::Direct
+    } else {
+        CycleKind::Transitive
+    };
+    (Some(kind), cycle_ids)
+}
+
+/// Extension trait for incrementing weighted edge counts.
+trait IncrementEdge {
+    fn increment_edge(&mut self, src: NodeIndex, dst: NodeIndex);
+}
+
+impl<N> IncrementEdge for DiGraph<N, usize> {
+    fn increment_edge(&mut self, src: NodeIndex, dst: NodeIndex) {
+        if let Some(ei) = self.find_edge(src, dst) {
+            self[ei] += 1;
+        } else {
+            self.add_edge(src, dst, 1);
+        }
+    }
+}
+
+/// Build a mini dependency graph among sibling nodes based on cross-subtree dependencies.
+/// For each sibling, collects its full subtree and counts how many production ModuleDep
+/// edges cross from one sibling's subtree to another's.
+fn build_sibling_dep_graph(children: &[NodeIndex], graph: &ArcGraph) -> DiGraph<NodeIndex, usize> {
+    // Collect subtrees for each sibling (child + all descendants)
+    let subtrees: HashMap<NodeIndex, HashSet<NodeIndex>> = children
+        .iter()
+        .map(|&child| (child, graph.containment_subtree(child)))
+        .collect();
+
+    // Build mini graph
+    let mut sibling_deps: DiGraph<NodeIndex, usize> = DiGraph::new();
+    let orig_to_local: HashMap<NodeIndex, petgraph::graph::NodeIndex> = children
+        .iter()
+        .map(|&child| (child, sibling_deps.add_node(child)))
+        .collect();
+
+    // Inverted index: for each node, which sibling's subtree contains it?
+    let node_to_sibling: HashMap<NodeIndex, NodeIndex> = subtrees
+        .iter()
+        .flat_map(|(&child, subtree)| subtree.iter().map(move |&n| (n, child)))
+        .collect();
+
+    // Cross-subtree dependencies
+    let node_to_sibling = &node_to_sibling;
+    let cross_subtree_deps = children.iter().flat_map(|&child| {
+        subtrees[&child]
+            .iter()
+            .flat_map(move |&node| graph.edges(node))
+            .filter(|e| e.weight().is_production_module_dep())
+            .filter_map(move |e| {
+                let &sibling = node_to_sibling.get(&e.target())?;
+                (sibling != child).then_some((child, sibling))
+            })
+    });
+
+    for (child, sibling) in cross_subtree_deps {
+        sibling_deps.increment_edge(orig_to_local[&child], orig_to_local[&sibling]);
+    }
+
+    sibling_deps
+}
+
+/// Layout-specific methods on `ArcGraph`.
+/// Kept in `build.rs` (not `graph.rs`) because they depend on `build_sibling_dep_graph`
+/// and `stable_toposort`, which are layout-specific.
+impl ArcGraph {
+    /// Hierarchically sorted modules for a parent, collecting children recursively.
+    /// Children are sorted topologically by ModuleDep edges, with alphabetical tie-breaker.
+    /// Also considers cross-subtree dependencies: if any node in subtree(A) depends on
+    /// any node in subtree(B), then A should appear before B.
+    fn ordered_children(
+        &self,
+        parent: NodeIndex,
+        module_indices: &[NodeIndex],
+        added: &mut HashSet<NodeIndex>,
+    ) -> Vec<NodeIndex> {
+        // Find direct children of this parent (via Contains edge)
+        let mut children: Vec<NodeIndex> = module_indices
+            .iter()
+            .filter(|&&m| !added.contains(&m) && self.contains_child(parent, m))
+            .copied()
+            .collect();
+
+        // FIRST: Sort alphabetically (provides stable base order for toposort)
+        children.sort_unstable_by(|&a, &b| self[a].name().cmp(self[b].name()));
+
+        let sibling_deps = build_sibling_dep_graph(&children, self);
+
+        // THEN: Stable topological sort using Kahn's algorithm
+        // This preserves alphabetical order for independent nodes (tie-breaker)
+        let sorted = stable_toposort(&sibling_deps, &children, |idx| self[idx].name().to_owned());
+        if !sorted.is_empty() {
+            children = sorted;
+        }
+        // On cycles (empty result): keep alphabetical order
+
+        // Add each child + its descendants recursively
+        children
+            .into_iter()
+            .flat_map(|child| {
+                added.insert(child);
+                std::iter::once(child).chain(self.ordered_children(child, module_indices, added))
+            })
+            .collect()
+    }
+
+    /// Re-sort crates by aggregated inter-crate dependencies (CrateDep + ModuleDep).
+    /// Builds a crate-level dependency graph and runs stable toposort with alphabetical tie-breaking.
+    fn order_crates(&self, crate_indices: &[NodeIndex]) -> Vec<NodeIndex> {
+        let mut crate_graph: DiGraph<NodeIndex, usize> = DiGraph::new();
+        let mut sorted_crates = crate_indices.to_vec();
+        sorted_crates.sort_unstable_by_key(|n| n.index());
+        let orig_to_local: HashMap<NodeIndex, petgraph::graph::NodeIndex> = sorted_crates
+            .iter()
+            .map(|&ci| (ci, crate_graph.add_node(ci)))
+            .collect();
+
+        for edge in self.edge_references() {
+            if edge.weight().is_production() {
+                let src_crate = self.owning_crate(edge.source());
+                let dst_crate = self.owning_crate(edge.target());
+                if src_crate != dst_crate
+                    && let (Some(&sc), Some(&dc)) =
+                        (orig_to_local.get(&src_crate), orig_to_local.get(&dst_crate))
+                {
+                    crate_graph.increment_edge(sc, dc);
+                }
+            }
+        }
+
+        stable_toposort(&crate_graph, &sorted_crates, |idx| {
+            self[idx].name().to_owned()
+        })
+    }
+
+    /// Find crate pairs where ModuleDep edges exist (so CrateDep can be suppressed).
+    /// Entry-point imports create ModuleDep edges where one or both endpoints
+    /// are Node::Crate (not just Node::Module), so we handle all combinations.
+    fn suppressed_crate_pairs(&self) -> HashSet<(NodeIndex, NodeIndex)> {
+        self.edge_references()
+            .filter_map(|edge| match edge.weight() {
+                Edge::ModuleDep { .. } => {
+                    let src_crate = self.owning_crate(edge.source());
+                    let dst_crate = self.owning_crate(edge.target());
+                    (src_crate != dst_crate).then_some((src_crate, dst_crate))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Group modules under reachable crates and collect orphans.
+    fn order_items(
+        &self,
+        crate_indices: &[NodeIndex],
+        module_indices: &[NodeIndex],
+        reachable: &HashSet<NodeIndex>,
+    ) -> Vec<NodeIndex> {
+        let mut ordered = Vec::new();
+        let mut added = HashSet::new();
+        for &ci in crate_indices {
+            if !reachable.contains(&ci) {
+                continue;
+            }
+            ordered.push(ci);
+            ordered.extend(self.ordered_children(ci, module_indices, &mut added));
+        }
+        // Orphans: modules not claimed by any reachable crate
+        for &mi in module_indices {
+            if !added.contains(&mi) {
+                ordered.push(mi);
+            }
+        }
+        ordered
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{ArcGraph, ArcGraphExt, Edge, Node};
-    use crate::layout::{Cycle, ElementaryCycles};
+    use crate::graph::{ArcGraph, Edge, Node};
+    use crate::layout::ElementaryCycles;
     use crate::model::{DependencyKind, EdgeContext, SourceLocation, TestKind};
     use petgraph::graph::NodeIndex;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
+
+    struct TestGraphBuilder {
+        graph: ArcGraph,
+        names: HashMap<String, NodeIndex>,
+    }
+
+    impl TestGraphBuilder {
+        fn new() -> Self {
+            Self {
+                graph: ArcGraph::new(),
+                names: HashMap::new(),
+            }
+        }
+
+        /// Add a crate with child modules and Contains edges.
+        /// Path is auto-generated as "/<crate_name>".
+        fn crate_with_modules(&mut self, crate_name: &str, module_names: &[&str]) -> &mut Self {
+            let crate_idx = self.graph.add_node(Node::Crate {
+                name: crate_name.to_string(),
+                path: PathBuf::from(format!("/{crate_name}")),
+            });
+            self.names.insert(crate_name.to_string(), crate_idx);
+            for &mod_name in module_names {
+                let mod_idx = self.graph.add_node(Node::Module {
+                    name: mod_name.to_string(),
+                    crate_idx,
+                });
+                self.names.insert(mod_name.to_string(), mod_idx);
+                self.graph.add_edge(crate_idx, mod_idx, Edge::Contains);
+            }
+            self
+        }
+
+        /// Add a module not attached to any crate (uses NodeIndex::new(0) as crate_idx).
+        fn orphan_module(&mut self, name: &str) -> &mut Self {
+            let idx = self.graph.add_node(Node::Module {
+                name: name.to_string(),
+                crate_idx: NodeIndex::new(0),
+            });
+            self.names.insert(name.to_string(), idx);
+            self
+        }
+
+        /// Add a nested module under an existing parent (module or crate), with Contains edge.
+        fn nested_module(&mut self, parent: &str, child: &str) -> &mut Self {
+            let parent_idx = self.names[parent];
+            let crate_idx = match &self.graph[parent_idx] {
+                Node::Module { crate_idx, .. } => *crate_idx,
+                Node::Crate { .. } => parent_idx,
+            };
+            let child_idx = self.graph.add_node(Node::Module {
+                name: child.to_string(),
+                crate_idx,
+            });
+            self.names.insert(child.to_string(), child_idx);
+            self.graph.add_edge(parent_idx, child_idx, Edge::Contains);
+            self
+        }
+
+        /// Add a production ModuleDep edge (empty locations).
+        fn prod_dep(&mut self, from: &str, to: &str) -> &mut Self {
+            let src = self.names[from];
+            let dst = self.names[to];
+            self.graph.add_edge(
+                src,
+                dst,
+                Edge::ModuleDep {
+                    locations: vec![],
+                    context: EdgeContext::production(),
+                },
+            );
+            self
+        }
+
+        /// Add a test ModuleDep edge (empty locations).
+        fn test_dep(&mut self, from: &str, to: &str, kind: TestKind) -> &mut Self {
+            let src = self.names[from];
+            let dst = self.names[to];
+            self.graph.add_edge(
+                src,
+                dst,
+                Edge::ModuleDep {
+                    locations: vec![],
+                    context: EdgeContext::test(kind),
+                },
+            );
+            self
+        }
+
+        /// Add a production CrateDep edge.
+        fn crate_dep(&mut self, from: &str, to: &str) -> &mut Self {
+            let src = self.names[from];
+            let dst = self.names[to];
+            self.graph.add_edge(
+                src,
+                dst,
+                Edge::CrateDep {
+                    context: EdgeContext::production(),
+                },
+            );
+            self
+        }
+
+        /// Add a test CrateDep edge.
+        fn test_crate_dep(&mut self, from: &str, to: &str, kind: TestKind) -> &mut Self {
+            let src = self.names[from];
+            let dst = self.names[to];
+            self.graph.add_edge(
+                src,
+                dst,
+                Edge::CrateDep {
+                    context: EdgeContext::test(kind),
+                },
+            );
+            self
+        }
+
+        /// Add a ModuleDep with a source location.
+        fn prod_dep_with_location(
+            &mut self,
+            from: &str,
+            to: &str,
+            file: &str,
+            line: usize,
+            symbols: &[&str],
+            module_path: &str,
+        ) -> &mut Self {
+            let src = self.names[from];
+            let dst = self.names[to];
+            self.graph.add_edge(
+                src,
+                dst,
+                Edge::ModuleDep {
+                    locations: vec![SourceLocation {
+                        file: PathBuf::from(file),
+                        line,
+                        symbols: symbols.iter().map(|s| s.to_string()).collect(),
+                        module_path: module_path.to_string(),
+                    }],
+                    context: EdgeContext::production(),
+                },
+            );
+            self
+        }
+
+        /// Consume and return (graph, name->NodeIndex map).
+        fn build(self) -> (ArcGraph, HashMap<String, NodeIndex>) {
+            (self.graph, self.names)
+        }
+    }
 
     #[test]
     fn test_layout_edge_carries_edge_context() {
-        let prod_edge = LayoutEdge {
-            from: 0,
-            to: 1,
-            direction: EdgeDirection::Downward,
-            cycle: None,
-            cycle_ids: vec![],
-            source_locations: vec![],
-            context: EdgeContext::production(),
-        };
+        let prod_edge = LayoutEdge::new(0, 1, EdgeContext::production());
         assert_eq!(prod_edge.context.kind, DependencyKind::Production);
 
-        let test_edge = LayoutEdge {
-            from: 0,
-            to: 1,
-            direction: EdgeDirection::Downward,
-            cycle: None,
-            cycle_ids: vec![],
-            source_locations: vec![],
-            context: EdgeContext::test(TestKind::Unit),
-        };
+        let test_edge = LayoutEdge::new(0, 1, EdgeContext::test(TestKind::Unit));
         assert_eq!(test_edge.context.kind, DependencyKind::Test(TestKind::Unit));
     }
 
     #[test]
     fn test_layout_edge_has_source_locations() {
-        let edge = LayoutEdge {
-            from: 0,
-            to: 1,
-            direction: EdgeDirection::Downward,
-            cycle: None,
-            cycle_ids: vec![],
-            source_locations: vec![SourceLocation {
+        let edge = LayoutEdge::new(0, 1, EdgeContext::production()).with_source_locations(vec![
+            SourceLocation {
                 file: PathBuf::from("src/cli.rs"),
                 line: 42,
                 symbols: vec![],
                 module_path: String::new(),
-            }],
-            context: EdgeContext::production(),
-        };
+            },
+        ]);
         assert_eq!(edge.source_locations.len(), 1);
         assert_eq!(edge.source_locations[0].line, 42);
     }
@@ -599,32 +632,11 @@ mod tests {
 
     #[test]
     fn test_build_layout_single_crate() {
-        let mut graph = ArcGraph::new();
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "my_crate".to_string(),
-            path: PathBuf::from("/path"),
-        });
-        let mod_a = graph.add_node(Node::Module {
-            name: "mod_a".to_string(),
-            crate_idx,
-        });
-        let mod_b = graph.add_node(Node::Module {
-            name: "mod_b".to_string(),
-            crate_idx,
-        });
-        graph.add_edge(crate_idx, mod_a, Edge::Contains);
-        graph.add_edge(crate_idx, mod_b, Edge::Contains);
-        graph.add_edge(
-            mod_a,
-            mod_b,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("my_crate", &["mod_a", "mod_b"])
+            .prod_dep("mod_a", "mod_b");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         // Should have 3 items (1 crate + 2 modules)
         assert_eq!(ir.items.len(), 3);
@@ -637,32 +649,12 @@ mod tests {
 
     #[test]
     fn test_build_layout_with_cycles() {
-        let mut graph = ArcGraph::new();
-        let a = graph.add_node(Node::Module {
-            name: "a".to_string(),
-            crate_idx: NodeIndex::new(0),
-        });
-        let b = graph.add_node(Node::Module {
-            name: "b".to_string(),
-            crate_idx: NodeIndex::new(0),
-        });
-        graph.add_edge(
-            a,
-            b,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            b,
-            a,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        ); // cycle
-
+        let mut b = TestGraphBuilder::new();
+        b.orphan_module("a")
+            .orphan_module("b")
+            .prod_dep("a", "b")
+            .prod_dep("b", "a");
+        let (graph, _) = b.build();
         let cycles = graph.production_subgraph().elementary_cycles();
         let ir = build_layout(&graph, &cycles);
 
@@ -678,98 +670,19 @@ mod tests {
 
     #[test]
     fn test_cycle_ids_propagation() {
-        // Build graph: crate with 5 modules, two independent cycles
-        let mut graph = ArcGraph::new();
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test".to_string(),
-            path: PathBuf::from("/test"),
-        });
-        let a = graph.add_node(Node::Module {
-            name: "a".to_string(),
-            crate_idx,
-        });
-        let b = graph.add_node(Node::Module {
-            name: "b".to_string(),
-            crate_idx,
-        });
-        let c = graph.add_node(Node::Module {
-            name: "c".to_string(),
-            crate_idx,
-        });
-        let d = graph.add_node(Node::Module {
-            name: "d".to_string(),
-            crate_idx,
-        });
-        let e = graph.add_node(Node::Module {
-            name: "e".to_string(),
-            crate_idx,
-        });
-        // Non-cycle module
-        let f = graph.add_node(Node::Module {
-            name: "f".to_string(),
-            crate_idx,
-        });
-        graph.add_edge(crate_idx, a, Edge::Contains);
-        graph.add_edge(crate_idx, b, Edge::Contains);
-        graph.add_edge(crate_idx, c, Edge::Contains);
-        graph.add_edge(crate_idx, d, Edge::Contains);
-        graph.add_edge(crate_idx, e, Edge::Contains);
-        graph.add_edge(crate_idx, f, Edge::Contains);
-
-        // Cycle 1: A → B → C → A
-        graph.add_edge(
-            a,
-            b,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            b,
-            c,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            c,
-            a,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: EdgeContext::production(),
-            },
-        );
-
-        // Cycle 2: D → E → D
-        graph.add_edge(
-            d,
-            e,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            e,
-            d,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: EdgeContext::production(),
-            },
-        );
-
-        // Non-cycle edge: F → A
-        graph.add_edge(
-            f,
-            a,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: EdgeContext::production(),
-            },
-        );
-
+        // Build graph: crate with 6 modules, two independent cycles
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test", &["a", "b", "c", "d", "e", "f"])
+            // Cycle 1: A → B → C → A
+            .prod_dep("a", "b")
+            .prod_dep("b", "c")
+            .prod_dep("c", "a")
+            // Cycle 2: D → E → D
+            .prod_dep("d", "e")
+            .prod_dep("e", "d")
+            // Non-cycle edge: F → A
+            .prod_dep("f", "a");
+        let (graph, _) = b.build();
         let cycles = graph.production_subgraph().elementary_cycles();
         let ir = build_layout(&graph, &cycles);
 
@@ -820,34 +733,10 @@ mod tests {
         // When a module that appears later in topo order depends on one that appears earlier,
         // it should be marked as Downward. When the reverse happens (earlier depends on later),
         // it should be marked as Upward.
-        let mut graph = ArcGraph::new();
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test".to_string(),
-            path: PathBuf::from("/test"),
-        });
-        // mod_a depends on mod_b (normal downward flow if a comes before b)
-        let mod_a = graph.add_node(Node::Module {
-            name: "a".to_string(),
-            crate_idx,
-        });
-        let mod_b = graph.add_node(Node::Module {
-            name: "b".to_string(),
-            crate_idx,
-        });
-        graph.add_edge(crate_idx, mod_a, Edge::Contains);
-        graph.add_edge(crate_idx, mod_b, Edge::Contains);
-        // a -> b (a depends on b)
-        graph.add_edge(
-            mod_a,
-            mod_b,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test", &["a", "b"]).prod_dep("a", "b"); // a depends on b
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         // There should be exactly one edge
         assert_eq!(ir.edges.len(), 1);
@@ -866,51 +755,12 @@ mod tests {
     #[test]
     fn test_build_layout_multi_crate_grouping() {
         // Simulate a workspace with 2 crates, each having 2 modules
-        let mut graph = ArcGraph::new();
-
-        // Crate A with modules a1, a2
-        let crate_a = graph.add_node(Node::Crate {
-            name: "crate_a".to_string(),
-            path: PathBuf::from("/path/a"),
-        });
-        let mod_a1 = graph.add_node(Node::Module {
-            name: "mod_a1".to_string(),
-            crate_idx: crate_a,
-        });
-        let mod_a2 = graph.add_node(Node::Module {
-            name: "mod_a2".to_string(),
-            crate_idx: crate_a,
-        });
-        graph.add_edge(crate_a, mod_a1, Edge::Contains);
-        graph.add_edge(crate_a, mod_a2, Edge::Contains);
-
-        // Crate B with modules b1, b2
-        let crate_b = graph.add_node(Node::Crate {
-            name: "crate_b".to_string(),
-            path: PathBuf::from("/path/b"),
-        });
-        let mod_b1 = graph.add_node(Node::Module {
-            name: "mod_b1".to_string(),
-            crate_idx: crate_b,
-        });
-        let mod_b2 = graph.add_node(Node::Module {
-            name: "mod_b2".to_string(),
-            crate_idx: crate_b,
-        });
-        graph.add_edge(crate_b, mod_b1, Edge::Contains);
-        graph.add_edge(crate_b, mod_b2, Edge::Contains);
-
-        // Crate A depends on Crate B
-        graph.add_edge(
-            crate_a,
-            crate_b,
-            Edge::CrateDep {
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("crate_a", &["mod_a1", "mod_a2"])
+            .crate_with_modules("crate_b", &["mod_b1", "mod_b2"])
+            .crate_dep("crate_a", "crate_b");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         // Should have 6 items (2 crates + 4 modules)
         assert_eq!(ir.items.len(), 6);
@@ -952,23 +802,15 @@ mod tests {
 
     #[test]
     fn test_layout_item_creation() {
-        let crate_item = LayoutItem {
-            id: 0,
-            kind: ItemKind::Crate,
-            label: "my_crate".to_string(),
-            source_path: None,
-            volatility: None,
-        };
-        let module_item = LayoutItem {
-            id: 1,
-            kind: ItemKind::Module {
+        let crate_item = LayoutItem::new(0, ItemKind::Crate, "my_crate");
+        let module_item = LayoutItem::new(
+            1,
+            ItemKind::Module {
                 nesting: 1,
                 parent: 0,
             },
-            label: "my_module".to_string(),
-            source_path: None,
-            volatility: None,
-        };
+            "my_module",
+        );
         assert_eq!(crate_item.label, "my_crate");
         assert_eq!(module_item.id, 1);
         match module_item.kind {
@@ -982,33 +824,11 @@ mod tests {
 
     #[test]
     fn test_layout_edge_kinds() {
-        let normal = LayoutEdge {
-            from: 0,
-            to: 1,
-            direction: EdgeDirection::Downward,
-            cycle: None,
-            cycle_ids: vec![],
-            source_locations: vec![],
-            context: EdgeContext::production(),
-        };
-        let direct = LayoutEdge {
-            from: 1,
-            to: 0,
-            direction: EdgeDirection::Downward,
-            cycle: Some(CycleKind::Direct),
-            cycle_ids: vec![0],
-            source_locations: vec![],
-            context: EdgeContext::production(),
-        };
-        let trans = LayoutEdge {
-            from: 2,
-            to: 3,
-            direction: EdgeDirection::Downward,
-            cycle: Some(CycleKind::Transitive),
-            cycle_ids: vec![1],
-            source_locations: vec![],
-            context: EdgeContext::production(),
-        };
+        let normal = LayoutEdge::new(0, 1, EdgeContext::production());
+        let direct =
+            LayoutEdge::new(1, 0, EdgeContext::production()).with_cycle(CycleKind::Direct, vec![0]);
+        let trans = LayoutEdge::new(2, 3, EdgeContext::production())
+            .with_cycle(CycleKind::Transitive, vec![1]);
 
         assert_eq!(normal.from, 0);
         assert_eq!(direct.cycle, Some(CycleKind::Direct));
@@ -1027,15 +847,8 @@ mod tests {
             },
             "my_module".to_string(),
         );
-        ir.add_edge(
-            crate_id,
-            mod_id,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(crate_id, mod_id, EdgeContext::production()));
 
         assert_eq!(ir.items.len(), 2);
         assert_eq!(ir.edges.len(), 1);
@@ -1064,40 +877,12 @@ mod tests {
         // │   ├── alpha_child
         // │   └── zebra_child
         // └── other_module (alphabetisch vor "parent", aber kein Kind)
-
-        let mut graph = ArcGraph::new();
-
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test_crate".to_string(),
-            path: PathBuf::from("/test"),
-        });
-
-        // Module absichtlich in "falscher" Reihenfolge hinzufügen
-        let other = graph.add_node(Node::Module {
-            name: "other_module".to_string(),
-            crate_idx,
-        });
-        let zebra = graph.add_node(Node::Module {
-            name: "zebra_child".to_string(),
-            crate_idx,
-        });
-        let parent = graph.add_node(Node::Module {
-            name: "parent".to_string(),
-            crate_idx,
-        });
-        let alpha = graph.add_node(Node::Module {
-            name: "alpha_child".to_string(),
-            crate_idx,
-        });
-
-        // Hierarchie: crate → all modules, parent → children
-        graph.add_edge(crate_idx, other, Edge::Contains);
-        graph.add_edge(crate_idx, parent, Edge::Contains);
-        graph.add_edge(parent, alpha, Edge::Contains);
-        graph.add_edge(parent, zebra, Edge::Contains);
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test_crate", &["other_module", "parent"])
+            .nested_module("parent", "alpha_child")
+            .nested_module("parent", "zebra_child");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         // Erwartete Reihenfolge:
         // 1. test_crate
@@ -1144,53 +929,12 @@ mod tests {
         // zebra -> beta -> alpha (zebra depends on beta, beta depends on alpha)
         // Alphabetical order: alpha, beta, zebra
         // Dependency order: zebra, beta, alpha (dependents first)
-
-        let mut graph = ArcGraph::new();
-
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test_crate".to_string(),
-            path: PathBuf::from("/test"),
-        });
-
-        // Add modules (order shouldn't matter due to sorting)
-        let alpha = graph.add_node(Node::Module {
-            name: "alpha".to_string(),
-            crate_idx,
-        });
-        let beta = graph.add_node(Node::Module {
-            name: "beta".to_string(),
-            crate_idx,
-        });
-        let zebra = graph.add_node(Node::Module {
-            name: "zebra".to_string(),
-            crate_idx,
-        });
-
-        // Hierarchy: crate contains all modules
-        graph.add_edge(crate_idx, alpha, Edge::Contains);
-        graph.add_edge(crate_idx, beta, Edge::Contains);
-        graph.add_edge(crate_idx, zebra, Edge::Contains);
-
-        // Dependencies: zebra -> beta -> alpha
-        graph.add_edge(
-            zebra,
-            beta,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            beta,
-            alpha,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test_crate", &["alpha", "beta", "zebra"])
+            .prod_dep("zebra", "beta")
+            .prod_dep("beta", "alpha");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
 
@@ -1213,46 +957,14 @@ mod tests {
 
     #[test]
     fn test_test_edges_do_not_affect_sibling_sort_order() {
-        let mut graph = ArcGraph::new();
-
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "my_crate".to_string(),
-            path: PathBuf::from("/test"),
-        });
-
-        let alpha = graph.add_node(Node::Module {
-            name: "alpha".to_string(),
-            crate_idx,
-        });
-        let beta = graph.add_node(Node::Module {
-            name: "beta".to_string(),
-            crate_idx,
-        });
-
-        graph.add_edge(crate_idx, alpha, Edge::Contains);
-        graph.add_edge(crate_idx, beta, Edge::Contains);
-
-        // Production: alpha depends on beta → alpha should come first
-        graph.add_edge(
-            alpha,
-            beta,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        // Test: beta depends on alpha (reverse direction) → must NOT affect order
-        graph.add_edge(
-            beta,
-            alpha,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::test(crate::model::TestKind::Unit),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("my_crate", &["alpha", "beta"])
+            // Production: alpha depends on beta → alpha should come first
+            .prod_dep("alpha", "beta")
+            // Test: beta depends on alpha (reverse direction) → must NOT affect order
+            .test_dep("beta", "alpha", TestKind::Unit);
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
         let pos_alpha = labels.iter().position(|&l| l == "alpha").unwrap();
@@ -1268,48 +980,15 @@ mod tests {
 
     #[test]
     fn test_test_edges_do_not_affect_crate_sort_order() {
-        let mut graph = ArcGraph::new();
-
-        let crate_a = graph.add_node(Node::Crate {
-            name: "aaa".to_string(),
-            path: PathBuf::from("/aaa"),
-        });
-        let crate_b = graph.add_node(Node::Crate {
-            name: "bbb".to_string(),
-            path: PathBuf::from("/bbb"),
-        });
-
-        // Give both crates a module so they become production-reachable anchors
-        let mod_a = graph.add_node(Node::Module {
-            name: "mod_a".to_string(),
-            crate_idx: crate_a,
-        });
-        let mod_b = graph.add_node(Node::Module {
-            name: "mod_b".to_string(),
-            crate_idx: crate_b,
-        });
-        graph.add_edge(crate_a, mod_a, Edge::Contains);
-        graph.add_edge(crate_b, mod_b, Edge::Contains);
-
-        // Production: crate_a depends on crate_b → crate_a first
-        graph.add_edge(
-            crate_a,
-            crate_b,
-            Edge::CrateDep {
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        // Test: crate_b depends on crate_a (reverse) → must NOT affect order
-        graph.add_edge(
-            crate_b,
-            crate_a,
-            Edge::CrateDep {
-                context: crate::model::EdgeContext::test(crate::model::TestKind::Unit),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("aaa", &["mod_a"])
+            .crate_with_modules("bbb", &["mod_b"])
+            // Production: aaa depends on bbb → aaa first
+            .crate_dep("aaa", "bbb")
+            // Test: bbb depends on aaa (reverse) → must NOT affect order
+            .test_crate_dep("bbb", "aaa", TestKind::Unit);
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
         let pos_a = labels.iter().position(|&l| l == "aaa").unwrap();
@@ -1328,50 +1007,20 @@ mod tests {
         // Setup: Crate A has module mod_a that imports from Crate B's entry point.
         // This creates a ModuleDep from mod_a (Node::Module) to crate_b (Node::Crate).
         // The CrateDep between crate_a and crate_b should be suppressed.
-        let mut graph = ArcGraph::new();
-
-        let crate_a = graph.add_node(Node::Crate {
-            name: "crate_a".to_string(),
-            path: PathBuf::from("/path/a"),
-        });
-        let mod_a = graph.add_node(Node::Module {
-            name: "mod_a".to_string(),
-            crate_idx: crate_a,
-        });
-        let crate_b = graph.add_node(Node::Crate {
-            name: "crate_b".to_string(),
-            path: PathBuf::from("/path/b"),
-        });
-
-        // Hierarchy
-        graph.add_edge(crate_a, mod_a, Edge::Contains);
-
-        // CrateDep: crate_a -> crate_b
-        graph.add_edge(
-            crate_a,
-            crate_b,
-            Edge::CrateDep {
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        // ModuleDep: mod_a -> crate_b (entry-point import)
-        graph.add_edge(
-            mod_a,
-            crate_b,
-            Edge::ModuleDep {
-                locations: vec![SourceLocation {
-                    file: PathBuf::from("src/mod_a.rs"),
-                    line: 1,
-                    symbols: vec!["Helper".to_string()],
-                    module_path: "crate_b".to_string(),
-                }],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("crate_a", &["mod_a"])
+            .crate_with_modules("crate_b", &[])
+            .crate_dep("crate_a", "crate_b")
+            .prod_dep_with_location(
+                "mod_a",
+                "crate_b",
+                "src/mod_a.rs",
+                1,
+                &["Helper"],
+                "crate_b",
+            );
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         // Should have 3 items (2 crates + 1 module)
         assert_eq!(ir.items.len(), 3);
@@ -1404,55 +1053,20 @@ mod tests {
         // Setup: Crate A's root (lib.rs) imports from Crate B's entry point.
         // This creates a ModuleDep from crate_a (Node::Crate) to crate_b (Node::Crate).
         // The CrateDep between crate_a and crate_b should be suppressed.
-        let mut graph = ArcGraph::new();
-
-        let crate_a = graph.add_node(Node::Crate {
-            name: "crate_a".to_string(),
-            path: PathBuf::from("/path/a"),
-        });
-        let crate_b = graph.add_node(Node::Crate {
-            name: "crate_b".to_string(),
-            path: PathBuf::from("/path/b"),
-        });
-
-        // Give both crates a module so they become production-reachable anchors
-        let dummy_a = graph.add_node(Node::Module {
-            name: "dummy_a".to_string(),
-            crate_idx: crate_a,
-        });
-        let dummy_b = graph.add_node(Node::Module {
-            name: "dummy_b".to_string(),
-            crate_idx: crate_b,
-        });
-        graph.add_edge(crate_a, dummy_a, Edge::Contains);
-        graph.add_edge(crate_b, dummy_b, Edge::Contains);
-
-        // CrateDep: crate_a -> crate_b
-        graph.add_edge(
-            crate_a,
-            crate_b,
-            Edge::CrateDep {
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        // ModuleDep: crate_a -> crate_b (root-to-entry-point)
-        graph.add_edge(
-            crate_a,
-            crate_b,
-            Edge::ModuleDep {
-                locations: vec![SourceLocation {
-                    file: PathBuf::from("src/lib.rs"),
-                    line: 3,
-                    symbols: vec!["Config".to_string()],
-                    module_path: "crate_b".to_string(),
-                }],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("crate_a", &["dummy_a"])
+            .crate_with_modules("crate_b", &["dummy_b"])
+            .crate_dep("crate_a", "crate_b")
+            .prod_dep_with_location(
+                "crate_a",
+                "crate_b",
+                "src/lib.rs",
+                3,
+                &["Config"],
+                "crate_b",
+            );
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         // CrateDep should be suppressed
         assert_eq!(
@@ -1471,57 +1085,13 @@ mod tests {
         // Setup: Crate A's root imports from Crate B's module (not entry point).
         // ModuleDep from crate_a (Node::Crate) to mod_b (Node::Module).
         // CrateDep should be suppressed.
-        let mut graph = ArcGraph::new();
-
-        let crate_a = graph.add_node(Node::Crate {
-            name: "crate_a".to_string(),
-            path: PathBuf::from("/path/a"),
-        });
-        let crate_b = graph.add_node(Node::Crate {
-            name: "crate_b".to_string(),
-            path: PathBuf::from("/path/b"),
-        });
-        let mod_b = graph.add_node(Node::Module {
-            name: "mod_b".to_string(),
-            crate_idx: crate_b,
-        });
-
-        // Hierarchy (crate_b already has mod_b, making it an anchor)
-        graph.add_edge(crate_b, mod_b, Edge::Contains);
-
-        // crate_a also needs a module to be an anchor
-        let dummy_a = graph.add_node(Node::Module {
-            name: "dummy_a".to_string(),
-            crate_idx: crate_a,
-        });
-        graph.add_edge(crate_a, dummy_a, Edge::Contains);
-
-        // CrateDep: crate_a -> crate_b
-        graph.add_edge(
-            crate_a,
-            crate_b,
-            Edge::CrateDep {
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        // ModuleDep: crate_a -> mod_b (root imports from module)
-        graph.add_edge(
-            crate_a,
-            mod_b,
-            Edge::ModuleDep {
-                locations: vec![SourceLocation {
-                    file: PathBuf::from("src/lib.rs"),
-                    line: 5,
-                    symbols: vec!["parse".to_string()],
-                    module_path: "mod_b".to_string(),
-                }],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("crate_a", &["dummy_a"])
+            .crate_with_modules("crate_b", &["mod_b"])
+            .crate_dep("crate_a", "crate_b")
+            .prod_dep_with_location("crate_a", "mod_b", "src/lib.rs", 5, &["parse"], "mod_b");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         // CrateDep should be suppressed
         assert_eq!(
@@ -1546,53 +1116,13 @@ mod tests {
         // │   └── child_a      <-- depends on child_b
         // └── parent_b         <-- should come SECOND (dependency target)
         //     └── child_b      <-- used by child_a
-
-        let mut graph = ArcGraph::new();
-
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test_crate".to_string(),
-            path: PathBuf::from("/test"),
-        });
-
-        // Create parents (alphabetical: parent_a before parent_b)
-        let parent_a = graph.add_node(Node::Module {
-            name: "parent_a".to_string(),
-            crate_idx,
-        });
-        let parent_b = graph.add_node(Node::Module {
-            name: "parent_b".to_string(),
-            crate_idx,
-        });
-
-        // Create children
-        let child_a = graph.add_node(Node::Module {
-            name: "child_a".to_string(),
-            crate_idx,
-        });
-        let child_b = graph.add_node(Node::Module {
-            name: "child_b".to_string(),
-            crate_idx,
-        });
-
-        // Hierarchy: crate → parents, parents → children
-        graph.add_edge(crate_idx, parent_a, Edge::Contains);
-        graph.add_edge(crate_idx, parent_b, Edge::Contains);
-        graph.add_edge(parent_a, child_a, Edge::Contains);
-        graph.add_edge(parent_b, child_b, Edge::Contains);
-
-        // Cross-subtree dependency: child_a -> child_b
-        // This means parent_a's subtree depends on parent_b's subtree
-        graph.add_edge(
-            child_a,
-            child_b,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test_crate", &["parent_a", "parent_b"])
+            .nested_module("parent_a", "child_a")
+            .nested_module("parent_b", "child_b")
+            .prod_dep("child_a", "child_b");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
 
@@ -1613,44 +1143,14 @@ mod tests {
         // When modules in crate_a depend on modules in crate_b
         // but there is NO CrateDep edge, the crate ordering should still
         // place crate_a before crate_b (dependent crate first).
-        let mut graph = ArcGraph::new();
-
-        // crate_b alphabetically before crate_a — exposes the bug
-        let crate_b = graph.add_node(Node::Crate {
-            name: "crate_b".to_string(),
-            path: PathBuf::from("/b"),
-        });
-        let crate_a = graph.add_node(Node::Crate {
-            name: "crate_a".to_string(),
-            path: PathBuf::from("/a"),
-        });
-
-        let mod_a = graph.add_node(Node::Module {
-            name: "mod_a".to_string(),
-            crate_idx: crate_a,
-        });
-        let mod_b = graph.add_node(Node::Module {
-            name: "mod_b".to_string(),
-            crate_idx: crate_b,
-        });
-
-        // Hierarchy
-        graph.add_edge(crate_a, mod_a, Edge::Contains);
-        graph.add_edge(crate_b, mod_b, Edge::Contains);
-
-        // Module dependency: mod_a -> mod_b (crate_a depends on crate_b)
-        // but NO CrateDep edge!
-        graph.add_edge(
-            mod_a,
-            mod_b,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        //
+        // crate_b added first (lower graph index) to expose index-order bugs.
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("crate_b", &["mod_b"])
+            .crate_with_modules("crate_a", &["mod_a"])
+            .prod_dep("mod_a", "mod_b"); // no CrateDep edge!
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
 
@@ -1713,137 +1213,27 @@ mod tests {
         //   C,B,D → 4 upward (worst)
         //
         // Expected SCC order: D, B, C (minimum upward, lexicographic tiebreak)
-
-        let mut graph = ArcGraph::new();
-
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test_crate".to_string(),
-            path: PathBuf::from("/test"),
-        });
-
-        // Top-level modules (groups)
-        let mod_a = graph.add_node(Node::Module {
-            name: "a".to_string(),
-            crate_idx,
-        });
-        let mod_b = graph.add_node(Node::Module {
-            name: "b".to_string(),
-            crate_idx,
-        });
-        let mod_c = graph.add_node(Node::Module {
-            name: "c".to_string(),
-            crate_idx,
-        });
-        let mod_d = graph.add_node(Node::Module {
-            name: "d".to_string(),
-            crate_idx,
-        });
-
-        // Sub-modules
-        let _a1 = graph.add_node(Node::Module {
-            name: "a1".to_string(),
-            crate_idx,
-        });
-        let _a2 = graph.add_node(Node::Module {
-            name: "a2".to_string(),
-            crate_idx,
-        });
-        let _a3 = graph.add_node(Node::Module {
-            name: "a3".to_string(),
-            crate_idx,
-        });
-        let b1 = graph.add_node(Node::Module {
-            name: "b1".to_string(),
-            crate_idx,
-        });
-        let b2 = graph.add_node(Node::Module {
-            name: "b2".to_string(),
-            crate_idx,
-        });
-        let d1 = graph.add_node(Node::Module {
-            name: "d1".to_string(),
-            crate_idx,
-        });
-        let d2 = graph.add_node(Node::Module {
-            name: "d2".to_string(),
-            crate_idx,
-        });
-        let d3 = graph.add_node(Node::Module {
-            name: "d3".to_string(),
-            crate_idx,
-        });
-
-        // Hierarchy: crate -> groups -> sub-modules
-        graph.add_edge(crate_idx, mod_a, Edge::Contains);
-        graph.add_edge(crate_idx, mod_b, Edge::Contains);
-        graph.add_edge(crate_idx, mod_c, Edge::Contains);
-        graph.add_edge(crate_idx, mod_d, Edge::Contains);
-
-        graph.add_edge(mod_a, _a1, Edge::Contains);
-        graph.add_edge(mod_a, _a2, Edge::Contains);
-        graph.add_edge(mod_a, _a3, Edge::Contains);
-        graph.add_edge(mod_b, b1, Edge::Contains);
-        graph.add_edge(mod_b, b2, Edge::Contains);
-        graph.add_edge(mod_d, d1, Edge::Contains);
-        graph.add_edge(mod_d, d2, Edge::Contains);
-        graph.add_edge(mod_d, d3, Edge::Contains);
-
-        // Cycle 1: B1 <-> C
-        graph.add_edge(
-            b1,
-            mod_c,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            mod_c,
-            b1,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        // Cycle 2: B1 <-> D2
-        graph.add_edge(
-            b1,
-            d2,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            d2,
-            b1,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        // Asymmetric non-cycle edges: D's subtree uses B and C
-        graph.add_edge(
-            d1,
-            b2,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            d3,
-            mod_c,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test_crate", &["a", "b", "c", "d"])
+            .nested_module("a", "a1")
+            .nested_module("a", "a2")
+            .nested_module("a", "a3")
+            .nested_module("b", "b1")
+            .nested_module("b", "b2")
+            .nested_module("d", "d1")
+            .nested_module("d", "d2")
+            .nested_module("d", "d3")
+            // Cycle 1: B1 <-> C
+            .prod_dep("b1", "c")
+            .prod_dep("c", "b1")
+            // Cycle 2: B1 <-> D2
+            .prod_dep("b1", "d2")
+            .prod_dep("d2", "b1")
+            // Asymmetric non-cycle edges: D's subtree uses B and C
+            .prod_dep("d1", "b2")
+            .prod_dep("d3", "c");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
         let top_level: Vec<&str> = labels
@@ -1875,70 +1265,14 @@ mod tests {
     fn test_barycenter_symmetric_diamond() {
         // Symmetric diamond: A→C, A→D, B→C, B→D
         // Barycenter scores identical → alphabetical fallback → A, B, C, D
-        let mut graph = ArcGraph::new();
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test".to_string(),
-            path: PathBuf::from("/test"),
-        });
-        let a = graph.add_node(Node::Module {
-            name: "a".into(),
-            crate_idx,
-        });
-        let b = graph.add_node(Node::Module {
-            name: "b".into(),
-            crate_idx,
-        });
-        let c = graph.add_node(Node::Module {
-            name: "c".into(),
-            crate_idx,
-        });
-        let d = graph.add_node(Node::Module {
-            name: "d".into(),
-            crate_idx,
-        });
-
-        graph.add_edge(crate_idx, a, Edge::Contains);
-        graph.add_edge(crate_idx, b, Edge::Contains);
-        graph.add_edge(crate_idx, c, Edge::Contains);
-        graph.add_edge(crate_idx, d, Edge::Contains);
-
-        // A→C, A→D (A depends on C and D)
-        graph.add_edge(
-            a,
-            c,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            a,
-            d,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        // B→C, B→D (B depends on C and D)
-        graph.add_edge(
-            b,
-            c,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            b,
-            d,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test", &["a", "b", "c", "d"])
+            .prod_dep("a", "c")
+            .prod_dep("a", "d")
+            .prod_dep("b", "c")
+            .prod_dep("b", "d");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
         let pos_a = labels.iter().position(|&l| l == "a").unwrap();
@@ -1961,53 +1295,12 @@ mod tests {
         // Alphabetical: A(0), B(1), C(2), D(3) — Arc A→D crosses Arc B→C
         // Barycenter: A(0), B(1), D(2) [score=0.0 from A@0], C(3) [score=1.0 from B@1]
         // D should come before C to minimize crossings
-        let mut graph = ArcGraph::new();
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test".to_string(),
-            path: PathBuf::from("/test"),
-        });
-        let a = graph.add_node(Node::Module {
-            name: "a".into(),
-            crate_idx,
-        });
-        let b = graph.add_node(Node::Module {
-            name: "b".into(),
-            crate_idx,
-        });
-        let c = graph.add_node(Node::Module {
-            name: "c".into(),
-            crate_idx,
-        });
-        let d = graph.add_node(Node::Module {
-            name: "d".into(),
-            crate_idx,
-        });
-
-        graph.add_edge(crate_idx, a, Edge::Contains);
-        graph.add_edge(crate_idx, b, Edge::Contains);
-        graph.add_edge(crate_idx, c, Edge::Contains);
-        graph.add_edge(crate_idx, d, Edge::Contains);
-
-        // A depends on D, B depends on C
-        graph.add_edge(
-            a,
-            d,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            b,
-            c,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test", &["a", "b", "c", "d"])
+            .prod_dep("a", "d")
+            .prod_dep("b", "c");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
         let pos_c = labels.iter().position(|&l| l == "c").unwrap();
@@ -2023,47 +1316,12 @@ mod tests {
     #[test]
     fn test_barycenter_linear_chain_unchanged() {
         // Linear chain: A→B→C — should produce same order as alphabetical
-        let mut graph = ArcGraph::new();
-        let crate_idx = graph.add_node(Node::Crate {
-            name: "test".to_string(),
-            path: PathBuf::from("/test"),
-        });
-        let a = graph.add_node(Node::Module {
-            name: "a".into(),
-            crate_idx,
-        });
-        let b = graph.add_node(Node::Module {
-            name: "b".into(),
-            crate_idx,
-        });
-        let c = graph.add_node(Node::Module {
-            name: "c".into(),
-            crate_idx,
-        });
-
-        graph.add_edge(crate_idx, a, Edge::Contains);
-        graph.add_edge(crate_idx, b, Edge::Contains);
-        graph.add_edge(crate_idx, c, Edge::Contains);
-
-        graph.add_edge(
-            a,
-            b,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-        graph.add_edge(
-            b,
-            c,
-            Edge::ModuleDep {
-                locations: vec![],
-                context: crate::model::EdgeContext::production(),
-            },
-        );
-
-        let cycles: Vec<Cycle> = vec![];
-        let ir = build_layout(&graph, &cycles);
+        let mut b = TestGraphBuilder::new();
+        b.crate_with_modules("test", &["a", "b", "c"])
+            .prod_dep("a", "b")
+            .prod_dep("b", "c");
+        let (graph, _) = b.build();
+        let ir = build_layout(&graph, &[]);
 
         let labels: Vec<&str> = ir.items.iter().map(|i| i.label.as_str()).collect();
         let pos_a = labels.iter().position(|&l| l == "a").unwrap();

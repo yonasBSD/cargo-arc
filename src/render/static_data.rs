@@ -379,7 +379,7 @@ pub(super) fn render_script(
 mod tests {
     use super::super::positioning::{calculate_box_width, calculate_positions};
     use super::*;
-    use crate::layout::EdgeDirection;
+    use crate::layout::LayoutEdge;
     use crate::model::EdgeContext;
 
     // === format_source_locations_by_symbol Tests ===
@@ -700,19 +700,15 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![SourceLocation {
-                file: PathBuf::from("src/a.rs"),
-                line: 5,
-                symbols: vec!["MyStruct".to_string()],
-                module_path: String::new(),
-            }],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production()).with_source_locations(vec![
+                SourceLocation {
+                    file: PathBuf::from("src/a.rs"),
+                    line: 5,
+                    symbols: vec!["MyStruct".to_string()],
+                    module_path: String::new(),
+                },
+            ]),
         );
 
         let config = RenderConfig::default();
@@ -759,15 +755,11 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
+        ir.edges.push(LayoutEdge::new(
             a,
             b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
             EdgeContext::test(crate::model::TestKind::Unit),
-        );
+        ));
 
         let config = RenderConfig::default();
         let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
@@ -799,15 +791,8 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(a, b, EdgeContext::production()));
 
         let config = RenderConfig::default();
         let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
@@ -842,13 +827,8 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production()).with_source_locations(vec![
                 SourceLocation {
                     file: PathBuf::from("src/a.rs"),
                     line: 5,
@@ -861,8 +841,7 @@ mod tests {
                     symbols: vec!["Symbol1".to_string()],
                     module_path: String::new(),
                 },
-            ],
-            EdgeContext::production(),
+            ]),
         );
 
         let config = RenderConfig::default();
@@ -971,19 +950,15 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![SourceLocation {
-                file: PathBuf::from("src/a.rs"),
-                line: 5,
-                symbols: vec!["Test\"Quote".to_string()],
-                module_path: String::new(),
-            }],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production()).with_source_locations(vec![
+                SourceLocation {
+                    file: PathBuf::from("src/a.rs"),
+                    line: 5,
+                    symbols: vec!["Test\"Quote".to_string()],
+                    module_path: String::new(),
+                },
+            ]),
         );
 
         let config = RenderConfig::default();
@@ -1265,19 +1240,15 @@ mod tests {
             },
             "b".into(),
         );
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![SourceLocation {
-                file: PathBuf::from("src/a.rs"),
-                line: 5,
-                symbols: vec![],
-                module_path: String::new(),
-            }],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production()).with_source_locations(vec![
+                SourceLocation {
+                    file: PathBuf::from("src/a.rs"),
+                    line: 5,
+                    symbols: vec![],
+                    module_path: String::new(),
+                },
+            ]),
         );
         let config = RenderConfig::default();
         let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
@@ -1335,43 +1306,21 @@ mod tests {
             "m_c".into(),
         );
         // Cycle edges with cycle_ids=[0]
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            Some(crate::layout::CycleKind::Transitive),
-            vec![0],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Transitive, vec![0]),
         );
-        ir.add_edge(
-            b,
-            m_c,
-            EdgeDirection::Downward,
-            Some(crate::layout::CycleKind::Transitive),
-            vec![0],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(b, m_c, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Transitive, vec![0]),
         );
-        ir.add_edge(
-            m_c,
-            a,
-            EdgeDirection::Upward,
-            Some(crate::layout::CycleKind::Transitive),
-            vec![0],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(m_c, a, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Transitive, vec![0]),
         );
         // Non-cycle edge (no cycle_ids)
-        ir.add_edge(
-            a,
-            m_c,
-            EdgeDirection::Downward,
-            None,
-            vec![],
-            vec![],
-            EdgeContext::production(),
-        );
+        ir.edges
+            .push(LayoutEdge::new(a, m_c, EdgeContext::production()));
 
         let config = RenderConfig::default();
         let positioned = calculate_positions(&ir, &config, calculate_box_width(&ir));
@@ -1451,44 +1400,24 @@ mod tests {
             "d".into(),
         );
         // B→C in cycle 0 only
-        ir.add_edge(
-            b,
-            c,
-            EdgeDirection::Downward,
-            Some(crate::layout::CycleKind::Direct),
-            vec![0],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(b, c, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Direct, vec![0]),
         );
         // C→B in cycle 0 only
-        ir.add_edge(
-            c,
-            b,
-            EdgeDirection::Upward,
-            Some(crate::layout::CycleKind::Direct),
-            vec![0],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(c, b, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Direct, vec![0]),
         );
         // B→D in cycle 1 only
-        ir.add_edge(
-            b,
-            d,
-            EdgeDirection::Downward,
-            Some(crate::layout::CycleKind::Direct),
-            vec![1],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(b, d, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Direct, vec![1]),
         );
         // D→B in cycle 1 only
-        ir.add_edge(
-            d,
-            b,
-            EdgeDirection::Upward,
-            Some(crate::layout::CycleKind::Direct),
-            vec![1],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(d, b, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Direct, vec![1]),
         );
 
         let config = RenderConfig::default();
@@ -1556,14 +1485,9 @@ mod tests {
             "b".into(),
         );
         // Edge A→B belongs to both cycle 0 and cycle 2
-        ir.add_edge(
-            a,
-            b,
-            EdgeDirection::Downward,
-            Some(crate::layout::CycleKind::Direct),
-            vec![0, 2],
-            vec![],
-            EdgeContext::production(),
+        ir.edges.push(
+            LayoutEdge::new(a, b, EdgeContext::production())
+                .with_cycle(crate::layout::CycleKind::Direct, vec![0, 2]),
         );
 
         let config = RenderConfig::default();

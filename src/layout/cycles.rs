@@ -12,6 +12,18 @@ pub struct Cycle {
     pub path: Vec<NodeIndex>,
 }
 
+impl Cycle {
+    /// Iterate over the directed edges of this cycle.
+    ///
+    /// For a cycle `[A, B, C]` this yields `(A,B), (B,C), (C,A)`.
+    pub fn edges(&self) -> impl Iterator<Item = (NodeIndex, NodeIndex)> + '_ {
+        self.path
+            .windows(2)
+            .map(|w| (w[0], w[1]))
+            .chain(std::iter::once((*self.path.last().unwrap(), self.path[0])))
+    }
+}
+
 /// Read-only graph data for one iteration of Johnson's least-vertex optimization.
 struct JohnsonGraph<'a> {
     graph: &'a petgraph::graph::DiGraph<NodeIndex, ()>,
