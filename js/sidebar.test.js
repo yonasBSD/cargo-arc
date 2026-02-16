@@ -1097,8 +1097,8 @@ describe("SidebarLogic", () => {
       expect(html).toContain("crate_b");
     });
 
-    test("multi-cycle arc: shows grouped cycles header", () => {
-      // Arc B-C belongs to cycle 0 AND cycle 1
+    // Helper to set up multi-cycle test data (arc B-C in cycles 0 and 1)
+    function setupMultiCycleData() {
       globalThis.STATIC_DATA.arcs["B-C"] = {
         from: "B", to: "C", cycleIds: [0, 1], usages: [
           { symbol: "sym2", modulePath: null, locations: [{ file: "b.rs", line: 1 }] }
@@ -1118,10 +1118,18 @@ describe("SidebarLogic", () => {
         ]
       };
       globalThis.STATIC_DATA.nodes.D = { type: "module", name: "mod_d", parent: null };
+    }
 
+    test("multi-cycle arc: shows grouped cycles header", () => {
+      setupMultiCycleData();
       const html = SidebarLogic.buildContent("B-C");
       // Should show "Cycles (2)" header for multi-cycle
       expect(html).toContain("Cycles (2)");
+      // Header has actions wrapper and collapse-all
+      expect(html).toContain("sidebar-header-actions");
+      expect(html).toContain("sidebar-collapse-all");
+      // Old cycle-group-header class is gone
+      expect(html).not.toContain("sidebar-cycle-group-header");
       // Should contain arcs from both cycles
       expect(html).toContain("a.rs");
       expect(html).toContain("b.rs");
@@ -1129,11 +1137,78 @@ describe("SidebarLogic", () => {
       expect(html).toContain("d.rs");
     });
 
+    test("multi-cycle: cycle groups are collapsible L1", () => {
+      setupMultiCycleData();
+      const html = SidebarLogic.buildContent("B-C");
+      // Cycle group headers should contain "Cycle N" text as sidebar-symbol-name
+      expect(html).toContain("Cycle 1");
+      expect(html).toContain("Cycle 2");
+      // All sidebar-symbol divs should be collapsed
+      const symbolDivs = html.match(/<div class="sidebar-symbol"/g) || [];
+      const collapsedDivs = html.match(/<div class="sidebar-symbol" data-collapsed="true"/g) || [];
+      expect(symbolDivs.length).toBeGreaterThan(0);
+      expect(collapsedDivs.length).toBe(symbolDivs.length);
+    });
+
+    test("multi-cycle: arcs within cycles are collapsible L2", () => {
+      setupMultiCycleData();
+      const html = SidebarLogic.buildContent("B-C");
+      // All sidebar-locations should be hidden
+      const locsDivs = html.match(/<div class="sidebar-locations"/g) || [];
+      const hiddenDivs = html.match(/<div class="sidebar-locations" style="display:none"/g) || [];
+      expect(locsDivs.length).toBeGreaterThan(0);
+      expect(hiddenDivs.length).toBe(locsDivs.length);
+      // Toggle icon should be ▸ (collapsed) not ▾ (expanded)
+      expect(html).toContain("&#x25B8;");
+      expect(html).not.toContain("&#x25BE;");
+    });
+
+    test("multi-cycle: collapse-all button shows +", () => {
+      setupMultiCycleData();
+      const html = SidebarLogic.buildContent("B-C");
+      expect(html).toContain('>+</button>');
+    });
+
+    test("multi-cycle: cycle group header shows ref count", () => {
+      setupMultiCycleData();
+      const html = SidebarLogic.buildContent("B-C");
+      // Each cycle group header should have a sidebar-ref-count badge
+      expect(html).toContain('sidebar-ref-count');
+    });
+
     test("single-cycle arc: shows original 'Cycle' header", () => {
       const html = SidebarLogic.buildContent("A-B");
       expect(html).toContain("Cycle (");
       expect(html).toContain("3 edges");
       expect(html).not.toContain("Cycles (");
+    });
+
+    test("single-cycle: header has collapse-all button and header-actions", () => {
+      const html = SidebarLogic.buildContent("A-B");
+      expect(html).toContain("sidebar-header-actions");
+      expect(html).toContain("sidebar-collapse-all");
+    });
+
+    test("single-cycle: arcs start collapsed", () => {
+      const html = SidebarLogic.buildContent("A-B");
+      // All sidebar-symbol divs should have data-collapsed="true"
+      const symbolDivs = html.match(/<div class="sidebar-symbol"/g) || [];
+      const collapsedDivs = html.match(/<div class="sidebar-symbol" data-collapsed="true"/g) || [];
+      expect(symbolDivs.length).toBeGreaterThan(0);
+      expect(collapsedDivs.length).toBe(symbolDivs.length);
+      // All sidebar-locations should have display:none
+      const locsDivs = html.match(/<div class="sidebar-locations"/g) || [];
+      const hiddenDivs = html.match(/<div class="sidebar-locations" style="display:none"/g) || [];
+      expect(locsDivs.length).toBeGreaterThan(0);
+      expect(hiddenDivs.length).toBe(locsDivs.length);
+      // Toggle icon should be ▸ (collapsed) not ▾ (expanded)
+      expect(html).toContain("&#x25B8;");
+      expect(html).not.toContain("&#x25BE;");
+    });
+
+    test("single-cycle: collapse-all button shows +", () => {
+      const html = SidebarLogic.buildContent("A-B");
+      expect(html).toContain('>+</button>');
     });
   });
 });

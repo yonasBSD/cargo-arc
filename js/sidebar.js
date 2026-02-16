@@ -395,7 +395,10 @@ const SidebarLogic = {
 
       let html = `<div class="sidebar-header">`;
       html += `<span class="sidebar-title">Cycle (${cycle.arcs.length} edges)</span>`;
+      html += `<div class="sidebar-header-actions">`;
+      html += `<button class="sidebar-collapse-all">+</button>`;
       html += `<button class="sidebar-close">&#x2715;</button>`;
+      html += `</div>`;
       html += `</div>`;
 
       html += `<div class="sidebar-content">`;
@@ -407,15 +410,15 @@ const SidebarLogic = {
         const toName = toNode ? toNode.name : info.arc.to;
 
         html += `<div class="sidebar-usage-group${isSelected ? ' sidebar-selected-arc' : ''}">`;
-        html += `<div class="sidebar-symbol">`;
-        html += `<span class="sidebar-toggle">&#x25BE;</span>`;
+        html += `<div class="sidebar-symbol" data-collapsed="true">`;
+        html += `<span class="sidebar-toggle">&#x25B8;</span>`;
         html += `<span class="sidebar-symbol-name">${fromName}</span>`;
         html += `<span class="sidebar-arrow">&#x2192;</span>`;
         html += `<span class="sidebar-symbol-name">${toName}</span>`;
         html += `<span class="sidebar-ref-count">${info.count}</span>`;
         html += `</div>`;
 
-        html += `<div class="sidebar-locations">`;
+        html += `<div class="sidebar-locations" style="display:none">`;
         for (const group of info.usages) {
           for (const loc of group.locations) {
             html += `<div class="sidebar-location">${loc.file}<span class="sidebar-line-badge">:${loc.line}</span></div>`;
@@ -432,14 +435,16 @@ const SidebarLogic = {
       return html;
     }
 
-    // Multi-cycle: grouped layout
+    // Multi-cycle: grouped layout with collapsible L1 (cycle groups) and L2 (arcs)
     let totalEdges = 0;
     let totalLocs = 0;
     let contentHtml = '';
 
+    let cycleNum = 0;
     for (const cid of cycleIds) {
       const cycle = STATIC_DATA.cycles[cid];
       if (!cycle) continue;
+      cycleNum++;
       totalEdges += cycle.arcs.length;
 
       const arcInfos = cycle.arcs.map(arcId => {
@@ -450,26 +455,36 @@ const SidebarLogic = {
       });
       arcInfos.sort((a, b) => a.count - b.count);
 
-      contentHtml += `<div class="sidebar-cycle-group">`;
-      contentHtml += `<div class="sidebar-cycle-group-header">Cycle ${cid + 1} (${cycle.arcs.length} edges)</div>`;
+      const cycleLocs = arcInfos.reduce((sum, info) => sum + info.count, 0);
+      totalLocs += cycleLocs;
+
+      // L1: Cycle group as collapsible sidebar-symbol
+      contentHtml += `<div class="sidebar-usage-group">`;
+      contentHtml += `<div class="sidebar-symbol" data-collapsed="true">`;
+      contentHtml += `<span class="sidebar-toggle">&#x25B8;</span>`;
+      contentHtml += `<span class="sidebar-symbol-name">Cycle ${cycleNum} (${cycle.arcs.length} edges)</span>`;
+      contentHtml += `<span class="sidebar-ref-count">${cycleLocs}</span>`;
+      contentHtml += `</div>`;
+
+      contentHtml += `<div class="sidebar-locations" style="display:none">`;
       for (const info of arcInfos) {
         const isSelected = info.arcId === selectedArcId;
         const fromNode = StaticData.getNode(info.arc.from);
         const toNode = StaticData.getNode(info.arc.to);
         const fromName = fromNode ? fromNode.name : info.arc.from;
         const toName = toNode ? toNode.name : info.arc.to;
-        totalLocs += info.count;
 
+        // L2: Individual arc as collapsible sidebar-symbol
         contentHtml += `<div class="sidebar-usage-group${isSelected ? ' sidebar-selected-arc' : ''}">`;
-        contentHtml += `<div class="sidebar-symbol">`;
-        contentHtml += `<span class="sidebar-toggle">&#x25BE;</span>`;
+        contentHtml += `<div class="sidebar-symbol" data-collapsed="true">`;
+        contentHtml += `<span class="sidebar-toggle">&#x25B8;</span>`;
         contentHtml += `<span class="sidebar-symbol-name">${fromName}</span>`;
         contentHtml += `<span class="sidebar-arrow">&#x2192;</span>`;
         contentHtml += `<span class="sidebar-symbol-name">${toName}</span>`;
         contentHtml += `<span class="sidebar-ref-count">${info.count}</span>`;
         contentHtml += `</div>`;
 
-        contentHtml += `<div class="sidebar-locations">`;
+        contentHtml += `<div class="sidebar-locations" style="display:none">`;
         for (const group of info.usages) {
           for (const loc of group.locations) {
             contentHtml += `<div class="sidebar-location">${loc.file}<span class="sidebar-line-badge">:${loc.line}</span></div>`;
@@ -479,11 +494,15 @@ const SidebarLogic = {
         contentHtml += `</div>`;
       }
       contentHtml += `</div>`;
+      contentHtml += `</div>`;
     }
 
     let html = `<div class="sidebar-header">`;
     html += `<span class="sidebar-title">Cycles (${cycleIds.length})</span>`;
+    html += `<div class="sidebar-header-actions">`;
+    html += `<button class="sidebar-collapse-all">+</button>`;
     html += `<button class="sidebar-close">&#x2715;</button>`;
+    html += `</div>`;
     html += `</div>`;
     html += `<div class="sidebar-content">${contentHtml}</div>`;
     html += `<div class="sidebar-footer">${totalLocs} references \u00b7 ${totalEdges} edges</div>`;
