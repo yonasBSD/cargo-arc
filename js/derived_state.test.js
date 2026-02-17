@@ -769,9 +769,9 @@ describe("DerivedState", () => {
       expect(result.nodeHighlights.get("A").cssClass).toBe("dependentNode");
     });
 
-    test("test arc gets visual highlight but no node role assignment", () => {
+    test("test arc gets visual highlight and marks endpoint nodes", () => {
       // A single test arc: when highlighted, it should appear in arcHighlights
-      // but must NOT mark endpoint nodes
+      // AND mark endpoint nodes (non-production arcs highlight endpoints too)
       const testData = {
         nodes: {
           X: { type: "module", parent: null, x: 20, y: 60, width: 100, height: 20, hasChildren: false },
@@ -801,8 +801,9 @@ describe("DerivedState", () => {
       expect(result.nodeHighlights.get("X").role).toBe("current");
       // Test arc is visually highlighted
       expect(result.arcHighlights.has("X-Y")).toBe(true);
-      // Y should NOT get a node role from the test arc
-      expect(result.nodeHighlights.has("Y")).toBe(false);
+      // Y gets endpoint role from the test arc (non-production arcs mark endpoints)
+      expect(result.nodeHighlights.get("Y").role).toBe("dependency");
+      expect(result.nodeHighlights.get("Y").cssClass).toBe("depNode");
     });
 
     test("expanded parent: unconnected children not in nodeHighlights", () => {

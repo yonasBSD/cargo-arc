@@ -338,8 +338,13 @@ const DerivedState = {
     return descs;
   },
 
-  /** @private Process arc descriptors: compute highlights, shadows, endpoint nodes. */
+  /** @private Process arc descriptors: compute highlights, shadows, endpoint nodes.
+   *  Production arcs are sorted first so their node roles (dependent/dependency)
+   *  are established before non-production arcs — _markEndpointNodes only sets
+   *  roles that are unset or group-member, so production wins on conflict.
+   */
   _processArcDescriptors(descriptors, positions, ctx, result) {
+    descriptors.sort((a, b) => (a.isNonProduction ? 1 : 0) - (b.isNonProduction ? 1 : 0));
     for (const desc of descriptors) {
       const fromPos = positions.get(desc.fromId);
       const toPos = positions.get(desc.toId);
@@ -358,9 +363,7 @@ const DerivedState = {
       result.arcHighlights.set(desc.key, arcHighlight);
       if (shadow) result.shadowData.set(desc.key, shadow);
       if (!desc.isVirtual) result.promotedHitareas.add(desc.key);
-      if (!desc.isNonProduction) {
-        this._markEndpointNodes(desc.fromId, desc.toId, desc.fromInSet, desc.toInSet, result.nodeHighlights);
-      }
+      this._markEndpointNodes(desc.fromId, desc.toId, desc.fromInSet, desc.toInSet, result.nodeHighlights);
     }
   },
 
