@@ -1,5 +1,7 @@
 # cargo-arc
 
+[![CI](https://github.com/seflue/cargo-arc/actions/workflows/ci.yml/badge.svg)](https://github.com/seflue/cargo-arc/actions/workflows/ci.yml)
+
 Generates a collapsible arc diagram of your Cargo workspace as SVG.
 You get a tree of your crates and their modules, connected by arcs
 that trace `use` dependencies between them.
