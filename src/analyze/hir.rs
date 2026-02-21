@@ -14,7 +14,7 @@ pub struct FeatureConfig {
 
 #[cfg(feature = "hir")]
 use {
-    super::use_parser::parse_workspace_dependencies_from_source,
+    super::use_parser::{ResolutionContext, parse_workspace_dependencies_from_source},
     crate::model::normalize_crate_name,
     crate::model::{
         CrateExportMap, CrateInfo, DependencyRef, ModuleInfo, ModulePathMap, ModuleTree,
@@ -351,15 +351,15 @@ fn extract_module_dependencies(
         Err(_) => return Vec::new(),
     };
 
-    parse_workspace_dependencies_from_source(
-        &source_text,
-        crate_name,
+    let res_ctx = ResolutionContext {
+        current_crate: crate_name,
         workspace_crates,
-        &source_file,
+        source_file: &source_file,
         all_module_paths,
         crate_exports,
         current_module_path,
-    )
+    };
+    parse_workspace_dependencies_from_source(&source_text, &res_ctx)
 }
 
 #[cfg(test)]

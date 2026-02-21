@@ -9,6 +9,16 @@ use std::path::Path;
 use syn::UseTree;
 use syn::visit::Visit;
 
+/// Invariant context for dependency resolution within a single source file.
+pub(crate) struct ResolutionContext<'a> {
+    pub(crate) current_crate: &'a str,
+    pub(crate) workspace_crates: &'a WorkspaceCrates,
+    pub(crate) source_file: &'a Path,
+    pub(crate) all_module_paths: &'a ModulePathMap,
+    pub(crate) crate_exports: &'a CrateExportMap,
+    pub(crate) current_module_path: &'a str,
+}
+
 /// Check whether attributes contain `#[cfg(test)]`, including compound
 /// expressions like `#[cfg(all(test, feature = "..."))]`.
 pub(crate) fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
@@ -234,11 +244,9 @@ fn extract_item_from_parts(parts: &[&str], index: usize) -> Option<String> {
 
 /// Parse crate-local imports: `use crate::module[::item]`
 fn parse_crate_local_import(
+    ctx: &ResolutionContext,
     path: &str,
-    current_crate: &str,
-    source_file: &Path,
     line_num: usize,
-    all_module_paths: &ModulePathMap,
     context: &EdgeContext,
 ) -> Option<DependencyRef> {
     let after_crate = path.strip_prefix("crate::")?;
@@ -250,16 +258,17 @@ fn parse_crate_local_import(
     }
 
     let empty_set = HashSet::new();
-    let module_paths = all_module_paths
-        .get(&normalize_crate_name(current_crate))
+    let module_paths = ctx
+        .all_module_paths
+        .get(&normalize_crate_name(ctx.current_crate))
         .unwrap_or(&empty_set);
     let (target_module, prefix_len) = find_longest_module_prefix(&parts, module_paths);
 
     Some(DependencyRef {
-        target_crate: normalize_crate_name(current_crate),
+        target_crate: normalize_crate_name(ctx.current_crate),
         target_module,
         target_item: extract_item_from_parts(&parts, prefix_len),
-        source_file: source_file.to_path_buf(),
+        source_file: ctx.source_file.to_path_buf(),
         line: line_num,
         context: context.clone(),
     })
@@ -268,19 +277,16 @@ fn parse_crate_local_import(
 /// Parse bare module imports: `use cli::Args` where `cli` is a known module of the current crate.
 /// Rust 2018+ resolves bare paths from any file, not just the crate root.
 ///
-/// `current_module_path` is the relative module path of the file containing this import
+/// `ctx.current_module_path` is the relative module path of the file containing this import
 /// (e.g. `"render"` for `render/mod.rs`, `""` for crate root). When non-empty, child modules
 /// are checked first: `use css::X` in `render/mod.rs` resolves to `render::css` before
 /// trying top-level `css`. This matches Rust 2018+/2024 semantics where bare paths in
 /// non-root modules refer to children, not siblings.
 fn parse_bare_module_import(
+    ctx: &ResolutionContext,
     path: &str,
-    current_crate: &str,
-    source_file: &Path,
     line_num: usize,
-    all_module_paths: &ModulePathMap,
     context: &EdgeContext,
-    current_module_path: &str,
 ) -> Option<DependencyRef> {
     let parts: Vec<&str> = path.split("::").collect();
     let first = parts.first()?.trim_end_matches('{').trim();
@@ -289,20 +295,21 @@ fn parse_bare_module_import(
     }
 
     let empty_set = HashSet::new();
-    let module_paths = all_module_paths
-        .get(&normalize_crate_name(current_crate))
+    let module_paths = ctx
+        .all_module_paths
+        .get(&normalize_crate_name(ctx.current_crate))
         .unwrap_or(&empty_set);
 
     // Child-module has priority (Rust 2018+/2024 semantics:
     // bare `use foo::X` in non-root module means child, not sibling/top-level)
-    let is_child = !current_module_path.is_empty()
-        && module_paths.contains(&format!("{current_module_path}::{first}"));
+    let is_child = !ctx.current_module_path.is_empty()
+        && module_paths.contains(&format!("{}::{first}", ctx.current_module_path));
 
     if !is_child && !module_paths.contains(first) {
         return None;
     }
 
-    let prefix_segments: Vec<&str> = current_module_path.split("::").collect();
+    let prefix_segments: Vec<&str> = ctx.current_module_path.split("::").collect();
     let effective_parts: Vec<&str> = if is_child {
         prefix_segments
             .iter()
@@ -316,10 +323,10 @@ fn parse_bare_module_import(
     let (target_module, prefix_len) = find_longest_module_prefix(&effective_parts, module_paths);
 
     Some(DependencyRef {
-        target_crate: normalize_crate_name(current_crate),
+        target_crate: normalize_crate_name(ctx.current_crate),
         target_module,
         target_item: extract_item_from_parts(&effective_parts, prefix_len),
-        source_file: source_file.to_path_buf(),
+        source_file: ctx.source_file.to_path_buf(),
         line: line_num,
         context: context.clone(),
     })
@@ -327,18 +334,15 @@ fn parse_bare_module_import(
 
 /// Parse workspace crate imports: `use other_crate::module[::item]`
 fn parse_workspace_import(
+    ctx: &ResolutionContext,
     path: &str,
-    workspace_crates: &WorkspaceCrates,
-    source_file: &Path,
     line_num: usize,
-    all_module_paths: &ModulePathMap,
-    crate_exports: &CrateExportMap,
     context: &EdgeContext,
 ) -> Option<DependencyRef> {
     let parts: Vec<&str> = path.split("::").collect();
     let crate_name = parts.first()?.trim();
 
-    if !workspace_crates.contains(crate_name) || parts.len() < 2 {
+    if !ctx.workspace_crates.contains(crate_name) || parts.len() < 2 {
         return None;
     }
 
@@ -349,7 +353,8 @@ fn parse_workspace_import(
 
     let empty_set = HashSet::new();
     let target_crate_name = normalize_crate_name(crate_name);
-    let module_paths = all_module_paths
+    let module_paths = ctx
+        .all_module_paths
         .get(&target_crate_name)
         .unwrap_or(&empty_set);
     let (target_module, prefix_len) = find_longest_module_prefix(&parts[1..], module_paths);
@@ -358,7 +363,8 @@ fn parse_workspace_import(
     // and the first segment after the crate name is a known export, treat it as
     // an entry-point dependency (target_module = "").
     if !module_paths.contains(&target_module)
-        && crate_exports
+        && ctx
+            .crate_exports
             .get(&target_crate_name)
             .is_some_and(|e| e.contains(module_segment))
     {
@@ -366,7 +372,7 @@ fn parse_workspace_import(
             target_crate: crate_name.to_string(),
             target_module: String::new(),
             target_item: Some(module_segment.to_string()),
-            source_file: source_file.to_path_buf(),
+            source_file: ctx.source_file.to_path_buf(),
             line: line_num,
             context: context.clone(),
         });
@@ -376,7 +382,7 @@ fn parse_workspace_import(
         target_crate: crate_name.to_string(),
         target_module,
         target_item: extract_item_from_parts(&parts, 1 + prefix_len),
-        source_file: source_file.to_path_buf(),
+        source_file: ctx.source_file.to_path_buf(),
         line: line_num,
         context: context.clone(),
     })
@@ -441,96 +447,45 @@ fn resolve_relative_path(
 
 /// Resolve a single use path through the resolution chain: crate-local → bare module → workspace.
 /// Handles glob paths (`crate::module::*`) by stripping the glob and setting target_item = "*".
-#[allow(clippy::too_many_arguments)]
 fn resolve_single_path(
+    ctx: &ResolutionContext,
     path: &str,
     line_num: usize,
-    current_crate: &str,
-    workspace_crates: &WorkspaceCrates,
-    source_file: &Path,
-    all_module_paths: &ModulePathMap,
-    crate_exports: &CrateExportMap,
     context: &EdgeContext,
-    current_module_path: &str,
     inline_depth: usize,
 ) -> Option<DependencyRef> {
     // Resolve super::/self:: to absolute crate-local path, then route to crate:: handler
-    if let Some(resolved) = resolve_relative_path(path, current_module_path, inline_depth) {
+    if let Some(resolved) = resolve_relative_path(path, ctx.current_module_path, inline_depth) {
         let as_crate_path = format!("crate::{resolved}");
-        return parse_crate_local_import(
-            &as_crate_path,
-            current_crate,
-            source_file,
-            line_num,
-            all_module_paths,
-            context,
-        );
+        return parse_crate_local_import(ctx, &as_crate_path, line_num, context);
     }
 
     // Handle glob: `crate::module::*` → resolve base, set target_item = "*"
     if let Some(base) = path.strip_suffix("::*") {
-        let mut dep = resolve_single_path(
-            base,
-            line_num,
-            current_crate,
-            workspace_crates,
-            source_file,
-            all_module_paths,
-            crate_exports,
-            context,
-            current_module_path,
-            inline_depth,
-        )?;
+        let mut dep = resolve_single_path(ctx, base, line_num, context, inline_depth)?;
         // The base resolved as a module — push "*" as the item
         dep.target_item = Some("*".to_string());
         return Some(dep);
     }
 
-    parse_crate_local_import(
-        path,
-        current_crate,
-        source_file,
-        line_num,
-        all_module_paths,
-        context,
-    )
-    .or_else(|| {
-        parse_bare_module_import(
-            path,
-            current_crate,
-            source_file,
-            line_num,
-            all_module_paths,
-            context,
-            current_module_path,
-        )
-    })
-    .or_else(|| {
-        parse_workspace_import(
-            path,
-            workspace_crates,
-            source_file,
-            line_num,
-            all_module_paths,
-            crate_exports,
-            context,
-        )
-    })
-    .or_else(|| {
-        // Bare workspace crate name (e.g. from `use other_crate::{Foo}` → path = "other_crate")
-        if !path.contains("::") && workspace_crates.contains(path) {
-            Some(DependencyRef {
-                target_crate: path.to_string(),
-                target_module: String::new(),
-                target_item: None,
-                source_file: source_file.to_path_buf(),
-                line: line_num,
-                context: context.clone(),
-            })
-        } else {
-            None
-        }
-    })
+    parse_crate_local_import(ctx, path, line_num, context)
+        .or_else(|| parse_bare_module_import(ctx, path, line_num, context))
+        .or_else(|| parse_workspace_import(ctx, path, line_num, context))
+        .or_else(|| {
+            // Bare workspace crate name (e.g. from `use other_crate::{Foo}` → path = "other_crate")
+            if !path.contains("::") && ctx.workspace_crates.contains(path) {
+                Some(DependencyRef {
+                    target_crate: path.to_string(),
+                    target_module: String::new(),
+                    target_item: None,
+                    source_file: ctx.source_file.to_path_buf(),
+                    line: line_num,
+                    context: context.clone(),
+                })
+            } else {
+                None
+            }
+        })
 }
 
 /// Parse syn-based use items, extracting workspace-relevant dependencies.
@@ -542,12 +497,7 @@ fn resolve_single_path(
 /// Deduplicates by full_target() to keep distinct symbols but avoid duplicates.
 pub(crate) fn parse_workspace_dependencies(
     use_items: &[(syn::ItemUse, EdgeContext, usize)],
-    current_crate: &str,
-    workspace_crates: &WorkspaceCrates,
-    source_file: &Path,
-    all_module_paths: &ModulePathMap,
-    crate_exports: &CrateExportMap,
-    current_module_path: &str,
+    ctx: &ResolutionContext,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
     let mut seen_targets: HashMap<(String, DependencyKind), usize> = HashMap::new();
@@ -557,18 +507,7 @@ pub(crate) fn parse_workspace_dependencies(
         let paths = resolve_use_tree(&item.tree, "");
 
         for path in paths {
-            if let Some(dep) = resolve_single_path(
-                &path,
-                line_num,
-                current_crate,
-                workspace_crates,
-                source_file,
-                all_module_paths,
-                crate_exports,
-                context,
-                current_module_path,
-                *inline_depth,
-            ) {
+            if let Some(dep) = resolve_single_path(ctx, &path, line_num, context, *inline_depth) {
                 DependencyRef::dedup_push(&mut deps, &mut seen_targets, dep);
             }
         }
@@ -584,29 +523,13 @@ pub(crate) fn parse_workspace_dependencies(
 /// Deduplicates by `full_target()` — same strategy as `parse_workspace_dependencies()`.
 pub(crate) fn parse_path_ref_dependencies(
     paths: &[(String, usize, EdgeContext, usize)],
-    current_crate: &str,
-    workspace_crates: &WorkspaceCrates,
-    source_file: &Path,
-    all_module_paths: &ModulePathMap,
-    crate_exports: &CrateExportMap,
-    current_module_path: &str,
+    ctx: &ResolutionContext,
 ) -> Vec<DependencyRef> {
     let mut deps: Vec<DependencyRef> = Vec::new();
     let mut seen_targets: HashMap<(String, DependencyKind), usize> = HashMap::new();
 
     for (path, line_num, context, inline_depth) in paths {
-        if let Some(dep) = resolve_single_path(
-            path,
-            *line_num,
-            current_crate,
-            workspace_crates,
-            source_file,
-            all_module_paths,
-            crate_exports,
-            context,
-            current_module_path,
-            *inline_depth,
-        ) {
+        if let Some(dep) = resolve_single_path(ctx, path, *line_num, context, *inline_depth) {
             DependencyRef::dedup_push(&mut deps, &mut seen_targets, dep);
         }
     }
@@ -619,27 +542,14 @@ pub(crate) fn parse_path_ref_dependencies(
 #[cfg(feature = "hir")]
 pub(crate) fn parse_workspace_dependencies_from_source(
     source: &str,
-    current_crate: &str,
-    workspace_crates: &WorkspaceCrates,
-    source_file: &Path,
-    all_module_paths: &ModulePathMap,
-    crate_exports: &CrateExportMap,
-    current_module_path: &str,
+    ctx: &ResolutionContext,
 ) -> Vec<DependencyRef> {
     let syntax = match syn::parse_file(source) {
         Ok(f) => f,
         Err(_) => return Vec::new(),
     };
     let uses = collect_all_use_items(&syntax, EdgeContext::production());
-    parse_workspace_dependencies(
-        &uses,
-        current_crate,
-        workspace_crates,
-        source_file,
-        all_module_paths,
-        crate_exports,
-        current_module_path,
-    )
+    parse_workspace_dependencies(&uses, ctx)
 }
 
 #[cfg(test)]
@@ -667,15 +577,15 @@ mod tests {
             let mp = ModulePathMap::default();
             let path = Path::new("src/cli.rs");
             let uses = parse_test_uses("use crate::graph::build;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "my_crate");
@@ -689,15 +599,15 @@ mod tests {
             let mp = ModulePathMap::default();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use crate::graph;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "my_crate");
@@ -712,15 +622,15 @@ mod tests {
             let mp = ModulePathMap::default();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::utils;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "other_crate");
@@ -733,15 +643,15 @@ mod tests {
             let mp = ModulePathMap::default();
             let path = Path::new("src/main.rs");
             let uses = parse_test_uses("use my_lib::feature;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "app",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "app",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "my_lib");
@@ -759,15 +669,15 @@ mod tests {
             .collect();
             let path = Path::new("src/render/mod.rs");
             let uses = parse_test_uses("use self::helper;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "render",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "render",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1, "self:: should resolve: {deps:?}");
             assert_eq!(deps[0].target_crate, "my_crate");
             assert_eq!(deps[0].target_module, "render::helper");
@@ -784,15 +694,15 @@ mod tests {
             .collect();
             let path = Path::new("src/sub/mod.rs");
             let uses = parse_test_uses("use super::parent;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "sub",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "sub",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1, "super:: should resolve: {deps:?}");
             assert_eq!(deps[0].target_crate, "my_crate");
             assert_eq!(deps[0].target_module, "parent");
@@ -804,15 +714,15 @@ mod tests {
             let mp = ModulePathMap::default();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use serde::Serialize;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert!(deps.is_empty(), "external crate imports should be filtered");
         }
 
@@ -822,15 +732,15 @@ mod tests {
             let mp = ModulePathMap::default();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use std::collections::HashMap;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert!(deps.is_empty(), "std imports should be filtered");
         }
     }
@@ -895,15 +805,15 @@ mod tests {
             .collect();
             let path = Path::new("src/cli.rs");
             let uses = parse_test_uses("use crate::analyze::use_parser::normalize;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "analyze::use_parser");
@@ -921,15 +831,15 @@ mod tests {
             .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::foo::bar::Baz;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "foo::bar");
@@ -947,15 +857,15 @@ mod tests {
             .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::sub::deep::Item;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "sub::deep");
@@ -968,15 +878,15 @@ mod tests {
             let mp = ModulePathMap::default();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::foo::bar::Baz;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "foo");
@@ -996,15 +906,15 @@ mod tests {
             let uses = parse_test_uses(
                 "use crate::analyze::use_parser::{normalize, is_workspace_member};",
             );
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
             assert_eq!(deps[0].target_module, "analyze::use_parser");
             assert!(
@@ -1034,15 +944,15 @@ use std::collections::HashMap;
                 .collect();
             let mp = ModulePathMap::default();
             let uses = parse_test_uses(source);
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                Path::new("src/lib.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
 
             assert_eq!(deps.len(), 2, "found: {:?}", deps);
             assert!(
@@ -1065,15 +975,15 @@ use crate::graph;
             let ws = WorkspaceCrates::default();
             let mp = ModulePathMap::default();
             let uses = parse_test_uses(source);
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                Path::new("src/cli.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/cli.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
 
             assert_eq!(deps.len(), 3, "should keep distinct symbols: {:?}", deps);
             assert!(
@@ -1093,15 +1003,15 @@ use crate::graph;
             let mp = ModulePathMap::default();
             let path = Path::new("src/cli.rs");
             let uses = parse_test_uses("use crate::graph::{Node, Edge};");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
             assert!(
                 deps.iter()
@@ -1119,15 +1029,15 @@ use crate::graph;
             let mp = ModulePathMap::default();
             let path = Path::new("src/cli.rs");
             let uses = parse_test_uses("use crate::analyze::*;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
             assert_eq!(deps[0].target_item, Some("*".to_string()));
             assert_eq!(deps[0].target_module, "analyze");
@@ -1156,15 +1066,15 @@ use serde::Serialize;
             .into_iter()
             .collect();
             let uses = parse_test_uses(source);
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                Path::new("src/lib.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
 
             // Expected: 6 DependencyRefs
             // - cli::Args, cli::Cargo, cli::run (bare module, pub use multi)
@@ -1226,15 +1136,15 @@ use serde::Serialize;
             let mp: ModulePathMap = [("my_crate".to_string(), HashSet::from(["cli".into()]))]
                 .into_iter()
                 .collect();
-            let dep = parse_bare_module_import(
-                "cli::Args",
-                "my_crate",
-                Path::new("src/lib.rs"),
-                1,
-                &mp,
-                &EdgeContext::production(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &WorkspaceCrates::default(),
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let dep = parse_bare_module_import(&ctx, "cli::Args", 1, &EdgeContext::production());
             let dep = dep.expect("should parse bare module import");
             assert_eq!(dep.target_crate, "my_crate");
             assert_eq!(dep.target_module, "cli");
@@ -1246,15 +1156,16 @@ use serde::Serialize;
             let mp: ModulePathMap = [("my_crate".to_string(), HashSet::from(["cli".into()]))]
                 .into_iter()
                 .collect();
-            let dep = parse_bare_module_import(
-                "serde::Serialize",
-                "my_crate",
-                Path::new("src/lib.rs"),
-                1,
-                &mp,
-                &EdgeContext::production(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &WorkspaceCrates::default(),
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let dep =
+                parse_bare_module_import(&ctx, "serde::Serialize", 1, &EdgeContext::production());
             assert!(dep.is_none(), "external crate should not match");
         }
 
@@ -1266,14 +1177,19 @@ use serde::Serialize;
             )]
             .into_iter()
             .collect();
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &WorkspaceCrates::default(),
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
             let dep = parse_bare_module_import(
+                &ctx,
                 "analyze::use_parser::normalize",
-                "my_crate",
-                Path::new("src/lib.rs"),
                 1,
-                &mp,
                 &EdgeContext::production(),
-                "",
             );
             let dep = dep.expect("should parse deep bare module import");
             assert_eq!(dep.target_crate, "my_crate");
@@ -1286,15 +1202,15 @@ use serde::Serialize;
             let mp: ModulePathMap = [("my_crate".to_string(), HashSet::from(["cli".into()]))]
                 .into_iter()
                 .collect();
-            let dep = parse_bare_module_import(
-                "cli",
-                "my_crate",
-                Path::new("src/lib.rs"),
-                1,
-                &mp,
-                &EdgeContext::production(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &WorkspaceCrates::default(),
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let dep = parse_bare_module_import(&ctx, "cli", 1, &EdgeContext::production());
             let dep = dep.expect("should parse module-only bare import");
             assert_eq!(dep.target_crate, "my_crate");
             assert_eq!(dep.target_module, "cli");
@@ -1309,15 +1225,15 @@ use serde::Serialize;
                 .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use cli::Args;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "my_crate");
@@ -1333,15 +1249,15 @@ use serde::Serialize;
                 .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("pub(crate) use cli::Args;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "my_crate");
@@ -1357,15 +1273,15 @@ use serde::Serialize;
                 .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use cli::{Args, Cargo, run};");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 3, "should return 3 deps: {:?}", deps);
             assert!(deps.iter().all(|d| d.target_crate == "my_crate"));
             assert!(deps.iter().all(|d| d.target_module == "cli"));
@@ -1391,15 +1307,15 @@ use serde::Serialize;
                 .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use cli::*;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
             assert_eq!(deps[0].target_crate, "my_crate");
             assert_eq!(deps[0].target_module, "cli");
@@ -1415,15 +1331,16 @@ use serde::Serialize;
             )]
             .into_iter()
             .collect();
-            let dep = parse_bare_module_import(
-                "css::render_styles",
-                "my_crate",
-                Path::new("src/render/mod.rs"),
-                1,
-                &mp,
-                &EdgeContext::production(),
-                "render",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &WorkspaceCrates::default(),
+                source_file: Path::new("src/render/mod.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "render",
+            };
+            let dep =
+                parse_bare_module_import(&ctx, "css::render_styles", 1, &EdgeContext::production());
             let dep = dep.expect("should resolve child module");
             assert_eq!(dep.target_crate, "my_crate");
             assert_eq!(dep.target_module, "render::css");
@@ -1442,15 +1359,15 @@ use serde::Serialize;
             .collect();
             let path = Path::new("src/render/mod.rs");
             let uses = parse_test_uses("use elements::{LinkTag, ScriptTag};");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "render",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "render",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
             assert!(deps.iter().all(|d| d.target_module == "render::elements"));
             assert!(
@@ -1469,15 +1386,15 @@ use serde::Serialize;
             let mp: ModulePathMap = [("my_crate".to_string(), HashSet::from(["cli".into()]))]
                 .into_iter()
                 .collect();
-            let dep = parse_bare_module_import(
-                "cli::Args",
-                "my_crate",
-                Path::new("src/lib.rs"),
-                1,
-                &mp,
-                &EdgeContext::production(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &WorkspaceCrates::default(),
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let dep = parse_bare_module_import(&ctx, "cli::Args", 1, &EdgeContext::production());
             let dep = dep.expect("should parse bare module from root");
             assert_eq!(dep.target_module, "cli");
             assert_eq!(dep.target_item, Some("Args".to_string()));
@@ -1492,15 +1409,15 @@ use serde::Serialize;
             )]
             .into_iter()
             .collect();
-            let dep = parse_bare_module_import(
-                "sub::Item",
-                "my_crate",
-                Path::new("src/a/b/mod.rs"),
-                1,
-                &mp,
-                &EdgeContext::production(),
-                "a::b",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &WorkspaceCrates::default(),
+                source_file: Path::new("src/a/b/mod.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "a::b",
+            };
+            let dep = parse_bare_module_import(&ctx, "sub::Item", 1, &EdgeContext::production());
             let dep = dep.expect("should resolve deeply nested child");
             assert_eq!(dep.target_module, "a::b::sub");
             assert_eq!(dep.target_item, Some("Item".to_string()));
@@ -1588,8 +1505,15 @@ use serde::Serialize;
             .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::MyStruct;");
-            let deps =
-                parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports, "");
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &exports,
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "other_crate");
@@ -1609,8 +1533,15 @@ use serde::Serialize;
                 .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::Unknown;");
-            let deps =
-                parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports, "");
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &exports,
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "Unknown");
@@ -1630,8 +1561,15 @@ use serde::Serialize;
                     .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::sub_mod::Foo;");
-            let deps =
-                parse_workspace_dependencies(&uses, "my_crate", &ws, path, &mp, &exports, "");
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &exports,
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1);
             let dep = &deps[0];
             assert_eq!(dep.target_module, "sub_mod");
@@ -1647,15 +1585,15 @@ use serde::Serialize;
             let mp = ModulePathMap::default();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::{Foo, Bar};");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
             assert!(deps.iter().all(|d| d.target_crate == "other_crate"));
             assert!(deps.iter().any(|d| d.target_module == "Foo"));
@@ -1668,15 +1606,15 @@ use serde::Serialize;
             let mp = ModulePathMap::default();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use other_crate::*;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
             assert_eq!(deps[0].target_module, "");
             assert_eq!(deps[0].target_item, Some("*".to_string()));
@@ -2059,15 +1997,15 @@ fn main() {
                 EdgeContext::production(),
                 0,
             )];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/main.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/main.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(
                 deps.len(),
                 1,
@@ -2091,15 +2029,15 @@ fn main() {
                 EdgeContext::production(),
                 0,
             )];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/main.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/main.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(deps.len(), 1, "should resolve crate-local path: {deps:?}");
             assert_eq!(deps[0].target_crate, "my_crate");
             assert_eq!(deps[0].target_module, "module");
@@ -2113,15 +2051,15 @@ fn main() {
                 .into_iter()
                 .collect();
             let paths = vec![("cli::Args".to_string(), 1, EdgeContext::production(), 0)];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/lib.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(deps.len(), 1, "should resolve bare module path: {deps:?}");
             assert_eq!(deps[0].target_crate, "my_crate");
             assert_eq!(deps[0].target_module, "cli");
@@ -2147,15 +2085,15 @@ fn main() {
                     0,
                 ),
             ];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/lib.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert!(deps.is_empty(), "unknown paths should be skipped: {deps:?}");
         }
 
@@ -2175,15 +2113,15 @@ fn main() {
                 EdgeContext::production(),
                 0,
             )];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/main.rs"),
-                &mp,
-                &exports,
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/main.rs"),
+                all_module_paths: &mp,
+                crate_exports: &exports,
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(deps.len(), 1, "should resolve entry-point path: {deps:?}");
             assert_eq!(deps[0].target_crate, "other_crate");
             assert_eq!(deps[0].target_module, "");
@@ -2210,15 +2148,15 @@ fn main() {
                     0,
                 ),
             ];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/main.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/main.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(deps.len(), 1, "duplicate paths should be deduped: {deps:?}");
         }
     }
@@ -2311,15 +2249,15 @@ fn main() {
             .collect();
             let path = Path::new("src/analyze/workspace.rs");
             let uses = parse_test_uses("use super::filtering::DepInfo;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "analyze::workspace",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "analyze::workspace",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1, "super::filtering should resolve: {deps:?}");
             let dep = &deps[0];
             assert_eq!(dep.target_crate, "my_crate");
@@ -2345,15 +2283,15 @@ fn main() {
             let uses = parse_test_uses(
                 "use super::use_parser::{parse_workspace_dependencies, collect_all_use_items};",
             );
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "analyze::syn_walker",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "analyze::syn_walker",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(
                 deps.len(),
                 2,
@@ -2383,15 +2321,15 @@ fn main() {
                 .collect();
             let path = Path::new("src/lib.rs");
             let uses = parse_test_uses("use super::some_mod;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert!(
                 deps.is_empty(),
                 "super:: from root should produce no deps: {deps:?}"
@@ -2410,15 +2348,15 @@ fn main() {
             .collect();
             let path = Path::new("src/render/mod.rs");
             let uses = parse_test_uses("use self::child::Item;");
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "render",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "render",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(deps.len(), 1, "self::child should resolve: {deps:?}");
             assert_eq!(deps[0].target_crate, "my_crate");
             assert_eq!(deps[0].target_module, "render::child");
@@ -2450,15 +2388,15 @@ mod tests {
             .collect();
             let path = Path::new("src/analyze/filtering.rs");
             let uses = parse_test_uses(source);
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "analyze::filtering",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "analyze::filtering",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert!(
                 deps.is_empty(),
                 "super::* in mod tests should not create upward edge: {deps:?}"
@@ -2488,15 +2426,15 @@ mod tests {
             .collect();
             let path = Path::new("src/analyze/filtering.rs");
             let uses = parse_test_uses(source);
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                path,
-                &mp,
-                &CrateExportMap::default(),
-                "analyze::filtering",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: path,
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "analyze::filtering",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(
                 deps.len(),
                 1,
@@ -2552,15 +2490,15 @@ mod inner {
                 (item.clone(), EdgeContext::production(), 0),
                 (item, EdgeContext::test(TestKind::Unit), 0),
             ];
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                Path::new("src/lib.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(
                 deps.len(),
                 2,
@@ -2594,15 +2532,15 @@ mod inner {
                     0,
                 ),
             ];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/main.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/main.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(
                 deps.len(),
                 2,
@@ -2636,15 +2574,15 @@ mod inner {
                     0,
                 ),
             ];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/main.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/main.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(
                 deps.len(),
                 1,
@@ -2679,15 +2617,15 @@ mod inner {
                     0,
                 ),
             ];
-            let deps = parse_path_ref_dependencies(
-                &paths,
-                "my_crate",
-                &ws,
-                Path::new("src/main.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/main.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_path_ref_dependencies(&paths, &ctx);
             assert_eq!(
                 deps.len(),
                 1,
@@ -2735,15 +2673,15 @@ mod inner {
                     0,
                 ),
             ];
-            let deps = parse_workspace_dependencies(
-                &uses,
-                "my_crate",
-                &ws,
-                Path::new("src/lib.rs"),
-                &mp,
-                &CrateExportMap::default(),
-                "",
-            );
+            let ctx = ResolutionContext {
+                current_crate: "my_crate",
+                workspace_crates: &ws,
+                source_file: Path::new("src/lib.rs"),
+                all_module_paths: &mp,
+                crate_exports: &CrateExportMap::default(),
+                current_module_path: "",
+            };
+            let deps = parse_workspace_dependencies(&uses, &ctx);
             assert_eq!(
                 deps.len(),
                 1,

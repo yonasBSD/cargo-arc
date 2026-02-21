@@ -5,7 +5,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::use_parser::{
-    collect_all_path_refs, is_cfg_test, parse_path_ref_dependencies, parse_workspace_dependencies,
+    ResolutionContext, collect_all_path_refs, is_cfg_test, parse_path_ref_dependencies,
+    parse_workspace_dependencies,
 };
 use crate::model::normalize_crate_name;
 use crate::model::{
@@ -375,27 +376,19 @@ fn walk_module_syn(
 
     // Extract use items from all scopes (top-level + fn bodies + nested blocks)
     let use_items = super::use_parser::collect_all_use_items(&syntax, ctx.base_context.clone());
-    let use_deps = parse_workspace_dependencies(
-        &use_items,
-        ctx.crate_name,
-        ctx.workspace_crates,
-        &source_file,
-        ctx.all_module_paths,
-        ctx.crate_exports,
+    let res_ctx = ResolutionContext {
+        current_crate: ctx.crate_name,
+        workspace_crates: ctx.workspace_crates,
+        source_file: &source_file,
+        all_module_paths: ctx.all_module_paths,
+        crate_exports: ctx.crate_exports,
         current_module_path,
-    );
+    };
+    let use_deps = parse_workspace_dependencies(&use_items, &res_ctx);
 
     // Extract qualified path references (e.g. my_lib::run(), let x: my_lib::Config)
     let path_refs = collect_all_path_refs(&syntax, ctx.base_context.clone());
-    let path_deps = parse_path_ref_dependencies(
-        &path_refs,
-        ctx.crate_name,
-        ctx.workspace_crates,
-        &source_file,
-        ctx.all_module_paths,
-        ctx.crate_exports,
-        current_module_path,
-    );
+    let path_deps = parse_path_ref_dependencies(&path_refs, &res_ctx);
 
     // Merge: use-dependencies first (have priority), then path-dependencies (dedup by (full_target, kind))
     let mut seen = DependencyRef::build_seen_index(&use_deps);
