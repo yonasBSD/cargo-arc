@@ -9,7 +9,7 @@ use crate::analyze::{
     AnalysisBackend, FeatureConfig, analyze_workspace, collect_crate_exports, normalize_crate_name,
 };
 use crate::graph::ArcGraph;
-use crate::layout::{ElementaryCycles, build_layout};
+use crate::layout::{ElementaryCycles, LayoutIR, build_layout};
 use crate::model::{CrateExportMap, ModulePathMap, WorkspaceCrates};
 use crate::render::{RenderConfig, render};
 use crate::volatility::{VolatilityAnalyzer, VolatilityConfig};
@@ -81,7 +81,6 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    // Initialize tracing if debug mode is enabled
     if args.debug {
         tracing_subscriber::fmt()
             .with_env_filter(
@@ -98,24 +97,10 @@ pub fn run(args: Args) -> Result<()> {
         high_threshold: args.volatility_high,
     };
 
-    // Volatility-only mode: skip the full pipeline, just run git analysis
     if args.volatility {
-        let repo_path = args
-            .manifest_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let mut analyzer = VolatilityAnalyzer::new(vol_config);
-        analyzer.analyze(repo_path)?;
-        let report = analyzer.format_report();
-        match args.output {
-            Some(path) => fs::write(&path, &report)?,
-            None => io::stdout().write_all(report.as_bytes())?,
-        }
-        return Ok(());
+        return run_volatility_report(&args.manifest_path, vol_config, &args.output);
     }
 
-    // 1. Build feature config from CLI args (needed for both analyze_workspace and load_workspace_hir)
     let feature_config = FeatureConfig {
         features: args.features,
         all_features: args.all_features,
@@ -124,92 +109,115 @@ pub fn run(args: Args) -> Result<()> {
         debug: args.debug,
     };
 
-    // 2. Analyze workspace with feature config
-    let crates = analyze_workspace(&args.manifest_path, &feature_config)?;
-
-    // 3. Build workspace crate names set for inter-crate dependency detection
-    let workspace_crates: WorkspaceCrates = crates.iter().map(|c| c.name.clone()).collect();
-
-    // 4. Create analysis backend (syn default, hir only with --hir flag)
     #[cfg(feature = "hir")]
     let use_hir = args.hir;
     #[cfg(not(feature = "hir"))]
     let use_hir = false;
-    let backend = AnalysisBackend::new(&args.manifest_path, &feature_config, use_hir)?;
 
-    // 5a. Collect module paths from ALL crates
+    let graph = build_dependency_graph(&args.manifest_path, &feature_config, use_hir)?;
+    let cycles = graph.production_subgraph().elementary_cycles();
+    let mut layout = build_layout(&graph, &cycles);
+
+    if !args.no_volatility {
+        enrich_volatility(&mut layout, &args.manifest_path, vol_config);
+    }
+
+    let svg = render(&layout, &RenderConfig::default());
+    write_output(&svg, &args.output)
+}
+
+fn resolve_repo_path(manifest_path: &Path) -> &Path {
+    manifest_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+fn write_output(content: &str, output: &Option<PathBuf>) -> Result<()> {
+    match output {
+        Some(path) => fs::write(path, content)?,
+        None => io::stdout().write_all(content.as_bytes())?,
+    }
+    Ok(())
+}
+
+fn run_volatility_report(
+    manifest_path: &Path,
+    vol_config: VolatilityConfig,
+    output: &Option<PathBuf>,
+) -> Result<()> {
+    let repo_path = resolve_repo_path(manifest_path);
+    let mut analyzer = VolatilityAnalyzer::new(vol_config);
+    analyzer.analyze(repo_path)?;
+    let report = analyzer.format_report();
+    write_output(&report, output)
+}
+
+fn build_dependency_graph(
+    manifest_path: &Path,
+    feature_config: &FeatureConfig,
+    use_hir: bool,
+) -> Result<ArcGraph> {
+    let crates = analyze_workspace(manifest_path, feature_config)?;
+    let workspace_crates: WorkspaceCrates = crates.iter().map(|krate| krate.name.clone()).collect();
+    let backend = AnalysisBackend::new(manifest_path, feature_config, use_hir)?;
+
     let all_module_paths: ModulePathMap = crates
         .iter()
-        .map(|c| {
-            let name = normalize_crate_name(&c.name);
-            let paths = backend.collect_module_paths(c);
+        .map(|krate| {
+            let name = normalize_crate_name(&krate.name);
+            let paths = backend.collect_module_paths(krate);
             (name, paths)
         })
         .collect();
 
-    // 5a2. Collect crate exports for entry-point detection
     let crate_exports: CrateExportMap = crates
         .iter()
-        .map(|c| {
-            let name = normalize_crate_name(&c.name);
-            let exports = collect_crate_exports(&c.path);
+        .map(|krate| {
+            let name = normalize_crate_name(&krate.name);
+            let exports = collect_crate_exports(&krate.path);
             (name, exports)
         })
         .collect();
 
-    // 5b. Analyze modules for each crate
     let modules: Vec<_> = crates
         .iter()
-        .filter_map(|c| {
-            backend
-                .analyze_modules(c, &workspace_crates, &all_module_paths, &crate_exports)
-                .ok()
+        .filter_map(|krate| {
+            match backend.analyze_modules(
+                krate,
+                &workspace_crates,
+                &all_module_paths,
+                &crate_exports,
+            ) {
+                Ok(tree) => Some(tree),
+                Err(err) => {
+                    tracing::warn!("Skipping crate {}: {err}", krate.name);
+                    None
+                }
+            }
         })
         .collect();
 
-    // 6. Build dependency graph
-    let graph = ArcGraph::build(&crates, &modules);
+    Ok(ArcGraph::build(&crates, &modules))
+}
 
-    // 7. Detect cycles (only production ModuleDep edges participate)
-    let cycles = graph.production_subgraph().elementary_cycles();
-
-    // 8. Build layout (CrateDep edges skipped when ModuleDeps exist between crates)
-    let mut layout = build_layout(&graph, &cycles);
-
-    // 9b. Populate volatility data (graceful degradation on failure)
-    if !args.no_volatility {
-        let repo_path = args
-            .manifest_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let mut analyzer = VolatilityAnalyzer::new(vol_config);
-        match analyzer.analyze(repo_path) {
-            Ok(()) => {
-                for item in &mut layout.items {
-                    if let Some(ref path) = item.source_path {
-                        let vol = analyzer.get_volatility(path);
-                        let count = analyzer.get_change_count(path);
-                        item.volatility = Some((vol, count));
-                    }
+fn enrich_volatility(layout: &mut LayoutIR, manifest_path: &Path, vol_config: VolatilityConfig) {
+    let repo_path = resolve_repo_path(manifest_path);
+    let mut analyzer = VolatilityAnalyzer::new(vol_config);
+    match analyzer.analyze(repo_path) {
+        Ok(()) => {
+            for item in &mut layout.items {
+                if let Some(ref path) = item.source_path {
+                    let vol = analyzer.get_volatility(path);
+                    let count = analyzer.get_change_count(path);
+                    item.volatility = Some((vol, count));
                 }
             }
-            Err(e) => {
-                tracing::warn!("Volatility analysis skipped: {e}");
-            }
+        }
+        Err(err) => {
+            tracing::warn!("Volatility analysis skipped: {err}");
         }
     }
-
-    // 10. Render to SVG
-    let svg = render(&layout, &RenderConfig::default());
-
-    // 11. Output
-    match args.output {
-        Some(path) => fs::write(&path, &svg)?,
-        None => io::stdout().write_all(svg.as_bytes())?,
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
