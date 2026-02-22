@@ -320,9 +320,7 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("gap", "8px"),
                 ("padding", "6px 10px"),
                 ("width", "100%"),
-                ("height", "100%"),
                 ("background", "#f8f8f8"),
-                ("overflow", "hidden"),
                 ("border-bottom", "1px solid #e0e0e0"),
                 ("font", "12px/1 system-ui, sans-serif"),
                 ("box-sizing", "border-box"),
@@ -1084,24 +1082,6 @@ mod tests {
     }
 
     #[test]
-    fn test_toolbar_root_has_overflow_hidden() {
-        let css = render_styles();
-        let selector = format!(".{}", CSS.toolbar.root);
-        // Find the toolbar-root rule and verify it contains overflow: hidden
-        let rule_start = css
-            .find(&selector)
-            .expect("CSS should contain .toolbar-root");
-        let rule_section = &css[rule_start..];
-        let rule_end = rule_section
-            .find('}')
-            .expect("rule should have closing brace");
-        let rule_body = &rule_section[..rule_end];
-        assert!(
-            rule_body.contains("overflow: hidden"),
-            "toolbar-root should have overflow: hidden, got: {rule_body}"
-        );
-    }
-
     #[test]
     fn test_arc_hitarea_css_class_exists() {
         let css = render_styles();

@@ -778,10 +778,16 @@ if (typeof document !== 'undefined') {
     }
 
     window.addEventListener('scroll', updateToolbarPosition);
-    window.addEventListener('resize', () => {
-      syncToolbarHeight();
-      updateToolbarPosition();
-    });
+    window.addEventListener('resize', updateToolbarPosition);
+
+    // Observe toolbar content height changes (flex-wrap grows/shrinks)
+    const toolbarRoot = DomAdapter.querySelector(`.${C.toolbarRoot}`);
+    if (toolbarRoot && typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => {
+        syncToolbarHeight();
+        updateToolbarPosition();
+      }).observe(toolbarRoot);
+    }
 
     // === Event handlers ===
     // Iterate via StaticData instead of DOM query
