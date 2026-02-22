@@ -1,5 +1,5 @@
 // @module SvgScript
-// @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightRenderer, VirtualEdgeLogic, TextMetrics, SidebarLogic
+// @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightRenderer, VirtualEdgeLogic, TextMetrics, SidebarLogic, SearchLogic
 // @config ROW_HEIGHT, MARGIN, TOOLBAR_HEIGHT
 // svg_script.js - DOM code for interactive SVG
 // ArcLogic is loaded from arc_logic.js before this file
@@ -553,6 +553,7 @@ if (typeof document !== 'undefined') {
 
       updateParentNodeUI(nodeId, collapsed);
       relayout();
+      SearchLogic.refresh();
     }
 
     // Toggle collapse/expand all parent nodes
@@ -569,20 +570,21 @@ if (typeof document !== 'undefined') {
         updateParentNodeUI(nodeId, collapsed);
       });
 
-      const label = DomAdapter.getElementById('collapse-toggle-label');
-      if (label) label.textContent = collapsed ? 'Expand All' : 'Collapse All';
+      const btn = DomAdapter.getElementById('collapse-toggle-btn');
+      if (btn) btn.textContent = collapsed ? 'Expand All' : 'Collapse All';
 
       relayout();
+      SearchLogic.refresh();
     }
 
-    // Toggle visibility of crate-to-crate dependency arcs
-    function toggleCrateDepVisibility() {
-      const checkbox = DomAdapter.querySelector('#crate-dep-checkbox');
+    // Generic toggle for arc-class visibility (shared by crate-dep and module-dep)
+    function toggleArcClassVisibility(checkboxSelector, arcClass) {
+      const checkbox = DomAdapter.querySelector(checkboxSelector);
       if (!checkbox) return;
 
       const isChecked = checkbox.classList.toggle(C.checked);
 
-      DomAdapter.querySelectorAll(`.${C.crateDepArc}`).forEach(arc => {
+      DomAdapter.querySelectorAll(`.${arcClass}`).forEach(arc => {
         if (isChecked) {
           arc.classList.remove(C.hiddenByFilter);
         } else {
@@ -593,7 +595,7 @@ if (typeof document !== 'undefined') {
       // Also hide/show associated hitareas and arrows, track in AppState
       DomAdapter.querySelectorAll(`.${C.arcHitarea}:not(.${C.virtualHitarea})`).forEach(hitarea => {
         const arcId = hitarea.dataset.arcId;
-        const visibleArc = DomAdapter.querySelector(`.${C.crateDepArc}[data-arc-id="${arcId}"]`);
+        const visibleArc = DomAdapter.querySelector(`.${arcClass}[data-arc-id="${arcId}"]`);
         if (visibleArc) {
           if (isChecked) {
             hitarea.classList.remove(C.hiddenByFilter);
@@ -615,20 +617,62 @@ if (typeof document !== 'undefined') {
       rerenderHighlights();
     }
 
+    // Toggle visibility of crate-to-crate dependency arcs
+    function toggleCrateDepVisibility() {
+      toggleArcClassVisibility('#crate-dep-checkbox', C.crateDepArc);
+    }
+
+    // Toggle visibility of module-to-module dependency arcs
+    function toggleModuleDepVisibility() {
+      toggleArcClassVisibility('#module-dep-checkbox', C.moduleDepArc);
+
+      // Virtual arcs are aggregated module-deps — toggle them too
+      const checkbox = DomAdapter.querySelector('#module-dep-checkbox');
+      const isChecked = checkbox?.classList.contains(C.checked);
+      DomAdapter.querySelectorAll(Selectors.allVirtualElements()).forEach(el => {
+        if (isChecked) {
+          el.classList.remove(C.hiddenByFilter);
+        } else {
+          el.classList.add(C.hiddenByFilter);
+        }
+      });
+    }
+
+    // Sync foreignObject height with actual toolbar content height (flex-wrap may grow)
+    function syncToolbarHeight() {
+      const fo = DomAdapter.getElementById('toolbar-fo');
+      const root = DomAdapter.querySelector(`.${C.toolbarRoot}`);
+      const graph = DomAdapter.getElementById('graph-content');
+      if (!fo || !root) return;
+      const h = root.offsetHeight;
+      if (h > 0) {
+        fo.setAttribute('height', h);
+        // Shift graph content down by the delta between actual and default toolbar height
+        if (graph) {
+          const delta = h - TOOLBAR_HEIGHT;
+          if (delta !== 0) {
+            graph.setAttribute('transform', `translate(0, ${delta})`);
+          } else {
+            graph.removeAttribute('transform');
+          }
+        }
+      }
+    }
+
     // Update toolbar position to stay at top when scrolling
     function updateToolbarPosition() {
-      const toolbar = DomAdapter.querySelector(`.${C.viewOptions}`);
+      const fo = DomAdapter.getElementById('toolbar-fo');
       const svg = DomAdapter.getSvgRoot();
-      if (!toolbar || !svg) return;
+      if (!fo || !svg) return;
 
       const rect = svg.getBoundingClientRect();
       const scrollTop = Math.max(0, -rect.top);
-      toolbar.setAttribute('transform', `translate(0, ${scrollTop})`);
+      fo.setAttribute('y', scrollTop);
       if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
     }
 
     window.addEventListener('scroll', updateToolbarPosition);
-    window.addEventListener('resize', updateToolbarPosition);
+    window.addEventListener('resize', () => { syncToolbarHeight(); updateToolbarPosition(); });
 
     // === Event handlers ===
     // Iterate via StaticData instead of DOM query
@@ -668,15 +712,14 @@ if (typeof document !== 'undefined') {
       toggleCollapseAll();
       updateToolbarPosition();
     });
-    DomAdapter.querySelector('#collapse-toggle-label')?.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleCollapseAll();
-      updateToolbarPosition();
-    });
-
-    DomAdapter.querySelector('#crate-dep-checkbox')?.addEventListener('click', e => {
+    DomAdapter.querySelector('#crate-dep-checkbox')?.closest('label')?.addEventListener('click', e => {
       e.stopPropagation();
       toggleCrateDepVisibility();
+    });
+
+    DomAdapter.querySelector('#module-dep-checkbox')?.closest('label')?.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleModuleDepVisibility();
     });
 
     // Event handlers on hit-area paths (invisible, 12px wide) — regular arcs only
@@ -716,5 +759,11 @@ if (typeof document !== 'undefined') {
 
     // Apply initial arc weights based on source location counts
     applyInitialArcWeights();
+
+    // Initialize search module
+    SearchLogic.init(appState);
+
+    // Sync toolbar foreignObject height with actual content
+    syncToolbarHeight();
   })();
 }

@@ -1,4 +1,4 @@
-use super::constants::{COLORS, CSS, LAYOUT};
+use super::constants::{CSS, LAYOUT};
 use super::positioning::PositionedItem;
 use crate::layout::{CycleKind, EdgeDirection, ItemKind, LayoutIR, NodeId};
 use crate::model::DependencyKind;
@@ -34,74 +34,63 @@ pub(super) fn render_sidebar(width: f32) -> String {
 
 pub(super) fn render_toolbar(width: f32) -> String {
     let ct = &CSS.toolbar;
-    let mut toolbar = String::new();
-    let vo = ct.view_options;
-    toolbar.push_str(&format!("  <g class=\"{vo}\">\n"));
-
-    // Background rect (full width, toolbar height)
-    toolbar.push_str(&format!(
-        "    <rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\" fill=\"{}\" stroke=\"{}\"/>\n",
-        width, LAYOUT.toolbar.height, COLORS.toolbar.bg, COLORS.toolbar.border
-    ));
-
-    // Collapse/Expand All button
-    let tb = &LAYOUT.toolbar;
-    let btn_x = tb.btn_x;
-    let btn_y = tb.btn_y;
-    let btn_width = tb.btn_width;
-    let btn_height = tb.btn_height;
-    let btn = ct.btn;
-    toolbar.push_str(&format!(
-        "    <rect id=\"collapse-toggle-btn\" class=\"{btn}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
-        btn_x, btn_y, btn_width, btn_height
-    ));
-    let btn_text = ct.btn_text;
-    toolbar.push_str(&format!(
-        "    <text id=\"collapse-toggle-label\" class=\"{btn_text}\" x=\"{}\" y=\"{}\" dominant-baseline=\"middle\">Collapse All</text>\n",
-        btn_x + btn_width / 2.0,
-        btn_y + btn_height / 2.0
-    ));
-
-    // Separator
-    let sep_x = btn_x + btn_width + tb.separator_spacing;
-    let sep = ct.separator;
-    toolbar.push_str(&format!(
-        "    <line class=\"{sep}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
-        sep_x, tb.separator_y1, sep_x, tb.separator_y2
-    ));
-
-    // CrateDep checkbox (checked by default)
-    let cb1_x = sep_x + tb.cb_spacing;
-    let cb_y = tb.cb_y;
-    let cb_size = tb.cb_size;
-    let cb = ct.checkbox;
-    let chk = ct.checked;
-    let lbl = ct.label;
-    toolbar.push_str(&format!(
-        "    <rect id=\"crate-dep-checkbox\" class=\"{cb} {chk}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
-        cb1_x, cb_y, cb_size, cb_size
-    ));
-    toolbar.push_str(&format!(
-        "    <text class=\"{lbl}\" x=\"{}\" y=\"{}\">Show Crate Dependencies</text>\n",
-        cb1_x + cb_size + tb.label_x_offset,
-        cb_y + cb_size / 2.0 + tb.label_y_offset
-    ));
-
-    // Tests checkbox (disabled)
-    let cb2_x = cb1_x + tb.cb2_x_offset;
-    let dis = ct.disabled;
-    toolbar.push_str(&format!(
-        "    <rect class=\"{cb} {dis}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
-        cb2_x, cb_y, cb_size, cb_size
-    ));
-    toolbar.push_str(&format!(
-        "    <text class=\"{lbl} {dis}\" x=\"{}\" y=\"{}\">Tests</text>\n",
-        cb2_x + cb_size + tb.label_x_offset,
-        cb_y + cb_size / 2.0 + tb.label_y_offset
-    ));
-
-    toolbar.push_str("  </g>\n");
-    toolbar
+    let height = LAYOUT.toolbar.height as i32;
+    format!(
+        concat!(
+            "  <foreignObject id=\"toolbar-fo\" x=\"0\" y=\"0\" width=\"{}\" height=\"{}\"",
+            " style=\"overflow:visible\">\n",
+            "    <div class=\"{}\" xmlns=\"http://www.w3.org/1999/xhtml\">\n",
+            "      <button id=\"collapse-toggle-btn\" class=\"{}\">Collapse All</button>\n",
+            "      <span class=\"{}\"></span>\n",
+            "      <label class=\"{}\">\n",
+            "        <span class=\"{} {}\" id=\"crate-dep-checkbox\"></span>\n",
+            "        Show Crate Dependencies\n",
+            "      </label>\n",
+            "      <label class=\"{}\">\n",
+            "        <span class=\"{} {}\" id=\"module-dep-checkbox\"></span>\n",
+            "        Show Module Dependencies\n",
+            "      </label>\n",
+            "      <span class=\"{}\"></span>\n",
+            "      <div class=\"{}\">\n",
+            "        <div class=\"{}\">\n",
+            "          <input id=\"search-input\" type=\"text\" placeholder=\"Search...\" />\n",
+            "          <button id=\"search-clear\" class=\"{}\"",
+            " style=\"display:none\">\u{2715}</button>\n",
+            "        </div>\n",
+            "        <div id=\"scope-selector\" class=\"{}\">\n",
+            "          <button class=\"{} {}\" data-scope=\"all\">All</button>\n",
+            "          <button class=\"{}\" data-scope=\"crate\">Crate</button>\n",
+            "          <button class=\"{}\" data-scope=\"module\">Module</button>\n",
+            "          <button class=\"{}\" data-scope=\"symbol\">Symbol</button>\n",
+            "        </div>\n",
+            "        <span id=\"search-result-count\" class=\"{}\"></span>\n",
+            "      </div>\n",
+            "    </div>\n",
+            "  </foreignObject>\n",
+        ),
+        width,          // foreignObject width
+        height,         // foreignObject height
+        ct.root,        // .toolbar-root
+        ct.html_btn,    // button class
+        ct.separator_v, // separator
+        ct.toggle,      // label.toolbar-toggle (crate dep)
+        ct.checkbox,
+        ct.checked, // checkbox span (checked)
+        ct.toggle,  // label.toolbar-toggle (module dep)
+        ct.checkbox,
+        ct.checked,              // checkbox span (checked)
+        ct.separator_v,          // separator
+        ct.search_group,         // .toolbar-search-group
+        ct.search_input_wrapper, // .toolbar-search-input-wrapper
+        ct.search_clear,         // .toolbar-search-clear
+        ct.scope,                // .toolbar-scope
+        ct.scope_btn,
+        ct.scope_active, // first scope btn (active)
+        ct.scope_btn,    // crate scope btn
+        ct.scope_btn,    // module scope btn
+        ct.scope_btn,    // symbol scope btn
+        ct.result_count, // .toolbar-result-count
+    )
 }
 
 pub(super) fn render_tree_lines(
@@ -278,12 +267,12 @@ pub(super) fn render_edges(
                 ),
             };
 
-            // Add crate-dep-arc class for Crate-to-Crate edges
+            // Add crate-dep-arc or module-dep-arc class based on edge type
             let is_crate_dep = matches!((&from.kind, &to.kind), (ItemKind::Crate, ItemKind::Crate));
             let arc_class = if is_crate_dep {
                 format!("{} {}", base_arc_class, cd.crate_dep_arc)
             } else {
-                base_arc_class
+                format!("{} {}", base_arc_class, cd.module_dep_arc)
             };
 
             let edge_id = format!("{}-{}", edge.from, edge.to);
@@ -566,16 +555,16 @@ mod tests {
     fn test_render_toolbar_contains_elements() {
         let output = render_toolbar(800.0);
         assert!(
-            output.contains(r#"class="view-options""#),
-            "Should have view-options group"
+            output.contains(r#"id="toolbar-fo""#),
+            "Should have foreignObject with toolbar-fo id"
+        );
+        assert!(
+            output.contains(&format!(r#"class="{}""#, CSS.toolbar.root)),
+            "Should have toolbar-root div"
         );
         assert!(
             output.contains(r#"id="collapse-toggle-btn""#),
             "Should have collapse toggle button"
-        );
-        assert!(
-            output.contains(r#"id="collapse-toggle-label""#),
-            "Should have collapse toggle label"
         );
         assert!(
             output.contains("Collapse All"),
@@ -590,10 +579,29 @@ mod tests {
             "Should have crate dependency label"
         );
         assert!(
-            output.contains(CSS.toolbar.disabled),
-            "Should have disabled Tests checkbox"
+            output.contains(r#"id="module-dep-checkbox""#),
+            "Should have module-dep checkbox"
         );
-        assert!(output.contains("Tests"), "Should have 'Tests' label");
+        assert!(
+            output.contains("Show Module Dependencies"),
+            "Should have module dependency label"
+        );
+        assert!(
+            output.contains(r#"id="search-input""#),
+            "Should have search input"
+        );
+        assert!(
+            output.contains(r#"id="scope-selector""#),
+            "Should have scope selector"
+        );
+        assert!(
+            output.contains(r#"id="search-result-count""#),
+            "Should have search result count"
+        );
+        assert!(
+            output.contains("xmlns=\"http://www.w3.org/1999/xhtml\""),
+            "Should have XHTML namespace"
+        );
     }
 
     #[test]
@@ -669,8 +677,8 @@ mod tests {
             "Should have hit-area path"
         );
         assert!(
-            output.contains(r#"class="dep-arc downward""#),
-            "Should have visible dep-arc path with direction"
+            output.contains(r#"class="dep-arc downward module-dep-arc""#),
+            "Should have visible dep-arc path with direction and module-dep-arc class"
         );
         assert!(
             output.contains(r#"data-arc-id="1-2""#),

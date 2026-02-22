@@ -51,6 +51,7 @@ impl SidebarLayout {
     }
 }
 
+#[allow(dead_code)]
 pub(super) struct ToolbarLayout {
     pub height: f32,
     pub btn_x: f32,
@@ -159,6 +160,7 @@ pub(super) struct RelationColors {
     pub dimmed: &'static str,
 }
 
+#[allow(dead_code)]
 pub(super) struct ToolbarColors {
     pub bg: &'static str,
     pub border: &'static str,
@@ -170,6 +172,7 @@ pub(super) struct ToolbarColors {
     pub separator: &'static str,
 }
 
+#[allow(dead_code)]
 pub(super) struct ColorPalette {
     pub nodes: NodeColors,
     pub direction: DirectionColors,
@@ -240,6 +243,7 @@ pub(super) struct DirectionClasses {
     pub cycle_arrow: &'static str,
     pub arc_hitarea: &'static str,
     pub crate_dep_arc: &'static str,
+    pub module_dep_arc: &'static str,
     pub virtual_arc: &'static str,
     pub virtual_arrow: &'static str,
     pub virtual_hitarea: &'static str,
@@ -277,6 +281,24 @@ pub(super) struct ToolbarClasses {
     pub checked: &'static str,
     pub disabled: &'static str,
     pub label: &'static str,
+    pub root: &'static str,
+    pub html_btn: &'static str,
+    pub separator_v: &'static str,
+    pub toggle: &'static str,
+    pub search_group: &'static str,
+    pub search_input_wrapper: &'static str,
+    pub search_clear: &'static str,
+    pub scope: &'static str,
+    pub scope_btn: &'static str,
+    pub scope_active: &'static str,
+    pub result_count: &'static str,
+}
+
+#[allow(dead_code)]
+pub(super) struct SearchClasses {
+    pub search_active: &'static str,
+    pub search_match: &'static str,
+    pub search_match_parent: &'static str,
 }
 
 #[allow(dead_code)]
@@ -325,6 +347,7 @@ pub(super) struct CssClassNames {
     pub toolbar: ToolbarClasses,
     pub labels: LabelClasses,
     pub sidebar: SidebarClasses,
+    pub search: SearchClasses,
 }
 
 pub(super) static CSS: CssClassNames = CssClassNames {
@@ -347,6 +370,7 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         cycle_arrow: "cycle-arrow",
         arc_hitarea: "arc-hitarea",
         crate_dep_arc: "crate-dep-arc",
+        module_dep_arc: "module-dep-arc",
         virtual_arc: "virtual-arc",
         virtual_arrow: "virtual-arrow",
         virtual_hitarea: "virtual-hitarea",
@@ -378,6 +402,17 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         checked: "checked",
         disabled: "toolbar-disabled",
         label: "toolbar-label",
+        root: "toolbar-root",
+        html_btn: "toolbar-html-btn",
+        separator_v: "toolbar-separator-v",
+        toggle: "toolbar-toggle",
+        search_group: "toolbar-search-group",
+        search_input_wrapper: "toolbar-search-input-wrapper",
+        search_clear: "toolbar-search-clear",
+        scope: "toolbar-scope",
+        scope_btn: "toolbar-scope-btn",
+        scope_active: "active",
+        result_count: "toolbar-result-count",
     },
     labels: LabelClasses {
         arc_count: "arc-count",
@@ -411,6 +446,11 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         node_to: "sidebar-node-to",
         node_selected: "sidebar-node-selected",
         transient: "sidebar-transient",
+    },
+    search: SearchClasses {
+        search_active: "search-active",
+        search_match: "search-match",
+        search_match_parent: "search-match-parent",
     },
 };
 
@@ -470,6 +510,7 @@ mod tests {
         assert!(!CSS.direction.cycle_arrow.is_empty());
         assert!(!CSS.direction.arc_hitarea.is_empty());
         assert!(!CSS.direction.crate_dep_arc.is_empty());
+        assert!(!CSS.direction.module_dep_arc.is_empty());
         assert!(!CSS.direction.virtual_arc.is_empty());
         assert!(!CSS.direction.virtual_arrow.is_empty());
         assert!(!CSS.direction.virtual_hitarea.is_empty());
@@ -496,6 +537,21 @@ mod tests {
         assert!(!CSS.toolbar.checked.is_empty());
         assert!(!CSS.toolbar.disabled.is_empty());
         assert!(!CSS.toolbar.label.is_empty());
+        assert!(!CSS.toolbar.root.is_empty());
+        assert!(!CSS.toolbar.html_btn.is_empty());
+        assert!(!CSS.toolbar.separator_v.is_empty());
+        assert!(!CSS.toolbar.toggle.is_empty());
+        assert!(!CSS.toolbar.search_group.is_empty());
+        assert!(!CSS.toolbar.search_input_wrapper.is_empty());
+        assert!(!CSS.toolbar.search_clear.is_empty());
+        assert!(!CSS.toolbar.scope.is_empty());
+        assert!(!CSS.toolbar.scope_btn.is_empty());
+        assert!(!CSS.toolbar.scope_active.is_empty());
+        assert!(!CSS.toolbar.result_count.is_empty());
+
+        assert!(!CSS.search.search_active.is_empty());
+        assert!(!CSS.search.search_match.is_empty());
+        assert!(!CSS.search.search_match_parent.is_empty());
 
         assert!(!CSS.labels.arc_count.is_empty());
         assert!(!CSS.labels.arc_count_bg.is_empty());

@@ -29,7 +29,6 @@ fn build_css_rules() -> Vec<CssRule> {
     let d = &COLORS.direction;
     let ns = &COLORS.node_selection;
     let r = &COLORS.relation;
-    let t = &COLORS.toolbar;
     let c = &CSS;
 
     vec![
@@ -308,54 +307,197 @@ fn build_css_rules() -> Vec<CssRule> {
             c.relation.shadow_path,
             &[("pointer-events", "none"), ("stroke-linecap", "round")],
         ),
-        // Toolbar
-        CssRule::class(c.toolbar.view_options, &[("cursor", "default")]),
+        // Toolbar (foreignObject HTML)
         CssRule::class(
-            c.toolbar.btn,
+            c.toolbar.root,
             &[
-                ("fill", t.btn_fill),
-                ("stroke", t.btn_stroke),
-                ("rx", "3"),
+                ("display", "flex"),
+                ("flex-wrap", "wrap"),
+                ("align-items", "center"),
+                ("gap", "8px"),
+                ("padding", "6px 10px"),
+                ("width", "100%"),
+                ("height", "100%"),
+                ("background", "#f8f8f8"),
+                ("overflow", "hidden"),
+                ("border-bottom", "1px solid #e0e0e0"),
+                ("font", "12px/1 system-ui, sans-serif"),
+                ("box-sizing", "border-box"),
+                ("min-height", "40px"),
+            ],
+        ),
+        CssRule::class(
+            c.toolbar.html_btn,
+            &[
+                ("padding", "4px 12px"),
+                ("border", "1px solid #ccc"),
+                ("border-radius", "3px"),
+                ("background", "#fff"),
                 ("cursor", "pointer"),
+                ("font-size", "12px"),
             ],
         ),
         CssRule::new(
-            &format!(".{}:hover", c.toolbar.btn),
-            &[("fill", t.btn_hover)],
+            &format!(".{}:hover", c.toolbar.html_btn),
+            &[("background", "#e8e8e8")],
         ),
         CssRule::class(
-            c.toolbar.btn_text,
+            c.toolbar.toggle,
             &[
-                ("font-family", "sans-serif"),
-                ("font-size", "11px"),
-                ("text-anchor", "middle"),
+                ("display", "flex"),
+                ("align-items", "center"),
+                ("gap", "4px"),
+                ("cursor", "pointer"),
+                ("font-size", "12px"),
+                ("user-select", "none"),
             ],
         ),
         CssRule::class(
             c.toolbar.checkbox,
             &[
-                ("fill", t.checkbox),
-                ("stroke", t.btn_stroke),
-                ("rx", "2"),
-                ("cursor", "pointer"),
+                ("width", "14px"),
+                ("height", "14px"),
+                ("border", "1px solid #999"),
+                ("border-radius", "2px"),
+                ("display", "inline-flex"),
+                ("align-items", "center"),
+                ("justify-content", "center"),
             ],
         ),
         CssRule::new(
-            &format!(".{}.{}", c.toolbar.checkbox, c.toolbar.checked),
-            &[("fill", t.checkbox_checked)],
-        ),
-        CssRule::class(
-            c.toolbar.label,
+            &format!(".{}.{}::after", c.toolbar.checkbox, c.toolbar.checked),
             &[
-                ("font-family", "sans-serif"),
+                ("content", r#""\2713""#),
                 ("font-size", "11px"),
-                ("cursor", "pointer"),
+                ("color", "#333"),
             ],
         ),
-        CssRule::class(c.toolbar.separator, &[("stroke", t.separator)]),
         CssRule::class(
-            c.toolbar.disabled,
-            &[("opacity", "0.4"), ("pointer-events", "none")],
+            c.toolbar.separator_v,
+            &[("width", "1px"), ("height", "20px"), ("background", "#ccc")],
+        ),
+        // Search input group
+        CssRule::class(
+            c.toolbar.search_group,
+            &[
+                ("display", "flex"),
+                ("align-items", "center"),
+                ("gap", "6px"),
+            ],
+        ),
+        CssRule::class(c.toolbar.search_input_wrapper, &[("position", "relative")]),
+        CssRule::new(
+            "#search-input",
+            &[
+                ("width", "160px"),
+                ("padding", "4px 24px 4px 8px"),
+                ("border", "1px solid #ccc"),
+                ("border-radius", "3px"),
+                ("font-size", "12px"),
+            ],
+        ),
+        CssRule::new(
+            "#search-input:focus",
+            &[("border-color", "#4a90d9"), ("outline", "none")],
+        ),
+        CssRule::class(
+            c.toolbar.search_clear,
+            &[
+                ("position", "absolute"),
+                ("right", "4px"),
+                ("top", "50%"),
+                ("transform", "translateY(-50%)"),
+                ("background", "none"),
+                ("border", "none"),
+                ("cursor", "pointer"),
+                ("font-size", "12px"),
+                ("color", "#999"),
+            ],
+        ),
+        // Scope selector (segmented control)
+        CssRule::class(
+            c.toolbar.scope,
+            &[
+                ("display", "flex"),
+                ("border", "1px solid #ccc"),
+                ("border-radius", "3px"),
+                ("overflow", "hidden"),
+            ],
+        ),
+        CssRule::class(
+            c.toolbar.scope_btn,
+            &[
+                ("padding", "4px 8px"),
+                ("border", "none"),
+                ("border-right", "1px solid #ccc"),
+                ("background", "#fff"),
+                ("cursor", "pointer"),
+                ("font-size", "11px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}:last-child", c.toolbar.scope_btn),
+            &[("border-right", "none")],
+        ),
+        CssRule::new(
+            &format!(".{}.{}", c.toolbar.scope_btn, c.toolbar.scope_active),
+            &[("background", "#4a90d9"), ("color", "#fff")],
+        ),
+        CssRule::new(
+            &format!(
+                ".{}:hover:not(.{})",
+                c.toolbar.scope_btn, c.toolbar.scope_active
+            ),
+            &[("background", "#f0f0f0")],
+        ),
+        CssRule::class(
+            c.toolbar.result_count,
+            &[
+                ("font-size", "11px"),
+                ("color", "#888"),
+                ("min-width", "60px"),
+            ],
+        ),
+        // Search highlighting (SVG graph dimming)
+        CssRule::new(
+            &[
+                format!("rect.{}", c.nodes.crate_node),
+                format!("rect.{}", c.nodes.module),
+                format!("path.{}", c.direction.dep_arc),
+                format!("path.{}", c.direction.cycle_arc),
+                format!("path.{}", c.direction.virtual_arc),
+                format!("polygon.{}", c.direction.dep_arrow),
+                format!("polygon.{}", c.direction.upward_arrow),
+                format!("polygon.{}", c.direction.cycle_arrow),
+                format!("polygon.{}", c.direction.virtual_arrow),
+                format!("text.{}", c.labels.arc_count),
+                format!("rect.{}", c.labels.arc_count_bg),
+            ]
+            .map(|s| format!("svg.{} {}", c.search.search_active, s))
+            .join(", "),
+            &[("opacity", "0.15"), ("transition", "opacity 0.15s")],
+        ),
+        CssRule::new(
+            &format!(
+                "svg.{} rect.{}, svg.{} text.{}",
+                c.search.search_active,
+                c.search.search_match,
+                c.search.search_active,
+                c.search.search_match,
+            ),
+            &[("opacity", "1")],
+        ),
+        CssRule::new(
+            &format!(
+                "svg.{} rect.{}",
+                c.search.search_active, c.search.search_match_parent,
+            ),
+            &[
+                ("opacity", "0.8"),
+                ("stroke", "#4a90d9"),
+                ("stroke-width", "2"),
+                ("stroke-dasharray", "4 2"),
+            ],
         ),
         // Filter visibility
         CssRule::class(c.labels.hidden_by_filter, &[("display", "none")]),
@@ -639,11 +781,17 @@ mod tests {
         assert!(css.contains(&format!(".{}", CSS.relation.dimmed)));
         assert!(css.contains(&format!(".{}", CSS.relation.shadow_path)));
 
-        // Toolbar styles
-        assert!(css.contains(&format!(".{}", CSS.toolbar.btn)));
+        // Toolbar styles (HTML foreignObject)
+        assert!(css.contains(&format!(".{}", CSS.toolbar.root)));
+        assert!(css.contains(&format!(".{}", CSS.toolbar.html_btn)));
         assert!(css.contains(&format!(".{}", CSS.toolbar.checkbox)));
-        assert!(css.contains(&format!(".{}", CSS.toolbar.separator)));
-        assert!(css.contains(&format!(".{}", CSS.toolbar.disabled)));
+        assert!(css.contains(&format!(".{}", CSS.toolbar.toggle)));
+        assert!(css.contains(&format!(".{}", CSS.toolbar.scope)));
+
+        // Search highlighting
+        assert!(css.contains(&format!(".{}", CSS.search.search_active)));
+        assert!(css.contains(&format!(".{}", CSS.search.search_match)));
+        assert!(css.contains(&format!(".{}", CSS.search.search_match_parent)));
 
         // Labels
         assert!(css.contains(&format!(".{}", CSS.labels.arc_count)));
@@ -653,7 +801,6 @@ mod tests {
         assert!(css.contains(COLORS.nodes.crate_fill));
         assert!(css.contains(COLORS.direction.downward));
         assert!(css.contains(COLORS.relation.dependency));
-        assert!(css.contains(COLORS.toolbar.btn_fill));
     }
 
     #[test]
@@ -905,6 +1052,51 @@ mod tests {
         assert!(
             css.contains(".child-count"),
             "CSS should contain .child-count style"
+        );
+    }
+
+    #[test]
+    fn test_search_active_dims_all_arc_types() {
+        let css = render_styles();
+        let sa = CSS.search.search_active;
+        let cd = &CSS.direction;
+        let cl = &CSS.labels;
+
+        for (element, class, label) in [
+            ("path", cd.dep_arc, "dep-arc"),
+            ("path", cd.cycle_arc, "cycle-arc"),
+            ("path", cd.virtual_arc, "virtual-arc"),
+            ("polygon", cd.dep_arrow, "dep-arrow"),
+            ("polygon", cd.upward_arrow, "upward-arrow"),
+            ("polygon", cd.cycle_arrow, "cycle-arrow"),
+            ("polygon", cd.virtual_arrow, "virtual-arrow"),
+            ("text", cl.arc_count, "arc-count"),
+            ("rect", cl.arc_count_bg, "arc-count-bg"),
+        ] {
+            let selector = format!("svg.{} {}.{}", sa, element, class);
+            assert!(
+                css.contains(&selector),
+                "search-active should dim {label}: expected '{selector}'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_toolbar_root_has_overflow_hidden() {
+        let css = render_styles();
+        let selector = format!(".{}", CSS.toolbar.root);
+        // Find the toolbar-root rule and verify it contains overflow: hidden
+        let rule_start = css
+            .find(&selector)
+            .expect("CSS should contain .toolbar-root");
+        let rule_section = &css[rule_start..];
+        let rule_end = rule_section
+            .find('}')
+            .expect("rule should have closing brace");
+        let rule_body = &rule_section[..rule_end];
+        assert!(
+            rule_body.contains("overflow: hidden"),
+            "toolbar-root should have overflow: hidden, got: {rule_body}"
         );
     }
 

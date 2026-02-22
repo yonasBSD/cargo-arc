@@ -41,9 +41,11 @@ pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
     let mut svg = String::new();
     svg.push_str(&render_header(width, height));
     svg.push_str(&render_styles());
+    svg.push_str("  <g id=\"graph-content\">\n");
     svg.push_str(&render_tree_lines(&positioned_index, ir));
     svg.push_str(&render_nodes(&positioned, &parents));
     svg.push_str(&render_edges(&positioned_index, ir, config.row_height));
+    svg.push_str("  </g>\n");
     svg.push_str(&render_toolbar(width));
     svg.push_str(&render_sidebar(width));
     svg.push_str(&render_script(config, ir, &positioned, &parents));
@@ -152,9 +154,13 @@ mod tests {
         let svg2 = render(&ir2, &RenderConfig::default());
         assert!(svg2.contains("cycle-arc"));
         // Transitive cycle arcs use solid lines (no dasharray) for uniform style
+        // Check only the cycle arc element, not the entire SVG (CSS may contain dasharray for other rules)
+        let cycle_start = svg2.find("cycle-arc").expect("cycle-arc should exist");
+        let cycle_section = &svg2[cycle_start..cycle_start + 200];
         assert!(
-            !svg2.contains("stroke-dasharray"),
-            "Transitive cycle arcs should NOT have stroke-dasharray"
+            !cycle_section.contains("stroke-dasharray"),
+            "Transitive cycle arc element should NOT have stroke-dasharray, got: {}",
+            cycle_section
         );
     }
 
