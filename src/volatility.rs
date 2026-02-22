@@ -41,13 +41,16 @@ impl Volatility {
             Self::High
         }
     }
+}
 
-    fn label(self) -> &'static str {
-        match self {
+impl std::fmt::Display for Volatility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
             Self::Low => "LOW",
             Self::Medium => "MEDIUM",
             Self::High => "HIGH",
-        }
+        };
+        f.write_str(label)
     }
 }
 
@@ -199,12 +202,7 @@ impl VolatilityAnalyzer {
         for (path, count) in &files {
             let level = Volatility::from_count(**count, &self.config);
             let score = scores.get(*path).copied().unwrap_or(0.0);
-            out.push_str(&format!(
-                "  {path}  {}  {:.2}  {}\n",
-                count,
-                score,
-                level.label()
-            ));
+            out.push_str(&format!("  {path}  {}  {:.2}  {}\n", count, score, level));
         }
 
         out
