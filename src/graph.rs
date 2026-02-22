@@ -201,7 +201,7 @@ impl ArcGraph {
         self.edge_indices()
             .filter(|&edge_idx| matches!(self[edge_idx], Edge::Contains))
             .map(|edge_idx| {
-                let (parent, child) = self.edge_endpoints(edge_idx).unwrap();
+                let (parent, child) = self.edge_endpoints(edge_idx).expect("edge should exist");
                 (child, parent)
             })
             .collect()
