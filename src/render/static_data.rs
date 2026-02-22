@@ -92,16 +92,12 @@ struct UsageLocation {
     line: usize,
 }
 
-/// Generate STATIC_DATA JavaScript constant from layout data
-fn generate_static_data(
+fn generate_nodes_js(
     ir: &LayoutIR,
     positioned: &[PositionedItem],
     parents: &HashSet<NodeId>,
 ) -> String {
     let mut lines = Vec::new();
-    lines.push("const STATIC_DATA = {".to_string());
-
-    // Generate nodes object
     lines.push("  nodes: {".to_string());
     for (i, pos) in positioned.iter().enumerate() {
         let item = &ir.items[pos.id];
@@ -123,13 +119,15 @@ fn generate_static_data(
         ));
     }
     lines.push("  },".to_string());
+    lines.join("\n")
+}
 
-    // Generate arcs object
+fn generate_arcs_js(ir: &LayoutIR) -> String {
+    let mut lines = Vec::new();
     lines.push("  arcs: {".to_string());
     for (i, edge) in ir.edges.iter().enumerate() {
         let arc_id = format!("{}-{}", edge.from, edge.to);
 
-        // Format usages from source_locations as structured objects
         let usages_str = if edge.source_locations.is_empty() {
             "[]".to_string()
         } else {
@@ -182,159 +180,105 @@ fn generate_static_data(
         ));
     }
     lines.push("  },".to_string());
+    lines.join("\n")
+}
 
-    // Generate cycles array from edges with cycle_ids
-    {
-        use std::collections::BTreeMap;
-        let mut cycle_map: BTreeMap<usize, (Vec<NodeId>, Vec<String>)> = BTreeMap::new();
-        for edge in &ir.edges {
-            for &cid in &edge.cycle_ids {
-                let entry = cycle_map
-                    .entry(cid)
-                    .or_insert_with(|| (Vec::new(), Vec::new()));
-                // Collect unique node IDs
-                if !entry.0.contains(&edge.from) {
-                    entry.0.push(edge.from);
-                }
-                if !entry.0.contains(&edge.to) {
-                    entry.0.push(edge.to);
-                }
-                // Collect arc IDs
-                let arc_id = format!("{}-{}", edge.from, edge.to);
-                if !entry.1.contains(&arc_id) {
-                    entry.1.push(arc_id);
-                }
-            }
+fn generate_cycles_js(ir: &LayoutIR) -> String {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut cycle_map: BTreeMap<usize, (BTreeSet<NodeId>, BTreeSet<String>)> = BTreeMap::new();
+    for edge in &ir.edges {
+        for &cid in &edge.cycle_ids {
+            let entry = cycle_map.entry(cid).or_default();
+            entry.0.insert(edge.from);
+            entry.0.insert(edge.to);
+            entry.1.insert(format!("{}-{}", edge.from, edge.to));
         }
-        lines.push("  cycles: [".to_string());
-        let cycle_count = cycle_map.len();
-        for (i, (_cid, (nodes, arcs))) in cycle_map.iter().enumerate() {
-            let nodes_str: Vec<String> = nodes.iter().map(|n| format!("\"{}\"", n)).collect();
-            let arcs_str: Vec<String> = arcs.iter().map(|a| format!("\"{}\"", a)).collect();
-            let comma = if i < cycle_count - 1 { "," } else { "" };
-            lines.push(format!(
-                "    {{ nodes: [{}], arcs: [{}] }}{}",
-                nodes_str.join(", "),
-                arcs_str.join(", "),
-                comma
-            ));
-        }
-        lines.push("  ],".to_string());
     }
+    let mut lines = Vec::new();
+    lines.push("  cycles: [".to_string());
+    let cycle_count = cycle_map.len();
+    for (i, (_cid, (nodes, arcs))) in cycle_map.iter().enumerate() {
+        let nodes_str: Vec<String> = nodes.iter().map(|n| format!("\"{}\"", n)).collect();
+        let arcs_str: Vec<String> = arcs.iter().map(|a| format!("\"{}\"", a)).collect();
+        let comma = if i < cycle_count - 1 { "," } else { "" };
+        lines.push(format!(
+            "    {{ nodes: [{}], arcs: [{}] }}{}",
+            nodes_str.join(", "),
+            arcs_str.join(", "),
+            comma
+        ));
+    }
+    lines.push("  ],".to_string());
+    lines.join("\n")
+}
 
-    // Generate classes object (CSS class names for JS)
+/// Generate STATIC_DATA JavaScript constant from layout data
+fn generate_static_data(
+    ir: &LayoutIR,
+    positioned: &[PositionedItem],
+    parents: &HashSet<NodeId>,
+) -> String {
+    [
+        "const STATIC_DATA = {",
+        &generate_nodes_js(ir, positioned, parents),
+        &generate_arcs_js(ir),
+        &generate_cycles_js(ir),
+        &generate_classes_js(),
+        "};",
+    ]
+    .join("\n")
+}
+
+fn generate_classes_js() -> String {
+    let entries: &[(&str, &str)] = &[
+        ("crateNode", CSS.nodes.crate_node),
+        ("module", CSS.nodes.module),
+        ("label", CSS.nodes.label),
+        ("collapseToggle", CSS.nodes.collapse_toggle),
+        ("collapsed", CSS.nodes.collapsed),
+        ("depArc", CSS.direction.dep_arc),
+        ("downward", CSS.direction.downward),
+        ("upward", CSS.direction.upward),
+        ("depArrow", CSS.direction.dep_arrow),
+        ("upwardArrow", CSS.direction.upward_arrow),
+        ("cycleArc", CSS.direction.cycle_arc),
+        ("cycleArrow", CSS.direction.cycle_arrow),
+        ("arcHitarea", CSS.direction.arc_hitarea),
+        ("crateDepArc", CSS.direction.crate_dep_arc),
+        ("virtualArc", CSS.direction.virtual_arc),
+        ("virtualArrow", CSS.direction.virtual_arrow),
+        ("virtualHitarea", CSS.direction.virtual_hitarea),
+        ("selectedCrate", CSS.node_selection.selected_crate),
+        ("selectedModule", CSS.node_selection.selected_module),
+        ("groupMember", CSS.node_selection.group_member),
+        ("cycleMember", CSS.node_selection.cycle_member),
+        ("highlightedArc", CSS.relation.highlighted_arc),
+        ("highlightedArrow", CSS.relation.highlighted_arrow),
+        ("highlightedLabel", CSS.relation.highlighted_label),
+        ("depNode", CSS.relation.dep_node),
+        ("dependentNode", CSS.relation.dependent_node),
+        ("dimmed", CSS.relation.dimmed),
+        ("hasHighlight", CSS.relation.has_highlight),
+        ("shadowPath", CSS.relation.shadow_path),
+        ("glowIncoming", CSS.relation.glow_incoming),
+        ("glowOutgoing", CSS.relation.glow_outgoing),
+        ("viewOptions", CSS.toolbar.view_options),
+        ("toolbarBtn", CSS.toolbar.btn),
+        ("toolbarCheckbox", CSS.toolbar.checkbox),
+        ("checked", CSS.toolbar.checked),
+        ("arcCount", CSS.labels.arc_count),
+        ("arcCountBg", CSS.labels.arc_count_bg),
+        ("arcCountGroup", CSS.labels.arc_count_group),
+        ("hiddenByFilter", CSS.labels.hidden_by_filter),
+    ];
+    let mut lines = Vec::new();
     lines.push("  classes: {".to_string());
-    lines.push(format!("    crateNode: \"{}\",", CSS.nodes.crate_node));
-    lines.push(format!("    module: \"{}\",", CSS.nodes.module));
-    lines.push(format!("    label: \"{}\",", CSS.nodes.label));
-    lines.push(format!(
-        "    collapseToggle: \"{}\",",
-        CSS.nodes.collapse_toggle
-    ));
-    lines.push(format!("    collapsed: \"{}\",", CSS.nodes.collapsed));
-    lines.push(format!("    depArc: \"{}\",", CSS.direction.dep_arc));
-    lines.push(format!("    downward: \"{}\",", CSS.direction.downward));
-    lines.push(format!("    upward: \"{}\",", CSS.direction.upward));
-    lines.push(format!("    depArrow: \"{}\",", CSS.direction.dep_arrow));
-    lines.push(format!(
-        "    upwardArrow: \"{}\",",
-        CSS.direction.upward_arrow
-    ));
-    lines.push(format!("    cycleArc: \"{}\",", CSS.direction.cycle_arc));
-    lines.push(format!(
-        "    cycleArrow: \"{}\",",
-        CSS.direction.cycle_arrow
-    ));
-    lines.push(format!(
-        "    arcHitarea: \"{}\",",
-        CSS.direction.arc_hitarea
-    ));
-    lines.push(format!(
-        "    crateDepArc: \"{}\",",
-        CSS.direction.crate_dep_arc
-    ));
-    lines.push(format!(
-        "    virtualArc: \"{}\",",
-        CSS.direction.virtual_arc
-    ));
-    lines.push(format!(
-        "    virtualArrow: \"{}\",",
-        CSS.direction.virtual_arrow
-    ));
-    lines.push(format!(
-        "    virtualHitarea: \"{}\",",
-        CSS.direction.virtual_hitarea
-    ));
-    lines.push(format!(
-        "    selectedCrate: \"{}\",",
-        CSS.node_selection.selected_crate
-    ));
-    lines.push(format!(
-        "    selectedModule: \"{}\",",
-        CSS.node_selection.selected_module
-    ));
-    lines.push(format!(
-        "    groupMember: \"{}\",",
-        CSS.node_selection.group_member
-    ));
-    lines.push(format!(
-        "    cycleMember: \"{}\",",
-        CSS.node_selection.cycle_member
-    ));
-    lines.push(format!(
-        "    highlightedArc: \"{}\",",
-        CSS.relation.highlighted_arc
-    ));
-    lines.push(format!(
-        "    highlightedArrow: \"{}\",",
-        CSS.relation.highlighted_arrow
-    ));
-    lines.push(format!(
-        "    highlightedLabel: \"{}\",",
-        CSS.relation.highlighted_label
-    ));
-    lines.push(format!("    depNode: \"{}\",", CSS.relation.dep_node));
-    lines.push(format!(
-        "    dependentNode: \"{}\",",
-        CSS.relation.dependent_node
-    ));
-    lines.push(format!("    dimmed: \"{}\",", CSS.relation.dimmed));
-    lines.push(format!(
-        "    hasHighlight: \"{}\",",
-        CSS.relation.has_highlight
-    ));
-    lines.push(format!("    shadowPath: \"{}\",", CSS.relation.shadow_path));
-    lines.push(format!(
-        "    glowIncoming: \"{}\",",
-        CSS.relation.glow_incoming
-    ));
-    lines.push(format!(
-        "    glowOutgoing: \"{}\",",
-        CSS.relation.glow_outgoing
-    ));
-    lines.push(format!(
-        "    viewOptions: \"{}\",",
-        CSS.toolbar.view_options
-    ));
-    lines.push(format!("    toolbarBtn: \"{}\",", CSS.toolbar.btn));
-    lines.push(format!(
-        "    toolbarCheckbox: \"{}\",",
-        CSS.toolbar.checkbox
-    ));
-    lines.push(format!("    checked: \"{}\",", CSS.toolbar.checked));
-    lines.push(format!("    arcCount: \"{}\",", CSS.labels.arc_count));
-    lines.push(format!("    arcCountBg: \"{}\",", CSS.labels.arc_count_bg));
-    lines.push(format!(
-        "    arcCountGroup: \"{}\",",
-        CSS.labels.arc_count_group
-    ));
-    lines.push(format!(
-        "    hiddenByFilter: \"{}\"",
-        CSS.labels.hidden_by_filter
-    ));
+    let last = entries.len() - 1;
+    for (i, (key, value)) in entries.iter().enumerate() {
+        let comma = if i < last { "," } else { "" };
+        lines.push(format!("    {}: \"{}\"{}", key, value, comma));
+    }
     lines.push("  }".to_string());
-
-    lines.push("};".to_string());
     lines.join("\n")
 }
 
