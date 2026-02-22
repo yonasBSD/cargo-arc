@@ -236,11 +236,9 @@ fn parse_crate_local_import(
         return None;
     }
 
-    let empty_set = HashSet::new();
     let module_paths = ctx
         .all_module_paths
-        .get(&normalize_crate_name(ctx.current_crate))
-        .unwrap_or(&empty_set);
+        .get_or_empty(&normalize_crate_name(ctx.current_crate));
     let (target_module, prefix_len) = find_longest_module_prefix(&parts, module_paths);
 
     Some(DependencyRef {
@@ -273,11 +271,9 @@ fn parse_bare_module_import(
         return None;
     }
 
-    let empty_set = HashSet::new();
     let module_paths = ctx
         .all_module_paths
-        .get(&normalize_crate_name(ctx.current_crate))
-        .unwrap_or(&empty_set);
+        .get_or_empty(&normalize_crate_name(ctx.current_crate));
 
     // Child-module has priority (Rust 2018+/2024 semantics:
     // bare `use foo::X` in non-root module means child, not sibling/top-level)
@@ -325,12 +321,8 @@ fn parse_workspace_import(
         return None;
     }
 
-    let empty_set = HashSet::new();
     let target_crate_name = normalize_crate_name(crate_name);
-    let module_paths = ctx
-        .all_module_paths
-        .get(&target_crate_name)
-        .unwrap_or(&empty_set);
+    let module_paths = ctx.all_module_paths.get_or_empty(&target_crate_name);
     let (target_module, prefix_len) = find_longest_module_prefix(&parts[1..], module_paths);
 
     // Entry-point detection: if the resolved target_module is not a known module

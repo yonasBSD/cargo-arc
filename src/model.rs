@@ -64,6 +64,14 @@ pub(crate) fn normalize_crate_name(name: &str) -> String {
 #[derive(Debug, Default, Clone)]
 pub struct ModulePathMap(HashMap<String, HashSet<String>>);
 
+impl ModulePathMap {
+    /// Return the module paths for a crate, or an empty set if unknown.
+    pub fn get_or_empty(&self, key: &str) -> &HashSet<String> {
+        static EMPTY: std::sync::LazyLock<HashSet<String>> = std::sync::LazyLock::new(HashSet::new);
+        self.0.get(key).unwrap_or(&EMPTY)
+    }
+}
+
 impl Deref for ModulePathMap {
     type Target = HashMap<String, HashSet<String>>;
     fn deref(&self) -> &Self::Target {
