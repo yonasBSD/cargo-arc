@@ -180,7 +180,7 @@ const DerivedState = {
    * @returns {HighlightState|null} null when no active selection
    */
   deriveHighlightState(appState, staticData, virtualArcUsages, hiddenByFilter, positions, rowHeight) {
-    const selection = AppState.getActiveSelection(appState);
+    const selection = AppState.getSelection(appState);
     if (selection.mode === 'none') return null;
 
     const result = {

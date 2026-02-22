@@ -7,7 +7,7 @@
 //
 // Selection model: two independent slots (clickSelection, hoverSelection).
 // clickSelection is persistent (survives hover changes), hoverSelection is transient.
-// getActiveSelection() returns click-priority-over-hover semantics.
+// getSelection() returns click-priority-over-hover semantics.
 
 const AppState = {
   /**
@@ -69,12 +69,12 @@ const AppState = {
   // === Selection Operations ===
 
   /**
-   * Resolve the active selection with click-priority-over-hover semantics.
+   * Resolve the current selection with click-priority-over-hover semantics.
    * Returns clickSelection if present, otherwise hoverSelection, otherwise none.
    * @param {Object} state
    * @returns {{ mode: 'click'|'hover'|'none', type: string|null, id: string|null }}
    */
-  getActiveSelection(state) {
+  getSelection(state) {
     if (state.clickSelection.type !== null) {
       return { mode: 'click', type: state.clickSelection.type, id: state.clickSelection.id };
     }
@@ -82,16 +82,6 @@ const AppState = {
       return { mode: 'hover', type: state.hoverSelection.type, id: state.hoverSelection.id };
     }
     return { mode: 'none', type: null, id: null };
-  },
-
-  /**
-   * Get current active selection (delegates to getActiveSelection).
-   * Returns the same { mode, type, id } shape as the old single-slot model.
-   * @param {Object} state
-   * @returns {{ mode: 'click'|'hover'|'none', type: string|null, id: string|null }}
-   */
-  getSelection(state) {
-    return this.getActiveSelection(state);
   },
 
   /**
