@@ -3,6 +3,7 @@ use super::positioning::PositionedItem;
 use crate::layout::{CycleKind, EdgeDirection, ItemKind, LayoutIR, NodeId};
 use crate::model::DependencyKind;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 pub(super) fn render_header(width: f32, height: f32) -> String {
     format!(
@@ -12,6 +13,7 @@ pub(super) fn render_header(width: f32, height: f32) -> String {
     )
 }
 
+#[allow(clippy::cast_possible_truncation)] // SVG pixel coordinates fit in i32
 pub(super) fn render_sidebar(width: f32) -> String {
     let x = if width > 280.0 {
         (width - 280.0) as i32
@@ -32,6 +34,7 @@ pub(super) fn render_sidebar(width: f32) -> String {
     )
 }
 
+#[allow(clippy::cast_possible_truncation)] // SVG pixel coordinates fit in i32
 pub(super) fn render_toolbar(width: f32) -> String {
     let ct = &CSS.toolbar;
     let height = LAYOUT.toolbar.height as i32;
@@ -114,14 +117,16 @@ pub(super) fn render_tree_lines(
                 let data_attrs = format!(r#" data-parent="{}" data-child="{}""#, parent, item.id);
                 let tl = CSS.nodes.tree_line;
 
-                lines.push_str(&format!(
-                    "    <line class=\"{tl}\" x1=\"{line_x}\" y1=\"{parent_bottom}\" x2=\"{line_x}\" y2=\"{child_mid_y}\"{data_attrs}/>\n"
-                ));
+                let _ = writeln!(
+                    lines,
+                    "    <line class=\"{tl}\" x1=\"{line_x}\" y1=\"{parent_bottom}\" x2=\"{line_x}\" y2=\"{child_mid_y}\"{data_attrs}/>"
+                );
 
                 let child_left = child_pos.x;
-                lines.push_str(&format!(
-                    "    <line class=\"{tl}\" x1=\"{line_x}\" y1=\"{child_mid_y}\" x2=\"{child_left}\" y2=\"{child_mid_y}\"{data_attrs}/>\n"
-                ));
+                let _ = writeln!(
+                    lines,
+                    "    <line class=\"{tl}\" x1=\"{line_x}\" y1=\"{child_mid_y}\" x2=\"{child_left}\" y2=\"{child_mid_y}\"{data_attrs}/>"
+                );
             }
         }
     }
@@ -146,7 +151,7 @@ pub(super) fn render_nodes(positioned: &[PositionedItem], parents: &HashSet<Node
 
         // data-parent attribute for modules
         let parent_attr = match &item.kind {
-            ItemKind::Module { parent, .. } => format!(r#" data-parent="{}""#, parent),
+            ItemKind::Module { parent, .. } => format!(r#" data-parent="{parent}""#),
             ItemKind::Crate => String::new(),
         };
 
@@ -161,23 +166,26 @@ pub(super) fn render_nodes(positioned: &[PositionedItem], parents: &HashSet<Node
         let text_x = item.x + LAYOUT.text_padding_x;
         let text_y = item.y + item.height / 2.0 + LAYOUT.text_y_offset;
 
-        nodes.push_str(&format!(
-            "    <rect class=\"{class}\" id=\"node-{}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{rx}\"{parent_attr}{has_children_attr}/>\n",
+        let _ = writeln!(
+            nodes,
+            "    <rect class=\"{class}\" id=\"node-{}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{rx}\"{parent_attr}{has_children_attr}/>",
             item.id, item.x, item.y, item.width, item.height
-        ));
+        );
 
         // Label with optional child-count tspan for parents
         let lbl = CSS.nodes.label;
         let cc = CSS.nodes.child_count;
         if parents.contains(&item.id) {
-            nodes.push_str(&format!(
-                "    <text class=\"{lbl}\" x=\"{text_x}\" y=\"{text_y}\">{label}<tspan id=\"count-{}\" class=\"{cc}\"></tspan></text>\n",
+            let _ = writeln!(
+                nodes,
+                "    <text class=\"{lbl}\" x=\"{text_x}\" y=\"{text_y}\">{label}<tspan id=\"count-{}\" class=\"{cc}\"></tspan></text>",
                 item.id
-            ));
+            );
         } else {
-            nodes.push_str(&format!(
-                "    <text class=\"{lbl}\" x=\"{text_x}\" y=\"{text_y}\">{label}</text>\n"
-            ));
+            let _ = writeln!(
+                nodes,
+                "    <text class=\"{lbl}\" x=\"{text_x}\" y=\"{text_y}\">{label}</text>"
+            );
         }
 
         // Toggle icon (+/-) for parents
@@ -185,10 +193,11 @@ pub(super) fn render_nodes(positioned: &[PositionedItem], parents: &HashSet<Node
             let toggle_x = item.x + item.width - LAYOUT.toggle_offset;
             let toggle_y = item.y + item.height / 2.0 + LAYOUT.toggle_y_offset;
             let ct = CSS.nodes.collapse_toggle;
-            nodes.push_str(&format!(
-                "    <text class=\"{ct}\" data-target=\"{}\" x=\"{}\" y=\"{}\">−</text>\n",
+            let _ = writeln!(
+                nodes,
+                "    <text class=\"{ct}\" data-target=\"{}\" x=\"{}\" y=\"{}\">−</text>",
                 item.id, toggle_x, toggle_y
-            ));
+            );
         }
     }
 
@@ -208,7 +217,7 @@ pub(super) fn render_edges(
     let base_x = positioned_index
         .values()
         .map(|p| p.x + p.width)
-        .fold(0.0_f32, |a, b| a.max(b));
+        .fold(0.0_f32, f32::max);
 
     // Sort edges by type for z-order: Test/Build (back) → Downward Production →
     // Upward Production → Cycle (front). In SVG, later elements render on top.
@@ -245,7 +254,7 @@ pub(super) fn render_edges(
             // Base offset + additional offset per hop
             let arc_offset = LAYOUT.arc_base + (hops * LAYOUT.arc_scale);
             let ctrl_x = base_x + arc_offset;
-            let mid_y = (from_y + to_y) / 2.0;
+            let mid_y = f32::midpoint(from_y, to_y);
 
             // S-shaped Bezier with two Q commands
             let path = format!(
@@ -279,21 +288,27 @@ pub(super) fn render_edges(
             let cycle_ids_attr = if edge.cycle_ids.is_empty() {
                 String::new()
             } else {
-                let ids: Vec<String> = edge.cycle_ids.iter().map(|id| id.to_string()).collect();
+                let ids: Vec<String> = edge
+                    .cycle_ids
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect();
                 format!(r#" data-cycle-ids="{}""#, ids.join(","))
             };
 
             // Hit-area path (invisible, 12px wide, receives pointer events) → hitareas layer
             // Note: source-locations are read from STATIC_DATA in JavaScript, not DOM attributes
             let hitarea = cd.arc_hitarea;
-            hitareas.push_str(&format!(
-                "    <path class=\"{hitarea}\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" data-direction=\"{direction}\"{cycle_ids_attr} d=\"{path}\"/>\n",
+            let _ = writeln!(
+                hitareas,
+                "    <path class=\"{hitarea}\" data-arc-id=\"{edge_id}\" data-from=\"{}\" data-to=\"{}\" data-direction=\"{direction}\"{cycle_ids_attr} d=\"{path}\"/>",
                 edge.from, edge.to
-            ));
+            );
             // Visible path (styled, no pointer events) → base-arcs layer
-            base_arcs.push_str(&format!(
-                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" data-direction=\"{direction}\"{cycle_ids_attr} d=\"{path}\"/>\n"
-            ));
+            let _ = writeln!(
+                base_arcs,
+                "    <path class=\"{arc_class}\" id=\"edge-{edge_id}\" data-arc-id=\"{edge_id}\" data-direction=\"{direction}\"{cycle_ids_attr} d=\"{path}\"/>"
+            );
 
             // Arrow head pointing to target → base-arcs layer
             let arrow = render_arrow(to_x, to_y, arrow_class, &edge_id);
@@ -316,16 +331,15 @@ pub(super) fn render_edges(
     // 6. hitareas: Transparent hit areas (always on top)
     format!(
         r#"  <g id="base-arcs-layer">
-{}  </g>
+{base_arcs}  </g>
   <g id="base-labels-layer"></g>
   <g id="highlight-shadows"></g>
   <g id="highlight-arcs-layer"></g>
   <g id="highlight-labels-layer"></g>
   <g id="hitareas-layer">
-{}  </g>
+{hitareas}  </g>
   <g id="highlight-hitareas-layer"></g>
-"#,
-        base_arcs, hitareas
+"#
     )
 }
 
@@ -337,7 +351,7 @@ fn render_arrow(x: f32, y: f32, class: &str, edge_id: &str) -> String {
         x + LAYOUT.arrow_length,
         y - LAYOUT.arrow_length / 2.0
     ); // top-right
-    let p2 = format!("{},{}", x, y); // tip (left, pointing at node)
+    let p2 = format!("{x},{y}"); // tip (left, pointing at node)
     let p3 = format!(
         "{},{}",
         x + LAYOUT.arrow_length,
@@ -765,8 +779,7 @@ mod tests {
             .expect("Should find cycle-arc path for edge 1-2");
         assert!(
             cycle_path.contains(r#"data-cycle-ids="0""#),
-            "Cycle arc path should have data-cycle-ids attribute, got: {}",
-            cycle_path
+            "Cycle arc path should have data-cycle-ids attribute, got: {cycle_path}"
         );
 
         // Hitarea for cycle arc should also have data-cycle-ids
@@ -776,8 +789,7 @@ mod tests {
             .expect("Should find hitarea for edge 1-2");
         assert!(
             cycle_hitarea.contains(r#"data-cycle-ids="0""#),
-            "Cycle arc hitarea should have data-cycle-ids attribute, got: {}",
-            cycle_hitarea
+            "Cycle arc hitarea should have data-cycle-ids attribute, got: {cycle_hitarea}"
         );
 
         // Non-cycle arc should NOT have data-cycle-ids
@@ -787,8 +799,7 @@ mod tests {
             .expect("Should find normal arc path for edge 1-3");
         assert!(
             !normal_path.contains("data-cycle-ids"),
-            "Non-cycle arc should NOT have data-cycle-ids, got: {}",
-            normal_path
+            "Non-cycle arc should NOT have data-cycle-ids, got: {normal_path}"
         );
 
         // Non-cycle hitarea should NOT have data-cycle-ids
@@ -798,8 +809,7 @@ mod tests {
             .expect("Should find hitarea for edge 1-3");
         assert!(
             !normal_hitarea.contains("data-cycle-ids"),
-            "Non-cycle hitarea should NOT have data-cycle-ids, got: {}",
-            normal_hitarea
+            "Non-cycle hitarea should NOT have data-cycle-ids, got: {normal_hitarea}"
         );
     }
 
@@ -840,8 +850,7 @@ mod tests {
             .expect("Should find cycle-arc path for edge 1-2");
         assert!(
             cycle_path.contains(r#"data-cycle-ids="0,2""#),
-            "Multi-cycle arc should have comma-separated data-cycle-ids, got: {}",
-            cycle_path
+            "Multi-cycle arc should have comma-separated data-cycle-ids, got: {cycle_path}"
         );
 
         // Hitarea should also have comma-separated cycle IDs
@@ -851,8 +860,7 @@ mod tests {
             .expect("Should find hitarea for edge 1-2");
         assert!(
             hitarea.contains(r#"data-cycle-ids="0,2""#),
-            "Multi-cycle hitarea should have comma-separated data-cycle-ids, got: {}",
-            hitarea
+            "Multi-cycle hitarea should have comma-separated data-cycle-ids, got: {hitarea}"
         );
     }
 }

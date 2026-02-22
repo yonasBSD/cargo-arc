@@ -65,6 +65,7 @@ pub struct LayoutEdge {
 impl LayoutEdge {
     /// Create a new edge with auto-computed direction.
     /// `Downward` when `from < to`, `Upward` otherwise.
+    #[must_use]
     pub fn new(from: NodeId, to: NodeId, context: EdgeContext) -> Self {
         let direction = if from < to {
             EdgeDirection::Downward
@@ -82,12 +83,14 @@ impl LayoutEdge {
         }
     }
 
+    #[must_use]
     pub fn with_cycle(mut self, kind: CycleKind, ids: Vec<usize>) -> Self {
         self.cycle = Some(kind);
         self.cycle_ids = ids;
         self
     }
 
+    #[must_use]
     pub fn with_source_locations(mut self, locations: Vec<SourceLocation>) -> Self {
         self.source_locations = locations;
         self
@@ -101,6 +104,7 @@ pub struct LayoutIR {
 }
 
 impl LayoutIR {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -112,9 +116,10 @@ impl LayoutIR {
     }
 }
 
-/// Build LayoutIR from graph and cycle information.
-/// Converts graph nodes to LayoutItems with proper nesting and edges with cycle markers.
-/// CrateDep edges are skipped when ModuleDep edges exist between the same crates.
+/// Build `LayoutIR` from graph and cycle information.
+/// Converts graph nodes to `LayoutItems` with proper nesting and edges with cycle markers.
+/// `CrateDep` edges are skipped when `ModuleDep` edges exist between the same crates.
+#[must_use]
 pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
     let mut ir = LayoutIR::new();
     let edge_to_cycles = build_edge_cycle_index(cycles);
@@ -133,7 +138,7 @@ pub fn build_layout(graph: &ArcGraph, cycles: &[Cycle]) -> LayoutIR {
     ir
 }
 
-/// Convert graph nodes to LayoutItems, returning the NodeIndex → NodeId map.
+/// Convert graph nodes to `LayoutItems`, returning the `NodeIndex` → `NodeId` map.
 fn populate_items(
     ir: &mut LayoutIR,
     graph: &ArcGraph,
@@ -169,8 +174,8 @@ fn populate_items(
     node_map
 }
 
-/// Add dependency edges (CrateDep and ModuleDep) to the layout IR.
-/// CrateDep and ModuleDep arms are unified — they share direction + cycle computation
+/// Add dependency edges (`CrateDep` and `ModuleDep`) to the layout IR.
+/// `CrateDep` and `ModuleDep` arms are unified — they share direction + cycle computation
 /// and only differ in suppression check and source locations.
 fn populate_edges(
     ir: &mut LayoutIR,
@@ -206,7 +211,7 @@ fn populate_edges(
     }
 }
 
-/// Find the source file path for a module by inspecting its outgoing ModuleDep edges.
+/// Find the source file path for a module by inspecting its outgoing `ModuleDep` edges.
 fn module_source_path(graph: &ArcGraph, idx: NodeIndex) -> Option<String> {
     graph
         .edges_directed(idx, petgraph::Direction::Outgoing)
@@ -245,8 +250,8 @@ fn build_edge_cycle_index(cycles: &[Cycle]) -> HashMap<(NodeIndex, NodeIndex), V
 }
 
 /// Determine cycle kind and cycle IDs for an edge.
-/// CrateDep edges are always `Transitive` when in a cycle.
-/// ModuleDep edges check for a back-edge to distinguish `Direct` vs `Transitive`.
+/// `CrateDep` edges are always `Transitive` when in a cycle.
+/// `ModuleDep` edges check for a back-edge to distinguish `Direct` vs `Transitive`.
 fn compute_cycle_info(
     src: NodeIndex,
     dst: NodeIndex,
@@ -288,7 +293,7 @@ impl<N> IncrementEdge for DiGraph<N, usize> {
 }
 
 /// Build a mini dependency graph among sibling nodes based on cross-subtree dependencies.
-/// For each sibling, collects its full subtree and counts how many production ModuleDep
+/// For each sibling, collects its full subtree and counts how many production `ModuleDep`
 /// edges cross from one sibling's subtree to another's.
 fn build_sibling_dep_graph(children: &[NodeIndex], graph: &ArcGraph) -> DiGraph<NodeIndex, usize> {
     // Collect subtrees for each sibling (child + all descendants)
@@ -335,7 +340,7 @@ fn build_sibling_dep_graph(children: &[NodeIndex], graph: &ArcGraph) -> DiGraph<
 /// and `stable_toposort`, which are layout-specific.
 impl ArcGraph {
     /// Hierarchically sorted modules for a parent, collecting children recursively.
-    /// Children are sorted topologically by ModuleDep edges, with alphabetical tie-breaker.
+    /// Children are sorted topologically by `ModuleDep` edges, with alphabetical tie-breaker.
     /// Also considers cross-subtree dependencies: if any node in subtree(A) depends on
     /// any node in subtree(B), then A should appear before B.
     fn ordered_children(
@@ -374,7 +379,7 @@ impl ArcGraph {
             .collect()
     }
 
-    /// Re-sort crates by aggregated inter-crate dependencies (CrateDep + ModuleDep).
+    /// Re-sort crates by aggregated inter-crate dependencies (`CrateDep` + `ModuleDep`).
     /// Builds a crate-level dependency graph and runs stable toposort with alphabetical tie-breaking.
     fn order_crates(&self, crate_indices: &[NodeIndex]) -> Vec<NodeIndex> {
         let mut crate_graph: DiGraph<NodeIndex, usize> = DiGraph::new();
@@ -401,9 +406,9 @@ impl ArcGraph {
         stable_toposort(&crate_graph, |idx| self[idx].name().to_owned())
     }
 
-    /// Find crate pairs where ModuleDep edges exist (so CrateDep can be suppressed).
-    /// Entry-point imports create ModuleDep edges where one or both endpoints
-    /// are Node::Crate (not just Node::Module), so we handle all combinations.
+    /// Find crate pairs where `ModuleDep` edges exist (so `CrateDep` can be suppressed).
+    /// Entry-point imports create `ModuleDep` edges where one or both endpoints
+    /// are `Node::Crate` (not just `Node::Module`), so we handle all combinations.
     fn suppressed_crate_pairs(&self) -> HashSet<(NodeIndex, NodeIndex)> {
         self.edge_references()
             .filter_map(|edge| match edge.weight() {
@@ -469,7 +474,7 @@ mod tests {
         }
 
         /// Add a crate with child modules and Contains edges.
-        /// Path is auto-generated as "/<crate_name>".
+        /// Path is auto-generated as "/<`crate_name`>".
         fn crate_with_modules(&mut self, crate_name: &str, module_names: &[&str]) -> &mut Self {
             let crate_idx = self.graph.add_node(Node::Crate {
                 name: crate_name.to_string(),
@@ -487,7 +492,7 @@ mod tests {
             self
         }
 
-        /// Add a module not attached to any crate (uses NodeIndex::new(0) as crate_idx).
+        /// Add a module not attached to any crate (uses `NodeIndex::new(0)` as `crate_idx`).
         fn orphan_module(&mut self, name: &str) -> &mut Self {
             let idx = self.graph.add_node(Node::Module {
                 name: name.to_string(),
@@ -513,7 +518,7 @@ mod tests {
             self
         }
 
-        /// Add a production ModuleDep edge (empty locations).
+        /// Add a production `ModuleDep` edge (empty locations).
         fn prod_dep(&mut self, from: &str, to: &str) -> &mut Self {
             let src = self.names[from];
             let dst = self.names[to];
@@ -528,7 +533,7 @@ mod tests {
             self
         }
 
-        /// Add a test ModuleDep edge (empty locations).
+        /// Add a test `ModuleDep` edge (empty locations).
         fn test_dep(&mut self, from: &str, to: &str, kind: TestKind) -> &mut Self {
             let src = self.names[from];
             let dst = self.names[to];
@@ -543,7 +548,7 @@ mod tests {
             self
         }
 
-        /// Add a production CrateDep edge.
+        /// Add a production `CrateDep` edge.
         fn crate_dep(&mut self, from: &str, to: &str) -> &mut Self {
             let src = self.names[from];
             let dst = self.names[to];
@@ -557,7 +562,7 @@ mod tests {
             self
         }
 
-        /// Add a test CrateDep edge.
+        /// Add a test `CrateDep` edge.
         fn test_crate_dep(&mut self, from: &str, to: &str, kind: TestKind) -> &mut Self {
             let src = self.names[from];
             let dst = self.names[to];
@@ -571,7 +576,7 @@ mod tests {
             self
         }
 
-        /// Add a ModuleDep with a source location.
+        /// Add a `ModuleDep` with a source location.
         fn prod_dep_with_location(
             &mut self,
             from: &str,
@@ -590,7 +595,10 @@ mod tests {
                     locations: vec![SourceLocation {
                         file: PathBuf::from(file),
                         line,
-                        symbols: symbols.iter().map(|s| s.to_string()).collect(),
+                        symbols: symbols
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect(),
                         module_path: module_path.to_string(),
                     }],
                     context: EdgeContext::production(),
@@ -599,7 +607,7 @@ mod tests {
             self
         }
 
-        /// Add a ModuleDep with a dummy source location (for suppression tests).
+        /// Add a `ModuleDep` with a dummy source location (for suppression tests).
         fn prod_dep_located(&mut self, from: &str, to: &str) -> &mut Self {
             self.prod_dep_with_location(from, to, "src/dummy.rs", 1, &["Sym"], to)
         }
@@ -973,12 +981,12 @@ mod tests {
         la.assert_order("aaa", "bbb");
     }
 
-    /// CrateDep edges are suppressed whenever a ModuleDep exists between the same crate pair,
-    /// regardless of which node types (Crate or Module) the ModuleDep connects.
+    /// `CrateDep` edges are suppressed whenever a `ModuleDep` exists between the same crate pair,
+    /// regardless of which node types (Crate or Module) the `ModuleDep` connects.
     ///
-    /// - `module_to_entry_point`: mod_a (Module) → crate_b (Crate entry point)
-    /// - `crate_to_crate`: crate_a (Crate root/lib.rs) → crate_b (Crate entry point)
-    /// - `crate_to_module`: crate_a (Crate root/lib.rs) → mod_b (Module, not entry point)
+    /// - `module_to_entry_point`: `mod_a` (Module) → `crate_b` (Crate entry point)
+    /// - `crate_to_crate`: `crate_a` (Crate root/lib.rs) → `crate_b` (Crate entry point)
+    /// - `crate_to_module`: `crate_a` (Crate root/lib.rs) → `mod_b` (Module, not entry point)
     struct SuppressionCase {
         crate_a_modules: &'static [&'static str],
         crate_b_modules: &'static [&'static str],

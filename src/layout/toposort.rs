@@ -8,7 +8,7 @@ use petgraph::visit::EdgeRef;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-/// Alias for local subgraph node indices (to distinguish from original ArcGraph `NodeIndex`).
+/// Alias for local subgraph node indices (to distinguish from original `ArcGraph` `NodeIndex`).
 type LocalIdx = petgraph::graph::NodeIndex;
 
 /// Stable topological sort using Kahn's algorithm.
@@ -52,7 +52,10 @@ pub(super) fn stable_toposort(
         if count == 0 {
             f64::INFINITY
         } else {
-            sum as f64 / count as f64
+            #[allow(clippy::cast_precision_loss)] // node counts stay well below 2^52
+            {
+                sum as f64 / count as f64
+            }
         }
     };
 
@@ -286,7 +289,7 @@ mod tests {
     ) -> (DiGraph<NodeIndex, usize>, Vec<String>) {
         let mut graph = DiGraph::new();
         let base = 10;
-        let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        let names: Vec<String> = names.iter().map(std::string::ToString::to_string).collect();
         let locals: Vec<LocalIdx> = names
             .iter()
             .enumerate()
@@ -304,7 +307,7 @@ mod tests {
     }
 
     /// Build a `ToposortGraph` from a test graph and name function.
-    fn build_ctx<'a, F>(graph: &'a DiGraph<NodeIndex, usize>, get_name: F) -> ToposortGraph<'a, F> {
+    fn build_ctx<F>(graph: &DiGraph<NodeIndex, usize>, get_name: F) -> ToposortGraph<'_, F> {
         ToposortGraph {
             node_to_orig: graph
                 .node_indices()

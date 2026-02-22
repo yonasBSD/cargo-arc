@@ -2,6 +2,7 @@ use super::constants::{
     BLUE, BLUE_100, BLUE_300, COLORS, CSS, GRAY_50, GRAY_200, GRAY_400, GRAY_600, GREEN, LAYOUT,
     ORANGE, ORANGE_100, ORANGE_300, PURPLE,
 };
+use std::fmt::Write as _;
 
 struct CssRule {
     selector: String,
@@ -20,10 +21,11 @@ impl CssRule {
     }
 
     fn class(name: &str, properties: &[(&str, &str)]) -> Self {
-        Self::new(&format!(".{}", name), properties)
+        Self::new(&format!(".{name}"), properties)
     }
 }
 
+#[allow(clippy::too_many_lines)] // single cohesive CSS rule list
 fn build_css_rules() -> Vec<CssRule> {
     let n = &COLORS.nodes;
     let d = &COLORS.direction;
@@ -506,7 +508,7 @@ fn build_css_rules() -> Vec<CssRule> {
             c.sidebar.root,
             &[
                 ("background", GRAY_50),
-                ("border", &format!("1px solid {}", GRAY_200)),
+                ("border", &format!("1px solid {GRAY_200}")),
                 ("border-radius", "8px"),
                 ("box-shadow", &LAYOUT.sidebar.box_shadow_css()),
                 ("font-family", "monospace"),
@@ -525,7 +527,7 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("justify-content", "space-between"),
                 ("align-items", "center"),
                 ("padding", "8px 10px"),
-                ("border-bottom", &format!("1px solid {}", GRAY_200)),
+                ("border-bottom", &format!("1px solid {GRAY_200}")),
             ],
         ),
         CssRule::class(
@@ -647,7 +649,7 @@ fn build_css_rules() -> Vec<CssRule> {
             c.sidebar.divider,
             &[
                 ("border", "none"),
-                ("border-top", &format!("1px solid {}", GRAY_200)),
+                ("border-top", &format!("1px solid {GRAY_200}")),
                 ("margin", "6px 0"),
             ],
         ),
@@ -655,7 +657,7 @@ fn build_css_rules() -> Vec<CssRule> {
             c.sidebar.footer,
             &[
                 ("padding", "6px 10px"),
-                ("border-top", &format!("1px solid {}", GRAY_200)),
+                ("border-top", &format!("1px solid {GRAY_200}")),
                 ("font-size", "10px"),
                 ("color", GRAY_400),
             ],
@@ -678,24 +680,24 @@ fn build_css_rules() -> Vec<CssRule> {
         ),
         CssRule::class(
             c.sidebar.node_from,
-            &[("border", &format!("2px solid {}", PURPLE))],
+            &[("border", &format!("2px solid {PURPLE}"))],
         ),
         CssRule::class(
             c.sidebar.node_to,
-            &[("border", &format!("2px solid {}", GREEN))],
+            &[("border", &format!("2px solid {GREEN}"))],
         ),
         CssRule::new(
             &format!(".{}.{}", c.sidebar.node_crate, c.sidebar.node_selected),
             &[
                 ("background", BLUE_300),
-                ("border", &format!("2px solid {}", BLUE)),
+                ("border", &format!("2px solid {BLUE}")),
             ],
         ),
         CssRule::new(
             &format!(".{}.{}", c.sidebar.node_module, c.sidebar.node_selected),
             &[
                 ("background", ORANGE_300),
-                ("border", &format!("2px solid {}", ORANGE)),
+                ("border", &format!("2px solid {ORANGE}")),
             ],
         ),
         // Transient sidebar mode (hover preview): hide close button and collapse toggles
@@ -733,14 +735,14 @@ pub(super) fn render_styles() -> String {
     let mut css = String::from("  <style>\n");
     for rule in &rules {
         if rule.properties.is_empty() {
-            css.push_str(&format!("    {} {{ }}\n", rule.selector));
+            let _ = writeln!(css, "    {} {{ }}", rule.selector);
         } else {
-            css.push_str(&format!("    {} {{ ", rule.selector));
+            let _ = write!(css, "    {} {{ ", rule.selector);
             for (i, (prop, val)) in rule.properties.iter().enumerate() {
                 if i > 0 {
                     css.push(' ');
                 }
-                css.push_str(&format!("{}: {};", prop, val));
+                let _ = write!(css, "{prop}: {val};");
             }
             css.push_str(" }\n");
         }
@@ -976,8 +978,7 @@ mod tests {
         let rect_dim_section = &css[rect_dim_start..rect_dim_start + 300];
         assert!(
             rect_dim_section.contains(&format!(":not(.{})", CSS.node_selection.group_member)),
-            "rect dimming rule should exclude .group-member, got: {}",
-            rect_dim_section
+            "rect dimming rule should exclude .group-member, got: {rect_dim_section}"
         );
     }
 
@@ -1073,7 +1074,7 @@ mod tests {
             ("text", cl.arc_count, "arc-count"),
             ("rect", cl.arc_count_bg, "arc-count-bg"),
         ] {
-            let selector = format!("svg.{} {}.{}", sa, element, class);
+            let selector = format!("svg.{sa} {element}.{class}");
             assert!(
                 css.contains(&selector),
                 "search-active should dim {label}: expected '{selector}'"

@@ -24,6 +24,7 @@ pub enum Cargo {
     Arc(Args),
 }
 
+#[allow(clippy::struct_excessive_bools)] // CLI flags map 1:1 to fields
 #[derive(Parser)]
 pub struct Args {
     /// Output file (default: stdout)
@@ -80,6 +81,7 @@ pub struct Args {
     pub hir: bool,
 }
 
+#[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 pub fn run(args: Args) -> Result<()> {
     if args.debug {
         tracing_subscriber::fmt()
@@ -98,7 +100,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     if args.volatility {
-        return run_volatility_report(&args.manifest_path, vol_config, &args.output);
+        return run_volatility_report(&args.manifest_path, vol_config, args.output.as_ref());
     }
 
     let feature_config = FeatureConfig {
@@ -123,7 +125,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let svg = render(&layout, &RenderConfig::default());
-    write_output(&svg, &args.output)
+    write_output(&svg, args.output.as_ref())
 }
 
 fn resolve_repo_path(manifest_path: &Path) -> &Path {
@@ -133,7 +135,7 @@ fn resolve_repo_path(manifest_path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
-fn write_output(content: &str, output: &Option<PathBuf>) -> Result<()> {
+fn write_output(content: &str, output: Option<&PathBuf>) -> Result<()> {
     match output {
         Some(path) => fs::write(path, content)?,
         None => io::stdout().write_all(content.as_bytes())?,
@@ -144,7 +146,7 @@ fn write_output(content: &str, output: &Option<PathBuf>) -> Result<()> {
 fn run_volatility_report(
     manifest_path: &Path,
     vol_config: VolatilityConfig,
-    output: &Option<PathBuf>,
+    output: Option<&PathBuf>,
 ) -> Result<()> {
     let repo_path = resolve_repo_path(manifest_path);
     let mut analyzer = VolatilityAnalyzer::new(vol_config);

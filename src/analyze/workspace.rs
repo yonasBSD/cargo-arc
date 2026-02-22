@@ -136,7 +136,7 @@ fn should_include_crate(
     include
 }
 
-/// Builds a CrateInfo from a package and its resolved dependencies.
+/// Builds a `CrateInfo` from a package and its resolved dependencies.
 fn build_crate_info(
     pkg: &cargo_metadata::Package,
     prod_deps: &DepsMap,
@@ -154,7 +154,7 @@ fn build_crate_info(
     }
 }
 
-/// Filters and builds CrateInfo list from workspace packages.
+/// Filters and builds `CrateInfo` list from workspace packages.
 fn build_filtered_crates(
     metadata: &cargo_metadata::Metadata,
     prod_deps: &DepsMap,
@@ -206,6 +206,7 @@ fn build_filtered_crates(
 /// Analyzes a workspace and returns all member crates.
 /// `manifest_path` should point to a Cargo.toml.
 /// `feature_config` controls which features are activated for dependency resolution.
+#[allow(clippy::missing_errors_doc)]
 pub fn analyze_workspace(
     manifest_path: &Path,
     feature_config: &FeatureConfig,
@@ -419,30 +420,25 @@ mod tests {
             let names: Vec<&str> = crates.iter().map(|c| c.name.as_str()).collect();
             assert!(
                 names.contains(&"web-utils"),
-                "should have web-utils, got: {:?}",
-                names
+                "should have web-utils, got: {names:?}"
             );
             assert!(
                 names.contains(&"core"),
-                "should have core (dependency), got: {:?}",
-                names
+                "should have core (dependency), got: {names:?}"
             );
             assert!(
                 names.contains(&"testlib"),
-                "should have testlib (normal dep of web-utils), got: {:?}",
-                names
+                "should have testlib (normal dep of web-utils), got: {names:?}"
             );
             assert!(
                 !names.contains(&"server-utils"),
-                "should NOT have server-utils, got: {:?}",
-                names
+                "should NOT have server-utils, got: {names:?}"
             );
             assert!(
                 !names.contains(&"core-utils"),
-                "should NOT have core-utils, got: {:?}",
-                names
+                "should NOT have core-utils, got: {names:?}"
             );
-            assert_eq!(names.len(), 3, "expected 3 crates, got: {:?}", names);
+            assert_eq!(names.len(), 3, "expected 3 crates, got: {names:?}");
         }
 
         #[test]
@@ -457,25 +453,21 @@ mod tests {
             let names: Vec<&str> = crates.iter().map(|c| c.name.as_str()).collect();
             assert!(
                 names.contains(&"server-utils"),
-                "should have server-utils, got: {:?}",
-                names
+                "should have server-utils, got: {names:?}"
             );
             assert!(
                 names.contains(&"core"),
-                "should have core (dependency), got: {:?}",
-                names
+                "should have core (dependency), got: {names:?}"
             );
             assert!(
                 !names.contains(&"web-utils"),
-                "should NOT have web-utils, got: {:?}",
-                names
+                "should NOT have web-utils, got: {names:?}"
             );
             assert!(
                 !names.contains(&"core-utils"),
-                "should NOT have core-utils, got: {:?}",
-                names
+                "should NOT have core-utils, got: {names:?}"
             );
-            assert_eq!(names.len(), 2, "expected 2 crates, got: {:?}", names);
+            assert_eq!(names.len(), 2, "expected 2 crates, got: {names:?}");
         }
 
         #[test]
@@ -510,7 +502,7 @@ mod tests {
             assert!(names.contains(&"testlib"), "should have testlib");
             assert!(names.contains(&"shared-lib"), "should have shared-lib");
             assert!(names.contains(&"build-helper"), "should have build-helper");
-            assert_eq!(names.len(), 7, "expected all 7 crates, got: {:?}", names);
+            assert_eq!(names.len(), 7, "expected all 7 crates, got: {names:?}");
         }
     }
 }

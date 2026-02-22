@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 /// An elementary cycle in the module dependency graph (ordered path).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cycle {
-    /// Ordered path of NodeIndices forming this elementary cycle.
+    /// Ordered path of `NodeIndices` forming this elementary cycle.
     pub path: Vec<NodeIndex>,
 }
 
@@ -16,6 +16,7 @@ impl Cycle {
     /// Iterate over the directed edges of this cycle.
     ///
     /// For a cycle `[A, B, C]` this yields `(A,B), (B,C), (C,A)`.
+    #[allow(clippy::missing_panics_doc)]
     pub fn edges(&self) -> impl Iterator<Item = (NodeIndex, NodeIndex)> + '_ {
         self.path
             .windows(2)
@@ -153,7 +154,7 @@ impl ElementaryCycles for petgraph::graph::DiGraph<NodeIndex, ()> {
                 let scc_set: HashSet<_> = scc.into_iter().collect();
                 self.filter_map(
                     |idx, &weight| scc_set.contains(&idx).then_some(weight),
-                    |_, _| Some(()),
+                    |_, ()| Some(()),
                 )
                 .johnson_cycles()
             })

@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 /// Parsed JS module metadata from @module/@deps/@config annotations.
 #[derive(Debug, Clone)]
 struct JsModuleInfo {
@@ -9,7 +11,10 @@ struct JsModuleInfo {
 
 /// Check if a filename is a module file (not test, not hidden).
 fn is_module_file(file_name: &str) -> bool {
-    file_name.ends_with(".js") && !file_name.ends_with(".test.js")
+    std::path::Path::new(file_name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("js"))
+        && !file_name.ends_with(".test.js")
 }
 
 /// Parse @module, @deps, @config from first 5 lines of JS content.
@@ -41,7 +46,7 @@ fn parse_js_annotations(content: &str, file_name: &str) -> JsModuleInfo {
     }
 
     JsModuleInfo {
-        name: name.unwrap_or_else(|| panic!("missing @module annotation in {}", file_name)),
+        name: name.unwrap_or_else(|| panic!("missing @module annotation in {file_name}")),
         file_name: file_name.to_string(),
         deps,
         config_keys,
@@ -65,9 +70,12 @@ fn topo_sort(modules: &[JsModuleInfo]) -> Vec<usize> {
     // Validate all deps exist
     for m in modules {
         for dep in &m.deps {
-            if !name_to_idx.contains_key(dep.as_str()) {
-                panic!("unknown dependency '{}' in module '{}'", dep, m.name);
-            }
+            assert!(
+                name_to_idx.contains_key(dep.as_str()),
+                "unknown dependency '{}' in module '{}'",
+                dep,
+                m.name
+            );
         }
     }
 
@@ -116,17 +124,17 @@ fn topo_sort(modules: &[JsModuleInfo]) -> Vec<usize> {
             .filter(|(i, _)| !result.contains(i))
             .map(|(_, m)| m.name.as_str())
             .collect();
-        panic!("cycle detected among modules: {:?}", remaining);
+        panic!("cycle detected among modules: {remaining:?}");
     }
 
     result
 }
 
-/// Extract lines that are not comments and not in the CommonJS export block.
+/// Extract lines that are not comments and not in the `CommonJS` export block.
 ///
 /// Skips:
-/// - Lines starting with `//` or `*` (comments, JSDoc)
-/// - Everything from `if (typeof module` to end of file (CommonJS export)
+/// - Lines starting with `//` or `*` (comments, `JSDoc`)
+/// - Everything from `if (typeof module` to end of file (`CommonJS` export)
 fn active_source_lines(source: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     for line in source.lines() {
@@ -152,7 +160,11 @@ fn validate_source_deps(modules: &[JsModuleInfo], sources: &[&str]) {
     let all_names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
 
     for (i, module) in modules.iter().enumerate() {
-        let declared: HashSet<&str> = module.deps.iter().map(|s| s.as_str()).collect();
+        let declared: HashSet<&str> = module
+            .deps
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
         let lines = active_source_lines(sources[i]);
 
         for name in &all_names {
@@ -162,22 +174,24 @@ fn validate_source_deps(modules: &[JsModuleInfo], sources: &[&str]) {
             if declared.contains(name) {
                 continue;
             }
-            let pattern = format!("{}.", name);
+            let pattern = format!("{name}.");
             for line in &lines {
-                if line.contains(&pattern) {
-                    panic!(
-                        "module '{}' ({}) references {}.* but '{}' is not in @deps",
-                        module.name, module.file_name, name, name
-                    );
-                }
+                assert!(
+                    !line.contains(&pattern),
+                    "module '{}' ({}) references {}.* but '{}' is not in @deps",
+                    module.name,
+                    module.file_name,
+                    name,
+                    name
+                );
             }
         }
     }
 }
 
-/// Generate Rust source code for js_modules.rs.
+/// Generate Rust source code for `js_modules.rs`.
 ///
-/// Output: struct JsModule + const MODULES array with include_str!().
+/// Output: struct `JsModule` + const MODULES array with `include_str`!().
 fn generate_modules_rs(modules: &[JsModuleInfo], sorted_indices: &[usize]) -> String {
     let mut out = String::new();
     out.push_str("#[allow(dead_code)]\n");
@@ -191,16 +205,17 @@ fn generate_modules_rs(modules: &[JsModuleInfo], sorted_indices: &[usize]) -> St
     for &idx in sorted_indices {
         let m = &modules[idx];
         out.push_str("    JsModule {\n");
-        out.push_str(&format!("        name: \"{}\",\n", m.name));
-        out.push_str(&format!(
-            "        source: include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/js/{}\")),\n",
+        let _ = writeln!(out, "        name: \"{}\",", m.name);
+        let _ = writeln!(
+            out,
+            "        source: include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/js/{}\")),",
             m.file_name
-        ));
+        );
         if m.config_keys.is_empty() {
             out.push_str("        config_keys: &[],\n");
         } else {
-            let keys: Vec<String> = m.config_keys.iter().map(|k| format!("\"{}\"", k)).collect();
-            out.push_str(&format!("        config_keys: &[{}],\n", keys.join(", ")));
+            let keys: Vec<String> = m.config_keys.iter().map(|k| format!("\"{k}\"")).collect();
+            let _ = writeln!(out, "        config_keys: &[{}],", keys.join(", "));
         }
         out.push_str("    },\n");
     }

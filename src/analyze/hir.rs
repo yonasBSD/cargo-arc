@@ -3,6 +3,7 @@
 //! Only `FeatureConfig` is always available. All HIR functions require `feature = "hir"`.
 
 // FeatureConfig is always available (no ra_ap_* dependency)
+#[allow(clippy::struct_excessive_bools)] // CLI flags map 1:1 to fields
 #[derive(Debug, Clone, Default)]
 pub struct FeatureConfig {
     pub features: Vec<String>,

@@ -40,7 +40,7 @@ pub(crate) struct DepInfo<'a> {
 }
 
 impl<'a> DepInfo<'a> {
-    /// Extract dependency info from a cargo metadata NodeDep
+    /// Extract dependency info from a cargo metadata `NodeDep`
     pub(super) fn from_node_dep(dep: &'a NodeDep, workspace_members: &WorkspaceCrates) -> Self {
         let name = dep.name.as_str();
 
@@ -87,7 +87,7 @@ impl<'a> DepInfo<'a> {
 }
 
 /// Parses a feature string that may have a crate prefix.
-/// Returns (crate_filter, feature_name) where crate_filter is Some if format is "crate/feature".
+/// Returns (`crate_filter`, `feature_name`) where `crate_filter` is Some if format is "crate/feature".
 pub(super) fn parse_feature(feature: &str) -> (Option<&str>, &str) {
     match feature.split_once('/') {
         Some((crate_name, feat)) => (Some(crate_name), feat),
@@ -116,7 +116,7 @@ fn package_matches_features(
 }
 
 /// Finds seed crates that define the requested features.
-/// Returns all workspace members if no features specified or all_features is set.
+/// Returns all workspace members if no features specified or `all_features` is set.
 #[instrument(skip_all, fields(features = ?feature_config.features, all_features = feature_config.all_features))]
 pub(super) fn find_seed_crates(
     metadata: &Metadata,

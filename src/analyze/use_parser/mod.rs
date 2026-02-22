@@ -58,7 +58,7 @@ fn promote_to_test(base: &EdgeContext) -> EdgeContext {
     }
 }
 
-/// Shared `visit_item_mod` for cfg(test) scope tracking via EdgeContext.
+/// Shared `visit_item_mod` for cfg(test) scope tracking via `EdgeContext`.
 /// Used by both `UseCollector` and `PathRefCollector` — the logic is identical.
 macro_rules! impl_cfg_test_visit_item_mod {
     () => {
@@ -141,8 +141,7 @@ pub(crate) fn collect_all_path_refs(
                 let line = node
                     .segments
                     .first()
-                    .map(|s| s.ident.span().start().line)
-                    .unwrap_or(0);
+                    .map_or(0, |s| s.ident.span().start().line);
                 self.paths
                     .push((path_str, line, self.context.clone(), self.inline_depth));
             }
@@ -390,7 +389,7 @@ fn join_module_segments(base_path: &str, levels_up: usize, suffix: &[&str]) -> O
 }
 
 /// Resolve a single use path through the resolution chain: crate-local → bare module → workspace.
-/// Handles glob paths (`crate::module::*`) by stripping the glob and setting target_item = "*".
+/// Handles glob paths (`crate::module::*`) by stripping the glob and setting `target_item` = "*".
 fn resolve_single_path(
     ctx: &ResolutionContext,
     path: &str,
@@ -434,11 +433,11 @@ fn resolve_single_path(
 
 /// Parse syn-based use items, extracting workspace-relevant dependencies.
 ///
-/// Returns DependencyRefs for:
+/// Returns `DependencyRefs` for:
 /// - Crate-local imports (`use crate::module`)
-/// - Workspace crate imports (`use other_crate::module` where other_crate is in workspace)
+/// - Workspace crate imports (`use other_crate::module` where `other_crate` is in workspace)
 ///
-/// Deduplicates by full_target() to keep distinct symbols but avoid duplicates.
+/// Deduplicates by `full_target()` to keep distinct symbols but avoid duplicates.
 pub(crate) fn parse_workspace_dependencies(
     use_items: &[(syn::ItemUse, EdgeContext, usize)],
     ctx: &ResolutionContext,

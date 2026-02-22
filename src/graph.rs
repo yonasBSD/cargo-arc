@@ -16,10 +16,12 @@ pub enum Node {
 }
 
 impl Node {
+    #[must_use]
     pub fn is_crate(&self) -> bool {
         matches!(self, Node::Crate { .. })
     }
 
+    #[must_use]
     pub fn name(&self) -> &str {
         match self {
             Node::Crate { name, .. } | Node::Module { name, .. } => name,
@@ -41,6 +43,7 @@ pub enum Edge {
 
 impl Edge {
     /// Returns the edge context, if this is a dependency edge (not Contains).
+    #[must_use]
     pub fn context(&self) -> Option<&EdgeContext> {
         match self {
             Edge::CrateDep { context } | Edge::ModuleDep { context, .. } => Some(context),
@@ -49,19 +52,23 @@ impl Edge {
     }
 
     /// Whether this edge represents a production dependency.
+    #[must_use]
     pub fn is_production(&self) -> bool {
         self.context()
             .is_some_and(|c| c.kind == DependencyKind::Production)
     }
 
+    #[must_use]
     pub fn is_production_module_dep(&self) -> bool {
         matches!(self, Edge::ModuleDep { context, .. } if context.kind == DependencyKind::Production)
     }
 
+    #[must_use]
     pub fn is_production_crate_dep(&self) -> bool {
         matches!(self, Edge::CrateDep { context } if context.kind == DependencyKind::Production)
     }
 
+    #[must_use]
     pub fn is_test_crate_dep(&self) -> bool {
         matches!(self, Edge::CrateDep { context } if matches!(context.kind, DependencyKind::Test(_)))
     }
@@ -102,12 +109,14 @@ impl std::fmt::Debug for ArcGraph {
 }
 
 impl ArcGraph {
+    #[must_use]
     pub fn new() -> Self {
         Self(DiGraph::new())
     }
 
-    /// Subgraph containing only Production ModuleDep edges, with node weights
+    /// Subgraph containing only Production `ModuleDep` edges, with node weights
     /// mapping back to original `NodeIndex` values.
+    #[must_use]
     pub fn production_subgraph(&self) -> DiGraph<NodeIndex, ()> {
         self.filter_map(
             |idx, _| Some(idx),
@@ -117,6 +126,7 @@ impl ArcGraph {
 
     /// Return the crate node that owns `idx`. For `Node::Module` this is
     /// the stored `crate_idx`; for `Node::Crate` it is `idx` itself.
+    #[must_use]
     pub fn owning_crate(&self, idx: NodeIndex) -> NodeIndex {
         match &self[idx] {
             Node::Module { crate_idx, .. } => *crate_idx,
@@ -128,12 +138,13 @@ impl ArcGraph {
     ///
     /// A crate is reachable if:
     /// 1. It is an "anchor" — has Contains edges (= has modules to visualize), OR
-    /// 2. It is transitively reachable from an anchor via production CrateDep edges.
+    /// 2. It is transitively reachable from an anchor via production `CrateDep` edges.
     ///
     /// Crates not in this set are test infrastructure (dev-dep crates and their
     /// transitive production dependencies) and should be pruned from the layout.
     ///
-    /// When test CrateDep edges exist (--include-tests), all crates are reachable.
+    /// When test `CrateDep` edges exist (--include-tests), all crates are reachable.
+    #[must_use]
     pub fn production_reachable(&self) -> HashSet<NodeIndex> {
         // If test CrateDep edges exist, all crates are reachable (no pruning)
         if self
@@ -175,6 +186,7 @@ impl ArcGraph {
     }
 
     /// Collect all descendants of a node (including itself) via Contains edges.
+    #[must_use]
     pub fn containment_subtree(&self, root: NodeIndex) -> HashSet<NodeIndex> {
         let mut subtree = HashSet::new();
         let mut stack = vec![root];
@@ -191,12 +203,15 @@ impl ArcGraph {
     }
 
     /// Whether `parent` has a `Contains` edge pointing to `child`.
+    #[must_use]
     pub fn contains_child(&self, parent: NodeIndex, child: NodeIndex) -> bool {
         self.edges(parent)
             .any(|edge| edge.target() == child && matches!(edge.weight(), Edge::Contains))
     }
 
     /// Build a map from child → parent for all `Contains` edges.
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn parent_map(&self) -> HashMap<NodeIndex, NodeIndex> {
         self.edge_indices()
             .filter(|&edge_idx| matches!(self[edge_idx], Edge::Contains))
@@ -208,6 +223,7 @@ impl ArcGraph {
     }
 
     /// Build a unified graph from crate and module analysis data.
+    #[must_use]
     pub fn build(crates: &[CrateInfo], modules: &[ModuleTree]) -> Self {
         let mut builder = GraphBuilder::new();
         builder.add_crates(crates);

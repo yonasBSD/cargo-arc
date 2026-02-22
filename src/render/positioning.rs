@@ -3,16 +3,17 @@ use crate::layout::{ItemKind, LayoutIR, NodeId};
 use std::collections::HashMap;
 
 /// Calculate text width based on character count
+#[allow(clippy::cast_precision_loss)] // label lengths stay well below 2^23
 fn calculate_text_width(text: &str) -> f32 {
     text.len() as f32 * LAYOUT.char_width
 }
 
-/// Calculate uniform box width from longest label in LayoutIR
+/// Calculate uniform box width from longest label in `LayoutIR`
 pub(super) fn calculate_box_width(ir: &LayoutIR) -> f32 {
     ir.items
         .iter()
         .map(|item| calculate_text_width(&item.label))
-        .fold(0.0_f32, |a, b| a.max(b))
+        .fold(0.0_f32, f32::max)
         + LAYOUT.box_padding
 }
 
@@ -30,7 +31,7 @@ pub(super) fn calculate_max_arc_width(
             let hops = ((to.y - from.y).abs() / row_height).round().max(1.0);
             Some(LAYOUT.arc_base + hops * LAYOUT.arc_scale + LAYOUT.arrow_length)
         })
-        .fold(0.0_f32, |a, b| a.max(b))
+        .fold(0.0_f32, f32::max)
 }
 
 /// Positioned item for rendering
@@ -44,6 +45,7 @@ pub(super) struct PositionedItem {
     pub kind: ItemKind,
 }
 
+#[allow(clippy::cast_precision_loss)] // nesting depth and item count stay well below 2^23
 pub(super) fn calculate_positions(
     ir: &LayoutIR,
     config: &RenderConfig,
@@ -74,6 +76,7 @@ pub(super) fn calculate_positions(
         .collect()
 }
 
+#[allow(clippy::cast_precision_loss)] // item count stays well below 2^23
 pub(super) fn calculate_canvas_size(
     positioned: &[PositionedItem],
     config: &RenderConfig,
@@ -93,7 +96,7 @@ pub(super) fn calculate_canvas_size(
     let max_x = positioned
         .iter()
         .map(|p| p.x + p.width)
-        .fold(0.0_f32, |a, b| a.max(b));
+        .fold(0.0_f32, f32::max);
     // Use calculated max_arc_width, with a minimum buffer for short/no edges
     let arc_space = max_arc_width.max(LAYOUT.arc_min_space);
     // Reserve space for the sidebar (280px min-width + shadow padding) so it
@@ -165,10 +168,7 @@ mod tests {
         let expected_min = box_width + 163.0;
         assert!(
             width >= expected_min,
-            "canvas width {} should be >= {} (box_width {} + arc 163)",
-            width,
-            expected_min,
-            box_width
+            "canvas width {width} should be >= {expected_min} (box_width {box_width} + arc 163)"
         );
     }
 
@@ -192,8 +192,7 @@ mod tests {
         assert_eq!(widths.len(), 2, "Expected 2 positioned items");
         assert_eq!(
             widths[0], widths[1],
-            "All boxes should have same width: {:?}",
-            widths
+            "All boxes should have same width: {widths:?}"
         );
     }
 

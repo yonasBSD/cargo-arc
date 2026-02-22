@@ -31,6 +31,7 @@ pub enum AnalysisBackend {
 impl AnalysisBackend {
     /// Create the appropriate backend.
     /// Default: Syn. Hir only when `use_hir == true` AND `feature = "hir"` is compiled.
+    #[allow(clippy::missing_errors_doc)]
     pub fn new(
         manifest_path: &Path,
         feature_config: &FeatureConfig,
@@ -48,6 +49,7 @@ impl AnalysisBackend {
     }
 
     /// Collect all module paths for a crate (lightweight).
+    #[must_use]
     pub fn collect_module_paths(&self, crate_info: &CrateInfo) -> HashSet<String> {
         match self {
             Self::Syn { include_tests } => {
@@ -66,6 +68,7 @@ impl AnalysisBackend {
     }
 
     /// Full module analysis with dependency extraction.
+    #[allow(clippy::missing_errors_doc)]
     pub fn analyze_modules(
         &self,
         crate_info: &CrateInfo,

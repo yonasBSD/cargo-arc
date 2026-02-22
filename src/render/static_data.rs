@@ -89,7 +89,7 @@ struct CycleData {
 ///
 /// Inverts the Location->Symbols structure to Symbol->Locations for structured display.
 ///
-/// Returns a Vec of SymbolUsageGroup objects. Bare locations (without symbols)
+/// Returns a Vec of `SymbolUsageGroup` objects. Bare locations (without symbols)
 /// are returned with symbol="". Groups are ordered: bare locations first, then
 /// symbol groups alphabetically.
 fn format_source_locations_by_symbol(locs: &[SourceLocation]) -> Vec<SymbolUsageGroup> {
@@ -161,7 +161,8 @@ fn format_source_locations_by_symbol(locs: &[SourceLocation]) -> Vec<SymbolUsage
     groups
 }
 
-/// Generate STATIC_DATA JavaScript constant from layout data
+/// Generate `STATIC_DATA` JavaScript constant from layout data
+#[allow(clippy::too_many_lines)] // single cohesive serialization function
 fn generate_static_data(
     ir: &LayoutIR,
     positioned: &[PositionedItem],
@@ -221,7 +222,7 @@ fn generate_static_data(
     let cycles: Vec<CycleData> = cycle_map
         .into_values()
         .map(|(nodes, arcs)| CycleData {
-            nodes: nodes.iter().map(|n| n.to_string()).collect(),
+            nodes: nodes.iter().map(std::string::ToString::to_string).collect(),
             arcs: arcs.into_iter().collect(),
         })
         .collect();
@@ -307,13 +308,13 @@ pub(super) fn render_script(
     for module in MODULES {
         let mut source = module.source.to_string();
         for key in module.config_keys {
-            let placeholder = format!("__{}__", key);
+            let placeholder = format!("__{key}__");
             let value = match *key {
                 "ROW_HEIGHT" => config.row_height.to_string(),
                 "MARGIN" => config.margin.to_string(),
                 "TOOLBAR_HEIGHT" => LAYOUT.toolbar.height.to_string(),
                 "SIDEBAR_SHADOW_PAD" => LAYOUT.sidebar.shadow_padding().to_string(),
-                other => panic!("Unknown config key: {}", other),
+                other => panic!("Unknown config key: {other}"),
             };
             source = source.replace(&placeholder, &value);
         }
@@ -509,10 +510,7 @@ mod tests {
             if *name != "SvgScript" {
                 assert!(
                     *pos < svg_script_pos,
-                    "{} (pos {}) must appear before SvgScript (pos {})",
-                    name,
-                    pos,
-                    svg_script_pos
+                    "{name} (pos {pos}) must appear before SvgScript (pos {svg_script_pos})"
                 );
             }
         }
@@ -522,9 +520,7 @@ mod tests {
         for (name, pos) in &positions {
             assert!(
                 static_data_pos < *pos,
-                "STATIC_DATA must appear before {} (pos {})",
-                name,
-                pos
+                "STATIC_DATA must appear before {name} (pos {pos})"
             );
         }
     }

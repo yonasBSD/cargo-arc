@@ -328,7 +328,7 @@ mod submodule_tests {
             .module_paths(&mp)
             .build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
+        assert_eq!(deps.len(), 2, "should return 2 deps: {deps:?}");
         assert_eq!(deps[0].target_module, "analyze::use_parser");
         assert!(
             deps.iter()
@@ -346,12 +346,12 @@ mod parsing_tests {
 
     #[test]
     fn test_parse_workspace_dependencies_mixed() {
-        let source = r#"
+        let source = r"
 use crate::graph;
 use other_crate::utils;
 use serde::Serialize;
 use std::collections::HashMap;
-"#;
+";
         let ws: WorkspaceCrates = ["my_crate".to_string(), "other_crate".to_string()]
             .into_iter()
             .collect();
@@ -361,7 +361,7 @@ use std::collections::HashMap;
             .build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
 
-        assert_eq!(deps.len(), 2, "found: {:?}", deps);
+        assert_eq!(deps.len(), 2, "found: {deps:?}");
         assert!(
             deps.iter()
                 .any(|d| d.target_crate == "my_crate" && d.target_module == "graph")
@@ -374,16 +374,16 @@ use std::collections::HashMap;
 
     #[test]
     fn test_parse_workspace_dependencies_dedup_by_full_target() {
-        let source = r#"
+        let source = r"
 use crate::graph::build;
 use crate::graph::Node;
 use crate::graph;
-"#;
+";
         let uses = parse_test_uses(source);
         let ctx = ResolutionContextBuilder::new(Path::new("src/cli.rs")).build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
 
-        assert_eq!(deps.len(), 3, "should keep distinct symbols: {:?}", deps);
+        assert_eq!(deps.len(), 3, "should keep distinct symbols: {deps:?}");
         assert!(
             deps.iter()
                 .any(|d| d.target_item == Some("build".to_string()))
@@ -400,7 +400,7 @@ use crate::graph;
         let uses = parse_test_uses("use crate::graph::{Node, Edge};");
         let ctx = ResolutionContextBuilder::new(Path::new("src/cli.rs")).build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
+        assert_eq!(deps.len(), 2, "should return 2 deps: {deps:?}");
         assert!(
             deps.iter()
                 .any(|d| d.target_item == Some("Node".to_string()))
@@ -416,7 +416,7 @@ use crate::graph;
         let uses = parse_test_uses("use crate::analyze::*;");
         let ctx = ResolutionContextBuilder::new(Path::new("src/cli.rs")).build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
+        assert_eq!(deps.len(), 1, "glob should return 1 dep: {deps:?}");
         assert_eq!(deps[0].target_item, Some("*".to_string()));
         assert_eq!(deps[0].target_module, "analyze");
     }
@@ -427,13 +427,13 @@ mod integration_tests {
 
     #[test]
     fn test_bare_module_pub_use_integration() {
-        let source = r#"
+        let source = r"
 pub use cli::{Args, Cargo, run};
 use crate::graph::build;
 pub(crate) use model::Node;
 use other_crate::utils;
 use serde::Serialize;
-"#;
+";
         let ws: WorkspaceCrates = ["my_crate".to_string(), "other_crate".to_string()]
             .into_iter()
             .collect();
@@ -455,7 +455,7 @@ use serde::Serialize;
         // - graph::build (crate:: prefix)
         // - model::Node (bare module, pub(crate))
         // - other_crate::utils (workspace crate)
-        assert_eq!(deps.len(), 6, "expected 6 deps, got: {:?}", deps);
+        assert_eq!(deps.len(), 6, "expected 6 deps, got: {deps:?}");
 
         // Bare module multi-import (pub use)
         assert!(
@@ -614,7 +614,7 @@ mod bare_module_tests {
             .module_paths(&mp)
             .build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 3, "should return 3 deps: {:?}", deps);
+        assert_eq!(deps.len(), 3, "should return 3 deps: {deps:?}");
         assert!(deps.iter().all(|d| d.target_crate == "my_crate"));
         assert!(deps.iter().all(|d| d.target_module == "cli"));
         assert!(
@@ -641,7 +641,7 @@ mod bare_module_tests {
             .module_paths(&mp)
             .build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
+        assert_eq!(deps.len(), 1, "glob should return 1 dep: {deps:?}");
         assert_eq!(deps[0].target_crate, "my_crate");
         assert_eq!(deps[0].target_module, "cli");
         assert_eq!(deps[0].target_item, Some("*".to_string()));
@@ -683,7 +683,7 @@ mod bare_module_tests {
             .current_module_path("render")
             .build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
+        assert_eq!(deps.len(), 2, "should return 2 deps: {deps:?}");
         assert!(deps.iter().all(|d| d.target_module == "render::elements"));
         assert!(
             deps.iter()
@@ -878,7 +878,7 @@ mod entry_point_tests {
             .workspace_crates(&ws)
             .build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 2, "should return 2 deps: {:?}", deps);
+        assert_eq!(deps.len(), 2, "should return 2 deps: {deps:?}");
         assert!(deps.iter().all(|d| d.target_crate == "other_crate"));
         assert!(deps.iter().any(|d| d.target_module == "Foo"));
         assert!(deps.iter().any(|d| d.target_module == "Bar"));
@@ -892,7 +892,7 @@ mod entry_point_tests {
             .workspace_crates(&ws)
             .build();
         let deps = parse_workspace_dependencies(&uses, &ctx);
-        assert_eq!(deps.len(), 1, "glob should return 1 dep: {:?}", deps);
+        assert_eq!(deps.len(), 1, "glob should return 1 dep: {deps:?}");
         assert_eq!(deps[0].target_module, "");
         assert_eq!(deps[0].target_item, Some("*".to_string()));
     }
@@ -910,11 +910,11 @@ mod collect_use_items_tests {
 
     #[test]
     fn use_in_fn_body_found() {
-        let source = r#"
+        let source = r"
 fn main() {
     use foo::Bar;
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 1, "use inside fn body must be found");
@@ -922,13 +922,13 @@ fn main() {
 
     #[test]
     fn use_in_nested_block_found() {
-        let source = r#"
+        let source = r"
 fn main() {
     {
         use foo::Bar;
     }
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 1, "use in nested block must be found");
@@ -936,13 +936,13 @@ fn main() {
 
     #[test]
     fn mixed_top_level_and_fn_body() {
-        let source = r#"
+        let source = r"
 use crate::config;
 
 fn main() {
     use other_crate::utils;
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(
@@ -979,12 +979,12 @@ mod cfg_test_scope_tests {
 
     #[test]
     fn test_use_in_cfg_test_module_marked() {
-        let source = r#"
+        let source = r"
 #[cfg(test)]
 mod tests {
     use other_crate::helper;
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 1);
@@ -993,11 +993,11 @@ mod tests {
 
     #[test]
     fn test_use_in_normal_module_not_marked() {
-        let source = r#"
+        let source = r"
 mod normal {
     use other_crate::helper;
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 1);
@@ -1006,10 +1006,10 @@ mod normal {
 
     #[test]
     fn test_cfg_test_on_use_item_marked() {
-        let source = r#"
+        let source = r"
 #[cfg(test)]
 use other_crate::test_helper;
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 1);
@@ -1018,14 +1018,14 @@ use other_crate::test_helper;
 
     #[test]
     fn test_nested_cfg_test_scope() {
-        let source = r#"
+        let source = r"
 #[cfg(test)]
 mod tests {
     mod inner {
         use other_crate::deep_helper;
     }
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 1);
@@ -1065,12 +1065,12 @@ mod hir_tests {
     /// the dominant pattern is `#[cfg(test)] mod tests { ... }`.
     #[test]
     fn test_cfg_test_on_fn_not_detected() {
-        let source = r#"
+        let source = r"
 #[cfg(test)]
 fn test_helper() {
     use other_crate::helper;
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 1);
@@ -1084,11 +1084,11 @@ mod path_ref_tests {
 
     #[test]
     fn test_collect_path_refs_expression() {
-        let source = r#"
+        let source = r"
 fn main() {
     my_server::run();
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         assert!(
@@ -1099,11 +1099,11 @@ fn main() {
 
     #[test]
     fn test_collect_path_refs_type_annotation() {
-        let source = r#"
+        let source = r"
 fn main() {
     let _x: my_lib::Config = todo!();
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         assert!(
@@ -1114,7 +1114,7 @@ fn main() {
 
     #[test]
     fn test_collect_path_refs_pattern() {
-        let source = r#"
+        let source = r"
 fn main() {
     let x = 1;
     match x {
@@ -1122,7 +1122,7 @@ fn main() {
         _ => {}
     }
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         assert!(
@@ -1133,9 +1133,9 @@ fn main() {
 
     #[test]
     fn test_collect_path_refs_trait_bound() {
-        let source = r#"
+        let source = r"
 fn process<T: my_lib::Trait>(_t: T) {}
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         assert!(
@@ -1146,11 +1146,11 @@ fn process<T: my_lib::Trait>(_t: T) {}
 
     #[test]
     fn test_collect_path_refs_struct_literal() {
-        let source = r#"
+        let source = r"
 fn main() {
     let _x = my_lib::Config { verbose: true };
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         assert!(
@@ -1178,11 +1178,11 @@ fn main() {
 
     #[test]
     fn test_collect_path_refs_method_chain() {
-        let source = r#"
+        let source = r"
 fn main() {
     my_lib::Config::default();
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         assert!(
@@ -1194,12 +1194,12 @@ fn main() {
 
     #[test]
     fn test_collect_path_refs_multiple_in_file() {
-        let source = r#"
+        let source = r"
 fn main() {
     my_server::run();
     let _cfg: my_lib::Config = todo!();
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         assert!(
@@ -1219,14 +1219,14 @@ mod path_ref_cfg_test_tests {
 
     #[test]
     fn test_path_ref_in_cfg_test_marked() {
-        let source = r#"
+        let source = r"
 #[cfg(test)]
 mod tests {
     fn check() {
         other_crate::module::helper();
     }
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         let matching: Vec<_> = refs
@@ -1242,11 +1242,11 @@ mod tests {
 
     #[test]
     fn test_path_ref_in_normal_code_production() {
-        let source = r#"
+        let source = r"
 fn main() {
     other_crate::module::run();
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let refs = collect_all_path_refs(&syntax, EdgeContext::production());
         let matching: Vec<_> = refs
@@ -1589,14 +1589,14 @@ mod inline_module_depth_tests {
     fn test_super_star_in_cfg_test_mod_no_upward_edge() {
         // `#[cfg(test)] mod tests { use super::*; }` in filtering.rs
         // must NOT create an edge to the parent module
-        let source = r#"
+        let source = r"
 fn some_fn() {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 }
-"#;
+";
         let mp: ModulePathMap = [(
             "my_crate".to_string(),
             HashSet::from(["analyze".into(), "analyze::filtering".into()]),
@@ -1619,12 +1619,12 @@ mod tests {
     fn test_super_super_from_inline_mod_creates_real_edge() {
         // `mod tests { use super::super::sibling::Item; }` should create
         // a real edge because it goes above current_module_path
-        let source = r#"
+        let source = r"
 #[cfg(test)]
 mod tests {
     use super::super::sibling::Item;
 }
-"#;
+";
         let mp: ModulePathMap = [(
             "my_crate".to_string(),
             HashSet::from([
@@ -1652,7 +1652,7 @@ mod tests {
 
     #[test]
     fn test_collect_use_items_tracks_inline_depth() {
-        let source = r#"
+        let source = r"
 use crate::top;
 mod inner {
     use crate::nested;
@@ -1660,7 +1660,7 @@ mod inner {
         use crate::very_deep;
     }
 }
-"#;
+";
         let syntax = syn::parse_file(source).unwrap();
         let uses = collect_all_use_items(&syntax, EdgeContext::production());
         assert_eq!(uses.len(), 3);

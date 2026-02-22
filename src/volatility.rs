@@ -5,6 +5,7 @@
 //! Optimized for large repositories using streaming and git-level path filtering.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -32,6 +33,7 @@ pub enum Volatility {
 
 impl Volatility {
     /// Classify a change count into a volatility level using the given config.
+    #[must_use]
     pub fn from_count(count: usize, config: &VolatilityConfig) -> Self {
         if count <= config.low_threshold {
             Self::Low
@@ -82,6 +84,7 @@ pub struct VolatilityAnalyzer {
 
 impl VolatilityAnalyzer {
     /// Create a new analyzer with the given configuration.
+    #[must_use]
     pub fn new(config: VolatilityConfig) -> Self {
         Self {
             config,
@@ -93,6 +96,7 @@ impl VolatilityAnalyzer {
     ///
     /// Streams `git log` output to count per-file change frequency for `.rs` files.
     /// Uses `--diff-filter=AMRC` to skip deleted files and a 64KB buffered reader.
+    #[allow(clippy::missing_errors_doc)]
     pub fn analyze(&mut self, repo_path: &Path) -> Result<(), VolatilityError> {
         // Check if it's a git repo
         let git_check = Command::new("git")
@@ -126,13 +130,14 @@ impl VolatilityAnalyzer {
             let reader = BufReader::with_capacity(64 * 1024, stdout);
 
             for line in reader.lines() {
-                let line = match line {
-                    Ok(l) => l,
-                    Err(_) => continue,
-                };
+                let Ok(line) = line else { continue };
 
                 let trimmed = line.trim();
-                if !trimmed.is_empty() && trimmed.ends_with(".rs") {
+                if !trimmed.is_empty()
+                    && std::path::Path::new(trimmed)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("rs"))
+                {
                     *self.file_changes.entry(trimmed.to_string()).or_insert(0) += 1;
                 }
             }
@@ -144,12 +149,14 @@ impl VolatilityAnalyzer {
     }
 
     /// Get the volatility level for a file path.
+    #[must_use]
     pub fn get_volatility(&self, file_path: &str) -> Volatility {
         let count = self.file_changes.get(file_path).copied().unwrap_or(0);
         Volatility::from_count(count, &self.config)
     }
 
     /// Get the raw change count for a file path.
+    #[must_use]
     pub fn get_change_count(&self, file_path: &str) -> usize {
         self.file_changes.get(file_path).copied().unwrap_or(0)
     }
@@ -158,6 +165,8 @@ impl VolatilityAnalyzer {
     ///
     /// Each file's score is `change_count / max_change_count`. Returns an empty
     /// map when no file changes have been recorded.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // file change counts stay well below 2^52
     pub fn normalized_scores(&self) -> HashMap<String, f64> {
         let max = self.file_changes.values().max().copied().unwrap_or(0);
         if max == 0 {
@@ -170,6 +179,7 @@ impl VolatilityAnalyzer {
     }
 
     /// Format a human-readable volatility report.
+    #[must_use]
     pub fn format_report(&self) -> String {
         if self.file_changes.is_empty() {
             return format!(
@@ -182,16 +192,18 @@ impl VolatilityAnalyzer {
         let mut out = String::new();
 
         // Header
-        out.push_str(&format!(
-            "Volatility (last {} months, {} files):\n",
+        let _ = writeln!(
+            out,
+            "Volatility (last {} months, {} files):",
             self.config.months, stats.total_files
-        ));
+        );
 
         // Distribution summary
-        out.push_str(&format!(
-            "  High: {}  Medium: {}  Low: {}\n",
+        let _ = writeln!(
+            out,
+            "  High: {}  Medium: {}  Low: {}",
             stats.high_volatility_count, stats.medium_volatility_count, stats.low_volatility_count
-        ));
+        );
         out.push('\n');
 
         // Sorted file list (descending by change count)
@@ -202,13 +214,14 @@ impl VolatilityAnalyzer {
         for (path, count) in &files {
             let level = Volatility::from_count(**count, &self.config);
             let score = scores.get(*path).copied().unwrap_or(0.0);
-            out.push_str(&format!("  {path}  {}  {:.2}  {}\n", count, score, level));
+            let _ = writeln!(out, "  {path}  {count}  {score:.2}  {level}");
         }
 
         out
     }
 
     /// Compute aggregate statistics across all tracked files.
+    #[must_use]
     pub fn statistics(&self) -> VolatilityStats {
         if self.file_changes.is_empty() {
             return VolatilityStats::default();
@@ -218,6 +231,7 @@ impl VolatilityAnalyzer {
         let total_changes: usize = counts.iter().sum();
         let max_changes = counts.iter().max().copied().unwrap_or(0);
         let min_changes = counts.iter().min().copied().unwrap_or(0);
+        #[allow(clippy::cast_precision_loss)] // file change counts stay well below 2^52
         let avg_changes = total_changes as f64 / counts.len() as f64;
 
         let low_count = counts

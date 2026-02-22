@@ -18,7 +18,7 @@ fn main() {
     }
 
     // 2. Validate: @deps match actual source references
-    let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
+    let source_refs: Vec<&str> = sources.iter().map(std::string::String::as_str).collect();
     validate_source_deps(&modules, &source_refs);
 
     // 3. Topo sort
@@ -39,7 +39,7 @@ fn main() {
         let entry = entry.expect("entry");
         let name = entry.file_name().to_string_lossy().to_string();
         if is_module_file(&name) {
-            println!("cargo:rerun-if-changed=js/{}", name);
+            println!("cargo:rerun-if-changed=js/{name}");
         }
     }
 }

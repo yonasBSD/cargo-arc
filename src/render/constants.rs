@@ -26,6 +26,7 @@ pub(super) struct LayoutConstants {
 /// The sidebar sits inside a foreignObject in SVG. Both the foreignObject and the SVG
 /// canvas itself clip content at their boundaries. These values ensure the shadow has
 /// enough room to render without being cut off.
+#[allow(clippy::struct_field_names)] // "shadow_" prefix groups related CSS shadow values
 pub(super) struct SidebarLayout {
     /// box-shadow Y offset (px)
     pub shadow_offset_y: f32,
@@ -37,6 +38,7 @@ pub(super) struct SidebarLayout {
 
 impl SidebarLayout {
     /// CSS box-shadow value derived from the layout constants.
+    #[allow(clippy::cast_possible_truncation)] // layout constants are small integers
     pub fn box_shadow_css(&self) -> String {
         format!(
             "0 {}px {}px rgba(0,0,0,{})",
@@ -45,7 +47,7 @@ impl SidebarLayout {
     }
 
     /// Extra padding needed so SVG canvas and foreignObject don't clip the shadow.
-    /// max downward extent = offset_y + blur, plus 2px safety margin.
+    /// max downward extent = `offset_y` + blur, plus 2px safety margin.
     pub fn shadow_padding(&self) -> f32 {
         self.shadow_offset_y + self.shadow_blur + 2.0
     }
@@ -294,7 +296,7 @@ pub(super) struct ToolbarClasses {
     pub result_count: &'static str,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, clippy::struct_field_names)] // "search_" prefix groups related CSS classes
 pub(super) struct SearchClasses {
     pub search_active: &'static str,
     pub search_match: &'static str,

@@ -34,11 +34,12 @@ impl<'a> FromIterator<&'a str> for WorkspaceCrates {
 }
 
 impl WorkspaceCrates {
-    pub fn insert(&mut self, name: String) -> bool {
-        self.0.insert(normalize_crate_name(&name))
+    pub fn insert(&mut self, name: &str) -> bool {
+        self.0.insert(normalize_crate_name(name))
     }
 
     /// Check membership, normalizing the input name.
+    #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.0.contains(&normalize_crate_name(name))
     }
@@ -47,10 +48,12 @@ impl WorkspaceCrates {
         self.0.iter()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -66,6 +69,7 @@ pub struct ModulePathMap(HashMap<String, HashSet<String>>);
 
 impl ModulePathMap {
     /// Return the module paths for a crate, or an empty set if unknown.
+    #[must_use]
     pub fn get_or_empty(&self, key: &str) -> &HashSet<String> {
         static EMPTY: std::sync::LazyLock<HashSet<String>> = std::sync::LazyLock::new(HashSet::new);
         self.0.get(key).unwrap_or(&EMPTY)
@@ -110,6 +114,7 @@ pub enum DependencyKind {
 }
 
 impl DependencyKind {
+    #[must_use]
     pub fn kind_js(&self) -> &str {
         match self {
             Self::Production => "production",
@@ -118,6 +123,7 @@ impl DependencyKind {
         }
     }
 
+    #[must_use]
     pub fn sub_kind_js(&self) -> Option<&str> {
         match self {
             Self::Test(TestKind::Unit) => Some("unit"),
@@ -134,18 +140,21 @@ pub struct EdgeContext {
 }
 
 impl EdgeContext {
+    #[must_use]
     pub fn production() -> Self {
         Self {
             kind: DependencyKind::Production,
             features: vec![],
         }
     }
+    #[must_use]
     pub fn test(kind: TestKind) -> Self {
         Self {
             kind: DependencyKind::Test(kind),
             features: vec![],
         }
     }
+    #[must_use]
     pub fn build() -> Self {
         Self {
             kind: DependencyKind::Build,
@@ -179,8 +188,9 @@ pub struct DependencyRef {
 }
 
 impl DependencyRef {
-    /// Returns full target path: "crate::module::item" or "crate::module" if no item.
-    /// For empty target_module (entry-point): "crate::item" or just "crate".
+    /// Returns full target path: "`crate::module::item`" or "`crate::module`" if no item.
+    /// For empty `target_module` (entry-point): "`crate::item`" or just "crate".
+    #[must_use]
     pub fn full_target(&self) -> String {
         match (&self.target_item, self.target_module.is_empty()) {
             (Some(item), true) => format!("{}::{}", self.target_crate, item),
@@ -192,8 +202,9 @@ impl DependencyRef {
         }
     }
 
-    /// Returns module-level target: "crate::module" (ignores item).
-    /// For empty target_module (entry-point): just "crate".
+    /// Returns module-level target: "`crate::module`" (ignores item).
+    /// For empty `target_module` (entry-point): just "crate".
+    #[must_use]
     pub fn module_target(&self) -> String {
         if self.target_module.is_empty() {
             self.target_crate.clone()
@@ -382,7 +393,7 @@ mod tests {
     fn test_module_target_empty_module() {
         let dep = DependencyRef {
             target_crate: "crate_b".to_string(),
-            target_module: "".to_string(),
+            target_module: String::new(),
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
@@ -395,7 +406,7 @@ mod tests {
     fn test_full_target_empty_module_with_item() {
         let dep = DependencyRef {
             target_crate: "crate_b".to_string(),
-            target_module: "".to_string(),
+            target_module: String::new(),
             target_item: Some("Symbol".to_string()),
             source_file: PathBuf::new(),
             line: 1,
@@ -408,7 +419,7 @@ mod tests {
     fn test_full_target_empty_module_no_item() {
         let dep = DependencyRef {
             target_crate: "crate_b".to_string(),
-            target_module: "".to_string(),
+            target_module: String::new(),
             target_item: None,
             source_file: PathBuf::new(),
             line: 1,
@@ -420,7 +431,7 @@ mod tests {
     #[test]
     fn test_workspace_crates_normalizes_on_insert() {
         let mut ws = WorkspaceCrates::default();
-        ws.insert("my-lib".to_string());
+        ws.insert("my-lib");
         assert!(ws.contains("my_lib"), "should find normalized name");
         assert!(
             ws.contains("my-lib"),
@@ -440,7 +451,7 @@ mod tests {
     #[test]
     fn test_workspace_crates_iter_returns_normalized() {
         let ws: WorkspaceCrates = ["core-utils"].into_iter().collect();
-        let names: Vec<&str> = ws.iter().map(|s| s.as_str()).collect();
+        let names: Vec<&str> = ws.iter().map(std::string::String::as_str).collect();
         assert_eq!(names, vec!["core_utils"]);
     }
 

@@ -48,9 +48,8 @@ fn find_integration_test_files(crate_path: &Path) -> Vec<PathBuf> {
         return Vec::new();
     }
     let mut files = Vec::new();
-    let entries = match std::fs::read_dir(&tests_dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
+    let Ok(entries) = std::fs::read_dir(&tests_dir) else {
+        return Vec::new();
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -249,27 +248,23 @@ fn is_pub(vis: &syn::Visibility) -> bool {
 /// Ignores `pub mod` declarations (module structure, not exports).
 /// Returns an empty set on any error (no entry file, parse failure).
 pub(crate) fn collect_crate_exports(crate_root: &Path) -> HashSet<String> {
-    let root_files = match find_crate_root_files(crate_root) {
-        Ok(f) => f,
-        Err(_) => return HashSet::new(),
+    let Ok(root_files) = find_crate_root_files(crate_root) else {
+        return HashSet::new();
     };
     // Only lib.rs exports — binary targets export nothing
-    let root_file = match root_files
+    let Some(root_file) = root_files
         .iter()
         .find(|p| p.file_name().is_some_and(|n| n == "lib.rs"))
-    {
-        Some(f) => f,
-        None => return HashSet::new(),
+    else {
+        return HashSet::new();
     };
 
-    let source = match std::fs::read_to_string(root_file) {
-        Ok(s) => s,
-        Err(_) => return HashSet::new(),
+    let Ok(source) = std::fs::read_to_string(root_file) else {
+        return HashSet::new();
     };
 
-    let syntax = match syn::parse_file(&source) {
-        Ok(f) => f,
-        Err(_) => return HashSet::new(),
+    let Ok(syntax) = syn::parse_file(&source) else {
+        return HashSet::new();
     };
 
     let mut exports = HashSet::new();
@@ -366,8 +361,7 @@ fn walk_module_syn(
 
     let source_file = file_path
         .strip_prefix(ctx.crate_root)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|_| file_path.to_path_buf());
+        .map_or_else(|_| file_path.to_path_buf(), std::path::Path::to_path_buf);
 
     // Relative module path within the crate (e.g. "render" for render/mod.rs, "" for root)
     let current_module_path = full_path
@@ -805,7 +799,7 @@ mod tests {
             let tmp = TestProject::new()
                 .file(
                     "src/lib.rs",
-                    r#"
+                    r"
                     pub fn helper() {}
                     pub struct MyStruct;
                     pub enum MyEnum { A, B }
@@ -813,7 +807,7 @@ mod tests {
                     pub const MAX: usize = 10;
                     pub static GLOBAL: i32 = 0;
                     pub type Alias = i32;
-                "#,
+                ",
                 )
                 .build();
 
@@ -869,12 +863,12 @@ mod tests {
             let tmp = TestProject::new()
                 .file(
                     "src/lib.rs",
-                    r#"
+                    r"
                     fn private_fn() {}
                     struct PrivateStruct;
                     pub fn public_fn() {}
                     pub(crate) fn crate_fn() {}
-                "#,
+                ",
                 )
                 .build();
 
@@ -938,8 +932,10 @@ mod tests {
                 dependencies: vec![],
                 dev_dependencies: vec![],
             };
-            let workspace_crates: WorkspaceCrates =
-                ["cargo-arc"].iter().map(|s| s.to_string()).collect();
+            let workspace_crates: WorkspaceCrates = ["cargo-arc"]
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
 
             let tree = analyze_modules_syn(
                 &crate_info,
@@ -995,8 +991,10 @@ mod tests {
                 dependencies: vec![],
                 dev_dependencies: vec![],
             };
-            let workspace_crates: WorkspaceCrates =
-                ["cargo-arc"].iter().map(|s| s.to_string()).collect();
+            let workspace_crates: WorkspaceCrates = ["cargo-arc"]
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
 
             // Collect module paths for accurate dependency resolution
             let paths = collect_syn_module_paths(crate_root, "cargo_arc", false);
@@ -1078,12 +1076,12 @@ mod tests {
             let tmp = TestProject::new()
                 .file(
                     "src/main.rs",
-                    r#"
+                    r"
 fn main() {
     other_crate::module::run();
     let _x: other_crate::module::Config = todo!();
 }
-"#,
+",
                 )
                 .build();
 
@@ -1117,12 +1115,12 @@ fn main() {
             let tmp = TestProject::new()
                 .file(
                     "src/main.rs",
-                    r#"
+                    r"
 use other_crate::module::Item;
 fn main() {
     other_crate::module::Item::new();
 }
-"#,
+",
                 )
                 .build();
 
@@ -1209,8 +1207,10 @@ fn main() {
                 dependencies: vec![],
                 dev_dependencies: vec![],
             };
-            let workspace_crates: WorkspaceCrates =
-                ["cargo-arc"].iter().map(|s| s.to_string()).collect();
+            let workspace_crates: WorkspaceCrates = ["cargo-arc"]
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
             let paths = collect_syn_module_paths(crate_root, "cargo_arc", false);
             let all_module_paths: ModulePathMap =
                 [("cargo_arc".to_string(), paths)].into_iter().collect();
@@ -1234,7 +1234,7 @@ fn main() {
             let dep_targets: Vec<String> = render_mod
                 .dependencies
                 .iter()
-                .map(|d| d.module_target())
+                .map(crate::model::DependencyRef::module_target)
                 .collect();
 
             assert!(
@@ -1317,7 +1317,7 @@ fn main() {
             };
             let ws: WorkspaceCrates = ["crate_with_tests", "crate_lib"]
                 .iter()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
 
             let tree = analyze_modules_syn(
@@ -1391,7 +1391,7 @@ fn main() {
             };
             let ws: WorkspaceCrates = ["test_only_crate", "crate_lib"]
                 .iter()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
 
             let tree = analyze_modules_syn(
@@ -1440,7 +1440,7 @@ fn main() {
                 .file("src/lib.rs", "mod alpha;\n")
                 .file(
                     "src/alpha.rs",
-                    r#"
+                    r"
 use crate::beta::helper;
 
 pub fn process() {}
@@ -1449,7 +1449,7 @@ pub fn process() {}
 mod tests {
     use crate::gamma::test_util;
 }
-"#,
+",
                 )
                 .build();
 

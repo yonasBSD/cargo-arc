@@ -46,6 +46,9 @@ hir = [
   "dep:ra_ap_cfg",
 ]
 
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
 [dev-dependencies]
 assert2 = "0.3"
 rstest = "0.25"

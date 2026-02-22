@@ -48,7 +48,7 @@ fn self_args() -> (tempfile::NamedTempFile, Args) {
     (temp, args)
 }
 
-/// Parse STATIC_DATA JSON from SVG output.
+/// Parse `STATIC_DATA` JSON from SVG output.
 fn parse_static_data(svg: &str) -> Value {
     let json_str = svg
         .split("const STATIC_DATA = ")
@@ -60,7 +60,7 @@ fn parse_static_data(svg: &str) -> Value {
     serde_json::from_str(json_str).expect("STATIC_DATA should be valid JSON")
 }
 
-/// Extract crate names that appear as nodes in the SVG STATIC_DATA.
+/// Extract crate names that appear as nodes in the SVG `STATIC_DATA`.
 fn extract_crate_names(svg: &str) -> Vec<String> {
     let data = parse_static_data(svg);
     let nodes = data["nodes"].as_object().expect("nodes is object");
@@ -71,7 +71,7 @@ fn extract_crate_names(svg: &str) -> Vec<String> {
         .collect()
 }
 
-/// Extract arc entries from STATIC_DATA (from→to with is_test derived from context.kind).
+/// Extract arc entries from `STATIC_DATA` (from→to with `is_test` derived from context.kind).
 fn extract_arcs(svg: &str) -> Vec<(String, String, bool)> {
     let data = parse_static_data(svg);
     let arcs = data["arcs"].as_object().expect("arcs is object");
@@ -85,7 +85,7 @@ fn extract_arcs(svg: &str) -> Vec<(String, String, bool)> {
         .collect()
 }
 
-/// Extract node-id → name mapping from STATIC_DATA.
+/// Extract node-id → name mapping from `STATIC_DATA`.
 fn extract_node_names(svg: &str) -> std::collections::HashMap<String, String> {
     let data = parse_static_data(svg);
     let nodes = data["nodes"].as_object().expect("nodes is object");
@@ -95,7 +95,7 @@ fn extract_node_names(svg: &str) -> std::collections::HashMap<String, String> {
         .collect()
 }
 
-/// Resolve arc (from_id, to_id) to (from_name, to_name).
+/// Resolve arc (`from_id`, `to_id`) to (`from_name`, `to_name`).
 fn resolve_arc_names(
     arcs: &[(String, String, bool)],
     nodes: &std::collections::HashMap<String, String>,
@@ -112,7 +112,7 @@ fn test_multi_crate_fixture() {
     let (temp, args) = fixture_args("multi_crate", false);
 
     let result = run(args);
-    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+    assert!(result.is_ok(), "run() should succeed: {result:?}");
 
     let svg = std::fs::read_to_string(temp.path()).unwrap();
 
@@ -134,7 +134,7 @@ fn test_self_analysis() {
     let (temp, args) = self_args();
 
     let result = run(args);
-    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+    assert!(result.is_ok(), "run() should succeed: {result:?}");
 
     let svg = std::fs::read_to_string(temp.path()).unwrap();
 
@@ -155,7 +155,7 @@ fn test_cfg_test_excluded_by_default() {
     let (temp, args) = fixture_args("multi_crate", false);
 
     let result = run(args);
-    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+    assert!(result.is_ok(), "run() should succeed: {result:?}");
 
     let svg = std::fs::read_to_string(temp.path()).unwrap();
 
@@ -190,7 +190,7 @@ fn test_cfg_test_included_with_flag() {
     };
 
     let result = run(args);
-    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+    assert!(result.is_ok(), "run() should succeed: {result:?}");
 
     let svg = std::fs::read_to_string(temp.path()).unwrap();
 
@@ -225,7 +225,7 @@ fn test_entry_point_imports() {
     };
 
     let result = run(args);
-    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+    assert!(result.is_ok(), "run() should succeed: {result:?}");
 
     let svg = std::fs::read_to_string(temp.path()).unwrap();
 
@@ -251,26 +251,26 @@ fn test_entry_point_imports() {
 
 /// ca-0213: Dev-dependency crate appears as phantom node without --include-tests.
 ///
-/// Fixture topology (dev_dep_sorting):
-///   foundation  — production crate with modules (handler, service, models, common, test_support)
-///   consumer    — only dev-depends on foundation + test_helper
-///   test_helper — standalone test utility, no production deps
+/// Fixture topology (`dev_dep_sorting)`:
+///   foundation  — production crate with modules (handler, service, models, common, `test_support`)
+///   consumer    — only dev-depends on foundation + `test_helper`
+///   `test_helper` — standalone test utility, no production deps
 ///
 /// Without --include-tests:
-///   - CrateDep edges from dev-dependencies should NOT appear
-///   - test_helper should NOT appear (no production path)
+///   - `CrateDep` edges from dev-dependencies should NOT appear
+///   - `test_helper` should NOT appear (no production path)
 ///   - consumer should NOT appear (no production path)
 ///   - Only foundation with its internal module structure should remain
 ///
 /// With --include-tests:
 ///   - All three crates visible
-///   - consumer→foundation and consumer→test_helper arcs present
-///   - foundation→test_helper arc present
+///   - consumer→foundation and `consumer→test_helper` arcs present
+///   - `foundation→test_helper` arc present
 #[test]
 fn test_dev_dep_crate_hidden_without_include_tests() {
     let (temp, args) = fixture_args("dev_dep_sorting", false);
     let result = run(args);
-    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+    assert!(result.is_ok(), "run() should succeed: {result:?}");
 
     let svg = std::fs::read_to_string(temp.path()).unwrap();
     let crates = extract_crate_names(&svg);
@@ -333,7 +333,7 @@ fn test_dev_dep_crate_hidden_without_include_tests() {
 fn test_dev_dep_crate_visible_with_include_tests() {
     let (temp, args) = fixture_args("dev_dep_sorting", true);
     let result = run(args);
-    assert!(result.is_ok(), "run() should succeed: {:?}", result);
+    assert!(result.is_ok(), "run() should succeed: {result:?}");
 
     let svg = std::fs::read_to_string(temp.path()).unwrap();
     let crates = extract_crate_names(&svg);

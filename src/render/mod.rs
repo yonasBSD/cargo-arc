@@ -19,7 +19,8 @@ use positioning::{
 };
 use static_data::render_script;
 
-/// Render LayoutIR to SVG string
+/// Render `LayoutIR` to SVG string
+#[must_use]
 pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
     let box_width = calculate_box_width(ir);
     let positioned = calculate_positions(ir, config, box_width);
@@ -159,8 +160,7 @@ mod tests {
         let cycle_section = &svg2[cycle_start..cycle_start + 200];
         assert!(
             !cycle_section.contains("stroke-dasharray"),
-            "Transitive cycle arc element should NOT have stroke-dasharray, got: {}",
-            cycle_section
+            "Transitive cycle arc element should NOT have stroke-dasharray, got: {cycle_section}"
         );
     }
 
@@ -325,15 +325,11 @@ mod tests {
 
         assert!(
             test_arc_pos < prod_arc_pos,
-            "Test arc (pos {}) should appear before production arc (pos {}) in SVG",
-            test_arc_pos,
-            prod_arc_pos
+            "Test arc (pos {test_arc_pos}) should appear before production arc (pos {prod_arc_pos}) in SVG"
         );
         assert!(
             prod_arc_pos < cycle_arc_pos,
-            "Production arc (pos {}) should appear before cycle arc (pos {}) in SVG",
-            prod_arc_pos,
-            cycle_arc_pos
+            "Production arc (pos {prod_arc_pos}) should appear before cycle arc (pos {cycle_arc_pos}) in SVG"
         );
     }
 
