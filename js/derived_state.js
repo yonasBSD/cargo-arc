@@ -19,7 +19,11 @@ const DerivedState = {
     const visibleNodes = new Set();
 
     for (const nodeId of staticData.getAllNodeIds()) {
-      const visibleAncestor = TreeLogic.getVisibleAncestor(nodeId, collapsed, parentMap);
+      const visibleAncestor = TreeLogic.getVisibleAncestor(
+        nodeId,
+        collapsed,
+        parentMap,
+      );
       if (visibleAncestor === nodeId) {
         visibleNodes.add(nodeId);
       }
@@ -105,7 +109,11 @@ const DerivedState = {
       for (const descId of descendants) {
         if (result.has(descId)) continue;
         if (!targets.has(descId)) continue;
-        const visibleAncestor = TreeLogic.getVisibleAncestor(descId, collapsed, parentMap);
+        const visibleAncestor = TreeLogic.getVisibleAncestor(
+          descId,
+          collapsed,
+          parentMap,
+        );
         if (visibleAncestor !== descId) continue;
 
         result.add(descId);
@@ -128,7 +136,14 @@ const DerivedState = {
    * @param {number} rowHeight - Height per row
    * @returns {Map<string, {x: number, y: number, width: number, height: number}>}
    */
-  computeCurrentPositions(collapsed, staticData, margin, toolbarHeight, rowHeight, widthOverrides) {
+  computeCurrentPositions(
+    collapsed,
+    staticData,
+    margin,
+    toolbarHeight,
+    rowHeight,
+    widthOverrides,
+  ) {
     const visibleNodes = this.deriveNodeVisibility(collapsed, staticData);
     const positions = new Map();
 
@@ -143,13 +158,14 @@ const DerivedState = {
     let currentY = margin + toolbarHeight;
     for (const nodeId of sortedIds) {
       const orig = staticData.getOriginalPosition(nodeId);
-      const width = (widthOverrides && widthOverrides.has(nodeId))
-        ? widthOverrides.get(nodeId) : orig.width;
+      const width = widthOverrides?.has(nodeId)
+        ? widthOverrides.get(nodeId)
+        : orig.width;
       positions.set(nodeId, {
         x: orig.x,
         y: currentY,
         width,
-        height: orig.height
+        height: orig.height,
       });
       currentY += rowHeight;
     }
@@ -179,32 +195,76 @@ const DerivedState = {
    * @param {number} rowHeight - Row height for arc path calculation
    * @returns {HighlightState|null} null when no active selection
    */
-  deriveHighlightState(appState, staticData, virtualArcUsages, hiddenByFilter, positions, rowHeight) {
+  deriveHighlightState(
+    appState,
+    staticData,
+    virtualArcUsages,
+    hiddenByFilter,
+    positions,
+    rowHeight,
+  ) {
     const selection = AppState.getSelection(appState);
     if (selection.mode === 'none') return null;
 
     const result = {
-      nodeHighlights: new Map(), arcHighlights: new Map(),
-      shadowData: new Map(), promotedHitareas: new Set()
+      nodeHighlights: new Map(),
+      arcHighlights: new Map(),
+      shadowData: new Map(),
+      promotedHitareas: new Set(),
     };
-    const ctx = { maxRight: this.computeMaxRight(positions), rowHeight, yOffset: 3 };
+    const ctx = {
+      maxRight: this.computeMaxRight(positions),
+      rowHeight,
+      yOffset: 3,
+    };
 
     if (selection.type === 'node') {
-      this._deriveForNodeSelection(selection, appState, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result);
+      this._deriveForNodeSelection(
+        selection,
+        appState,
+        staticData,
+        virtualArcUsages,
+        hiddenByFilter,
+        positions,
+        ctx,
+        result,
+      );
     } else if (selection.type === 'arc') {
-      this._deriveForArcSelection(selection, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result);
+      this._deriveForArcSelection(
+        selection,
+        staticData,
+        virtualArcUsages,
+        hiddenByFilter,
+        positions,
+        ctx,
+        result,
+      );
     }
 
     return result;
   },
 
   /** @private Node-selection: highlight set + all connected arcs (regular + virtual). */
-  _deriveForNodeSelection(selection, appState, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result) {
-    const highlightSet = this.deriveHighlightSet(selection.id, appState.collapsed, staticData);
+  _deriveForNodeSelection(
+    selection,
+    appState,
+    staticData,
+    virtualArcUsages,
+    hiddenByFilter,
+    positions,
+    ctx,
+    result,
+  ) {
+    const highlightSet = this.deriveHighlightSet(
+      selection.id,
+      appState.collapsed,
+      staticData,
+    );
 
     const primaryNode = staticData.getNode(selection.id);
     if (primaryNode) {
-      const cssClass = primaryNode.type === 'crate' ? 'selectedCrate' : 'selectedModule';
+      const cssClass =
+        primaryNode.type === 'crate' ? 'selectedCrate' : 'selectedModule';
       result.nodeHighlights.set(selection.id, { role: 'current', cssClass });
     }
 
@@ -212,66 +272,121 @@ const DerivedState = {
     if (highlightSet.size > 1) {
       for (const nodeId of highlightSet) {
         if (nodeId !== selection.id) {
-          result.nodeHighlights.set(nodeId, { role: 'group-member', cssClass: 'groupMember' });
+          result.nodeHighlights.set(nodeId, {
+            role: 'group-member',
+            cssClass: 'groupMember',
+          });
         }
       }
     }
 
     const groupMode = highlightSet.size > 1;
     const descs = [
-      ...this._collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode, selection.id),
-      ...this._collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode, selection.id)
+      ...this._collectRegularArcDescs(
+        staticData,
+        hiddenByFilter,
+        highlightSet,
+        groupMode,
+        selection.id,
+      ),
+      ...this._collectVirtualArcDescs(
+        virtualArcUsages,
+        highlightSet,
+        groupMode,
+        selection.id,
+      ),
     ];
     this._processArcDescriptors(descs, positions, ctx, result);
 
     // Direct-cycle detection: mark bidirectional cycle partners with cycle-member
     for (const arcId of staticData.getAllArcIds()) {
       const arc = staticData.getArc(arcId);
-      if (!arc || !arc.cycleIds || arc.cycleIds.length === 0 || arc.from !== selection.id) continue;
+      if (
+        !arc ||
+        !arc.cycleIds ||
+        arc.cycleIds.length === 0 ||
+        arc.from !== selection.id
+      )
+        continue;
       const partner = arc.to;
       const reverseArc = staticData.getArc(`${partner}-${selection.id}`);
-      if (reverseArc && reverseArc.cycleIds && reverseArc.cycleIds.length > 0) {
+      if (reverseArc?.cycleIds && reverseArc.cycleIds.length > 0) {
         const existing = result.nodeHighlights.get(partner);
         if (!existing || existing.role !== 'current') {
-          result.nodeHighlights.set(partner, { role: 'cycle-member', cssClass: 'cycleMember' });
+          result.nodeHighlights.set(partner, {
+            role: 'cycle-member',
+            cssClass: 'cycleMember',
+          });
         }
       }
     }
   },
 
   /** @private Arc-selection: specific arc + its virtual variant + cycle expansion. */
-  _deriveForArcSelection(selection, staticData, virtualArcUsages, hiddenByFilter, positions, ctx, result) {
+  _deriveForArcSelection(
+    selection,
+    staticData,
+    virtualArcUsages,
+    hiddenByFilter,
+    positions,
+    ctx,
+    result,
+  ) {
     const arcId = selection.id;
     const [fromId, toId] = arcId.split('-');
 
-    result.nodeHighlights.set(fromId, { role: 'dependent', cssClass: 'dependentNode' });
-    result.nodeHighlights.set(toId, { role: 'dependency', cssClass: 'depNode' });
+    result.nodeHighlights.set(fromId, {
+      role: 'dependent',
+      cssClass: 'dependentNode',
+    });
+    result.nodeHighlights.set(toId, {
+      role: 'dependency',
+      cssClass: 'depNode',
+    });
 
     const descs = [];
     const arc = staticData.getArc(arcId);
     if (arc && !hiddenByFilter.has(arcId)) {
       descs.push({
-        key: arcId, fromId, toId, fromInSet: true, toInSet: true,
-        originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false
+        key: arcId,
+        fromId,
+        toId,
+        fromInSet: true,
+        toInSet: true,
+        originalWidth: staticData.getArcStrokeWidth(arcId),
+        isVirtual: false,
       });
     }
     if (virtualArcUsages.has(arcId)) {
       const usages = virtualArcUsages.get(arcId);
       const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
       descs.push({
-        key: 'v:' + arcId, fromId, toId, fromInSet: true, toInSet: true,
-        originalWidth: ArcLogic.calculateStrokeWidth(count), isVirtual: true
+        key: `v:${arcId}`,
+        fromId,
+        toId,
+        fromInSet: true,
+        toInSet: true,
+        originalWidth: ArcLogic.calculateStrokeWidth(count),
+        isVirtual: true,
       });
     }
 
     // Cycle expansion: highlight all arcs and nodes in all associated cycles
-    if (arc && arc.cycleIds && arc.cycleIds.length > 0 && typeof STATIC_DATA !== 'undefined' && STATIC_DATA.cycles) {
+    if (
+      arc?.cycleIds &&
+      arc.cycleIds.length > 0 &&
+      typeof STATIC_DATA !== 'undefined' &&
+      STATIC_DATA.cycles
+    ) {
       for (const cid of arc.cycleIds) {
         const cycle = STATIC_DATA.cycles[cid];
         if (!cycle) continue;
         for (const nodeId of cycle.nodes) {
           if (!result.nodeHighlights.has(nodeId)) {
-            result.nodeHighlights.set(nodeId, { role: 'cycle-member', cssClass: 'cycleMember' });
+            result.nodeHighlights.set(nodeId, {
+              role: 'cycle-member',
+              cssClass: 'cycleMember',
+            });
           }
         }
         for (const cycleArcId of cycle.arcs) {
@@ -280,9 +395,13 @@ const DerivedState = {
           const cycleArc = staticData.getArc(cycleArcId);
           if (cycleArc && !hiddenByFilter.has(cycleArcId)) {
             descs.push({
-              key: cycleArcId, fromId: cycleArc.from, toId: cycleArc.to,
-              fromInSet: true, toInSet: true,
-              originalWidth: staticData.getArcStrokeWidth(cycleArcId), isVirtual: false
+              key: cycleArcId,
+              fromId: cycleArc.from,
+              toId: cycleArc.to,
+              fromInSet: true,
+              toInSet: true,
+              originalWidth: staticData.getArcStrokeWidth(cycleArcId),
+              isVirtual: false,
             });
           }
         }
@@ -298,7 +417,13 @@ const DerivedState = {
    *    parent's own dependency arcs are shown.
    *  @param {string} selectionId - The primarily selected node (parent).
    */
-  _collectRegularArcDescs(staticData, hiddenByFilter, highlightSet, groupMode, selectionId) {
+  _collectRegularArcDescs(
+    staticData,
+    hiddenByFilter,
+    highlightSet,
+    groupMode,
+    selectionId,
+  ) {
     const descs = [];
     for (const arcId of staticData.getAllArcIds()) {
       if (hiddenByFilter.has(arcId)) continue;
@@ -307,11 +432,17 @@ const DerivedState = {
       const fromInSet = highlightSet.has(arc.from);
       const toInSet = highlightSet.has(arc.to);
       if (!fromInSet && !toInSet) continue;
-      if (groupMode && arc.from !== selectionId && arc.to !== selectionId) continue;
+      if (groupMode && arc.from !== selectionId && arc.to !== selectionId)
+        continue;
       descs.push({
-        key: arcId, fromId: arc.from, toId: arc.to, fromInSet, toInSet,
-        originalWidth: staticData.getArcStrokeWidth(arcId), isVirtual: false,
-        isNonProduction: arc.context?.kind !== "production"
+        key: arcId,
+        fromId: arc.from,
+        toId: arc.to,
+        fromInSet,
+        toInSet,
+        originalWidth: staticData.getArcStrokeWidth(arcId),
+        isVirtual: false,
+        isNonProduction: arc.context?.kind !== 'production',
       });
     }
     return descs;
@@ -321,7 +452,12 @@ const DerivedState = {
    *  @param {boolean} groupMode - When true, only keep arcs where selectionId is an endpoint.
    *  @param {string} selectionId - The primarily selected node (parent).
    */
-  _collectVirtualArcDescs(virtualArcUsages, highlightSet, groupMode, selectionId) {
+  _collectVirtualArcDescs(
+    virtualArcUsages,
+    highlightSet,
+    groupMode,
+    selectionId,
+  ) {
     const descs = [];
     for (const [vArcId, usages] of virtualArcUsages) {
       const [fromId, toId] = vArcId.split('-');
@@ -331,8 +467,13 @@ const DerivedState = {
       if (groupMode && fromId !== selectionId && toId !== selectionId) continue;
       const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
       descs.push({
-        key: 'v:' + vArcId, fromId, toId, fromInSet, toInSet,
-        originalWidth: ArcLogic.calculateStrokeWidth(count), isVirtual: true
+        key: `v:${vArcId}`,
+        fromId,
+        toId,
+        fromInSet,
+        toInSet,
+        originalWidth: ArcLogic.calculateStrokeWidth(count),
+        isVirtual: true,
       });
     }
     return descs;
@@ -344,7 +485,9 @@ const DerivedState = {
    *  roles that are unset or group-member, so production wins on conflict.
    */
   _processArcDescriptors(descriptors, positions, ctx, result) {
-    descriptors.sort((a, b) => (a.isNonProduction ? 1 : 0) - (b.isNonProduction ? 1 : 0));
+    descriptors.sort(
+      (a, b) => (a.isNonProduction ? 1 : 0) - (b.isNonProduction ? 1 : 0),
+    );
     for (const desc of descriptors) {
       const fromPos = positions.get(desc.fromId);
       const toPos = positions.get(desc.toId);
@@ -353,52 +496,91 @@ const DerivedState = {
       // positions are missing.
       if (!desc.isVirtual && (!fromPos || !toPos)) continue;
 
-      const relationType = desc.fromInSet && !desc.toInSet ? 'dep'
-        : !desc.fromInSet && desc.toInSet ? 'reverse' : 'dep';
+      const relationType =
+        desc.fromInSet && !desc.toInSet
+          ? 'dep'
+          : !desc.fromInSet && desc.toInSet
+            ? 'reverse'
+            : 'dep';
 
       const { arcHighlight, shadow } = this._computeArcHighlightEntry(
-        desc.originalWidth, desc.isVirtual, relationType, fromPos, toPos, ctx
+        desc.originalWidth,
+        desc.isVirtual,
+        relationType,
+        fromPos,
+        toPos,
+        ctx,
       );
 
       result.arcHighlights.set(desc.key, arcHighlight);
       if (shadow) result.shadowData.set(desc.key, shadow);
       if (!desc.isVirtual) result.promotedHitareas.add(desc.key);
-      this._markEndpointNodes(desc.fromId, desc.toId, desc.fromInSet, desc.toInSet, result.nodeHighlights);
+      this._markEndpointNodes(
+        desc.fromId,
+        desc.toId,
+        desc.fromInSet,
+        desc.toInSet,
+        result.nodeHighlights,
+      );
     }
   },
 
   /** @private Compute highlight entry + shadow for a single arc. */
-  _computeArcHighlightEntry(originalWidth, isVirtual, relationType, fromPos, toPos, ctx) {
-    const highlightWidth = HighlightLogic.calculateHighlightWidth(originalWidth);
+  _computeArcHighlightEntry(
+    originalWidth,
+    isVirtual,
+    relationType,
+    fromPos,
+    toPos,
+    ctx,
+  ) {
+    const highlightWidth =
+      HighlightLogic.calculateHighlightWidth(originalWidth);
     const arrowScale = isVirtual
       ? HighlightLogic.calculateVirtualArrowScale(highlightWidth)
       : ArcLogic.scaleFromStrokeWidth(highlightWidth);
     return {
       arcHighlight: { highlightWidth, arrowScale, relationType, isVirtual },
-      shadow: this._computeShadowEntry(originalWidth, relationType, fromPos, toPos, ctx)
+      shadow: this._computeShadowEntry(
+        originalWidth,
+        relationType,
+        fromPos,
+        toPos,
+        ctx,
+      ),
     };
   },
 
   /** @private Compute shadow glow data for an arc path. */
   _computeShadowEntry(originalWidth, relationType, fromPos, toPos, ctx) {
     if (!fromPos || !toPos) return null;
-    const pathData = this._computeArcPath(fromPos, toPos, ctx.yOffset, ctx.maxRight, ctx.rowHeight);
+    const pathData = this._computeArcPath(
+      fromPos,
+      toPos,
+      ctx.yOffset,
+      ctx.maxRight,
+      ctx.rowHeight,
+    );
     const pathLength = ArcLogic.estimatePathLength(pathData.path);
     const sd = HighlightLogic.calculateShadowData(originalWidth, pathLength);
     return {
-      shadowWidth: sd.shadowWidth, visibleLength: sd.visibleLength,
+      shadowWidth: sd.shadowWidth,
+      visibleLength: sd.visibleLength,
       dashOffset: sd.dashOffset,
-      glowClass: relationType === 'dep' ? 'glowIncoming' : 'glowOutgoing'
+      glowClass: relationType === 'dep' ? 'glowIncoming' : 'glowOutgoing',
     };
   },
 
   /** @private Set CSS classes for arc endpoint nodes.
    *  depNode/dependentNode may override group-member (to give green/purple border).
    */
-  _markEndpointNodes(fromId, toId, fromInSet, toInSet, nodeHighlights) {
+  _markEndpointNodes(fromId, toId, _fromInSet, _toInSet, nodeHighlights) {
     const fromRole = nodeHighlights.get(fromId)?.role;
     if (!fromRole || fromRole === 'group-member') {
-      nodeHighlights.set(fromId, { role: 'dependent', cssClass: 'dependentNode' });
+      nodeHighlights.set(fromId, {
+        role: 'dependent',
+        cssClass: 'dependentNode',
+      });
     }
     const toRole = nodeHighlights.get(toId)?.role;
     if (!toRole || toRole === 'group-member') {
@@ -417,7 +599,13 @@ const DerivedState = {
    * @returns {{path: string, toX: number, toY: number, ctrlX: number, midY: number}}
    */
   _computeArcPath(fromPos, toPos, yOffset, maxRight, rowHeight) {
-    return ArcLogic.calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight, rowHeight);
+    return ArcLogic.calculateArcPathFromPositions(
+      fromPos,
+      toPos,
+      yOffset,
+      maxRight,
+      rowHeight,
+    );
   },
 
   /**
@@ -431,7 +619,7 @@ const DerivedState = {
       maxRight = Math.max(maxRight, pos.x + pos.width);
     }
     return maxRight;
-  }
+  },
 };
 
 // CommonJS export for tests (Node/Bun)

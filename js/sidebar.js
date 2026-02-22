@@ -6,14 +6,16 @@
 // foreignObject-based HTML sidebar with scroll tracking
 
 const SIDEBAR_MAX_HEIGHT = 500;
-const TOOLBAR_HEIGHT = typeof __TOOLBAR_HEIGHT__ !== 'undefined' ? __TOOLBAR_HEIGHT__ : 0;
+const TOOLBAR_HEIGHT =
+  typeof __TOOLBAR_HEIGHT__ !== 'undefined' ? __TOOLBAR_HEIGHT__ : 0;
 const SIDEBAR_GAP_X = 24;
 const SIDEBAR_MARGIN_RIGHT = 16;
 const SIDEBAR_GAP_TOP = 20;
 // foreignObject must be taller than the visible sidebar so box-shadow
 // (which renders outside the div) is not clipped by the foreignObject boundary.
 // Value derived from box-shadow offset+blur in render.rs layout constants.
-const SIDEBAR_SHADOW_PAD = typeof __SIDEBAR_SHADOW_PAD__ !== 'undefined' ? __SIDEBAR_SHADOW_PAD__ : 12;
+const SIDEBAR_SHADOW_PAD =
+  typeof __SIDEBAR_SHADOW_PAD__ !== 'undefined' ? __SIDEBAR_SHADOW_PAD__ : 12;
 const SIDEBAR_MIN_WIDTH = 280;
 
 const SidebarLogic = {
@@ -31,11 +33,17 @@ const SidebarLogic = {
       const existing = bySymbol.get(key);
       if (existing) {
         for (const loc of g.locations) {
-          const isDup = existing.locations.some(e => e.file === loc.file && e.line === loc.line);
+          const isDup = existing.locations.some(
+            (e) => e.file === loc.file && e.line === loc.line,
+          );
           if (!isDup) existing.locations.push(loc);
         }
       } else {
-        bySymbol.set(key, { symbol: g.symbol, modulePath: g.modulePath, locations: [...g.locations] });
+        bySymbol.set(key, {
+          symbol: g.symbol,
+          modulePath: g.modulePath,
+          locations: [...g.locations],
+        });
       }
     }
     return [...bySymbol.values()];
@@ -51,10 +59,15 @@ const SidebarLogic = {
    */
   buildContent(arcId, overrideData) {
     const arc = overrideData || STATIC_DATA.arcs[arcId];
-    if (!arc) return "";
+    if (!arc) return '';
 
     // Cycle view: show all cycle arcs when clicking a cycle arc
-    if (!overrideData && arc.cycleIds && arc.cycleIds.length > 0 && STATIC_DATA.cycles) {
+    if (
+      !overrideData &&
+      arc.cycleIds &&
+      arc.cycleIds.length > 0 &&
+      STATIC_DATA.cycles
+    ) {
       return this._buildCycleContent(arcId, arc.cycleIds);
     }
     const groups = arc.usages || [];
@@ -63,12 +76,12 @@ const SidebarLogic = {
     const toNode = StaticData.getNode(arc.to);
     const fromName = fromNode ? fromNode.name : arc.from;
     const toName = toNode ? toNode.name : arc.to;
-    const fromClass = (fromNode ? `sidebar-node-${fromNode.type} ` : '') + 'sidebar-node-from';
-    const toClass = (toNode ? `sidebar-node-${toNode.type} ` : '') + 'sidebar-node-to';
+    const fromClass = `${fromNode ? `sidebar-node-${fromNode.type} ` : ''}sidebar-node-from`;
+    const toClass = `${toNode ? `sidebar-node-${toNode.type} ` : ''}sidebar-node-to`;
 
     let html = `<div class="sidebar-header">`;
     html += `<span class="sidebar-title"><span class="${fromClass}">${fromName}</span><span class="sidebar-arrow">&#x2192;</span><span class="${toClass}">${toName}</span></span>`;
-    const hasSymbols = groups.some(g => g.symbol);
+    const hasSymbols = groups.some((g) => g.symbol);
     if (hasSymbols) {
       html += `<div class="sidebar-header-actions">`;
       html += `<button class="sidebar-collapse-all" title="Collapse all">&#x2212;</button>`;
@@ -83,7 +96,9 @@ const SidebarLogic = {
     if (groups.length === 0) {
       html += `<div class="sidebar-usage-group">Cargo.toml dependency</div>`;
     } else {
-      const sorted = [...groups].sort((a, b) => b.locations.length - a.locations.length);
+      const sorted = [...groups].sort(
+        (a, b) => b.locations.length - a.locations.length,
+      );
       for (const group of sorted) {
         html += `<div class="sidebar-usage-group">`;
         if (group.symbol) {
@@ -108,9 +123,9 @@ const SidebarLogic = {
 
     // Footer
     const totalLocs = groups.reduce((sum, g) => sum + g.locations.length, 0);
-    const symbolCount = groups.filter(g => g.symbol).length;
+    const symbolCount = groups.filter((g) => g.symbol).length;
     let footerText = `${totalLocs} Referenzen \u00b7 ${symbolCount} Symbole`;
-    if (overrideData && overrideData.originalArcs) {
+    if (overrideData?.originalArcs) {
       footerText += ` \u00b7 ${overrideData.originalArcs.length} Relations`;
     }
     html += `<div class="sidebar-footer">${footerText}</div>`;
@@ -129,7 +144,8 @@ const SidebarLogic = {
     const node = StaticData.getNode(nodeId);
     const nodeName = node ? node.name : nodeId;
     const nodeType = node ? node.type : '';
-    const hasRelations = relations.incoming.length > 0 || relations.outgoing.length > 0;
+    const hasRelations =
+      relations.incoming.length > 0 || relations.outgoing.length > 0;
 
     // Header: Node name + Collapse-All ("+", since all L1 start collapsed) + Close
     let html = `<div class="sidebar-header">`;
@@ -151,7 +167,13 @@ const SidebarLogic = {
     } else {
       // Incoming (Dependents) first — selected node on the right
       for (const rel of relations.incoming) {
-        html += this._buildRelationSection(rel, nodeId, nodeName, nodeType, 'incoming');
+        html += this._buildRelationSection(
+          rel,
+          nodeId,
+          nodeName,
+          nodeType,
+          'incoming',
+        );
       }
 
       // Divider only if both directions non-empty
@@ -161,7 +183,13 @@ const SidebarLogic = {
 
       // Outgoing (Dependencies) — selected node on the left
       for (const rel of relations.outgoing) {
-        html += this._buildRelationSection(rel, nodeId, nodeName, nodeType, 'outgoing');
+        html += this._buildRelationSection(
+          rel,
+          nodeId,
+          nodeName,
+          nodeType,
+          'outgoing',
+        );
       }
     }
 
@@ -183,7 +211,7 @@ const SidebarLogic = {
    * @param {'incoming'|'outgoing'} direction
    * @returns {string}
    */
-  _buildRelationSection(rel, nodeId, nodeName, nodeType, direction) {
+  _buildRelationSection(rel, _nodeId, nodeName, nodeType, direction) {
     const target = StaticData.getNode(rel.targetId);
     const targetName = target ? target.name : rel.targetId;
     const targetType = target ? target.type : '';
@@ -192,12 +220,20 @@ const SidebarLogic = {
     let fromName, fromType, fromSelected, toName, toType, toSelected;
     if (direction === 'incoming') {
       // source → [selected]: selected is on the right
-      fromName = targetName; fromType = targetType; fromSelected = false;
-      toName = nodeName; toType = nodeType; toSelected = true;
+      fromName = targetName;
+      fromType = targetType;
+      fromSelected = false;
+      toName = nodeName;
+      toType = nodeType;
+      toSelected = true;
     } else {
       // [selected] → target: selected is on the left
-      fromName = nodeName; fromType = nodeType; fromSelected = true;
-      toName = targetName; toType = targetType; toSelected = false;
+      fromName = nodeName;
+      fromType = nodeType;
+      fromSelected = true;
+      toName = targetName;
+      toType = targetType;
+      toSelected = false;
     }
 
     const fromClass = `sidebar-node-${fromType}${fromSelected ? ' sidebar-node-selected' : ' sidebar-node-from'}`;
@@ -219,7 +255,9 @@ const SidebarLogic = {
     if (groups.length === 0) {
       html += `<div class="sidebar-usage-group">Cargo.toml dependency</div>`;
     } else {
-      const sorted = [...groups].sort((a, b) => b.locations.length - a.locations.length);
+      const sorted = [...groups].sort(
+        (a, b) => b.locations.length - a.locations.length,
+      );
       for (const group of sorted) {
         html += `<div class="sidebar-usage-group">`;
         if (group.symbol) {
@@ -251,7 +289,7 @@ const SidebarLogic = {
    * @returns {Element|null}
    */
   _getElement() {
-    return DomAdapter.getElementById("relation-sidebar");
+    return DomAdapter.getElementById('relation-sidebar');
   },
 
   /**
@@ -314,7 +352,12 @@ const SidebarLogic = {
 
     return {
       y: Math.round(y),
-      height: Math.round(Math.min(vpHeight - TOOLBAR_HEIGHT - SIDEBAR_GAP_TOP, SIDEBAR_MAX_HEIGHT)),
+      height: Math.round(
+        Math.min(
+          vpHeight - TOOLBAR_HEIGHT - SIDEBAR_GAP_TOP,
+          SIDEBAR_MAX_HEIGHT,
+        ),
+      ),
     };
   },
 
@@ -329,12 +372,12 @@ const SidebarLogic = {
     this._debounceTimer = setTimeout(() => {
       const el = this._getElement();
       if (!el) return;
-      const innerDiv = el.querySelector(".sidebar-root");
+      const innerDiv = el.querySelector('.sidebar-root');
       if (innerDiv) {
         innerDiv.innerHTML = this.buildContent(arcId, overrideData);
-        innerDiv.classList.add("sidebar-transient");
+        innerDiv.classList.add('sidebar-transient');
       }
-      el.style.display = "block";
+      el.style.display = 'block';
       this._isTransient = true;
       this._cachedX = this._calcX();
       this.updatePosition();
@@ -359,13 +402,13 @@ const SidebarLogic = {
   show(arcId, overrideData) {
     const el = this._getElement();
     if (!el) return;
-    const innerDiv = el.querySelector(".sidebar-root");
+    const innerDiv = el.querySelector('.sidebar-root');
     if (innerDiv) {
       innerDiv.innerHTML = this.buildContent(arcId, overrideData);
-      innerDiv.classList.remove("sidebar-transient");
+      innerDiv.classList.remove('sidebar-transient');
       this._setupCollapseHandlers(innerDiv);
     }
-    el.style.display = "block";
+    el.style.display = 'block';
     this._isTransient = false;
     clearTimeout(this._debounceTimer);
     this._cachedX = this._calcX();
@@ -383,9 +426,9 @@ const SidebarLogic = {
     // Single cycle: original flat layout
     if (cycleIds.length === 1) {
       const cycle = STATIC_DATA.cycles[cycleIds[0]];
-      if (!cycle) return "";
+      if (!cycle) return '';
 
-      const arcInfos = cycle.arcs.map(arcId => {
+      const arcInfos = cycle.arcs.map((arcId) => {
         const arc = STATIC_DATA.arcs[arcId];
         const usages = arc?.usages || [];
         const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
@@ -447,7 +490,7 @@ const SidebarLogic = {
       cycleNum++;
       totalEdges += cycle.arcs.length;
 
-      const arcInfos = cycle.arcs.map(arcId => {
+      const arcInfos = cycle.arcs.map((arcId) => {
         const arc = STATIC_DATA.arcs[arcId];
         const usages = arc?.usages || [];
         const count = usages.reduce((sum, g) => sum + g.locations.length, 0);
@@ -512,56 +555,58 @@ const SidebarLogic = {
 
   _setupCollapseHandlers(root) {
     if (!root || !root.querySelector) return;
-    const content = root.querySelector(".sidebar-content");
+    const content = root.querySelector('.sidebar-content');
     if (!content) return;
-    content.addEventListener("click", (e) => {
-      const symbolEl = e.target.closest(".sidebar-symbol");
+    content.addEventListener('click', (e) => {
+      const symbolEl = e.target.closest('.sidebar-symbol');
       if (!symbolEl) return;
       const locsEl = symbolEl.nextElementSibling;
-      if (!locsEl || !locsEl.classList.contains("sidebar-locations")) return;
-      const isCollapsed = symbolEl.getAttribute("data-collapsed") === "true";
+      if (!locsEl || !locsEl.classList.contains('sidebar-locations')) return;
+      const isCollapsed = symbolEl.getAttribute('data-collapsed') === 'true';
       if (isCollapsed) {
-        symbolEl.removeAttribute("data-collapsed");
-        locsEl.style.display = "";
-        const toggle = symbolEl.querySelector(".sidebar-toggle");
-        if (toggle) toggle.innerHTML = "\u25BE";
+        symbolEl.removeAttribute('data-collapsed');
+        locsEl.style.display = '';
+        const toggle = symbolEl.querySelector('.sidebar-toggle');
+        if (toggle) toggle.innerHTML = '\u25BE';
       } else {
-        symbolEl.setAttribute("data-collapsed", "true");
-        locsEl.style.display = "none";
-        const toggle = symbolEl.querySelector(".sidebar-toggle");
-        if (toggle) toggle.innerHTML = "\u25B8";
+        symbolEl.setAttribute('data-collapsed', 'true');
+        locsEl.style.display = 'none';
+        const toggle = symbolEl.querySelector('.sidebar-toggle');
+        if (toggle) toggle.innerHTML = '\u25B8';
       }
-      const allBtn = root.querySelector(".sidebar-collapse-all");
+      const allBtn = root.querySelector('.sidebar-collapse-all');
       if (allBtn) {
-        const allCollapsed = Array.from(content.querySelectorAll(".sidebar-symbol"))
-          .every(s => s.getAttribute("data-collapsed") === "true");
-        allBtn.innerHTML = allCollapsed ? "+" : "\u2212";
+        const allCollapsed = Array.from(
+          content.querySelectorAll('.sidebar-symbol'),
+        ).every((s) => s.getAttribute('data-collapsed') === 'true');
+        allBtn.innerHTML = allCollapsed ? '+' : '\u2212';
       }
       SidebarLogic.updatePosition();
     });
-    const collapseAllBtn = root.querySelector(".sidebar-collapse-all");
+    const collapseAllBtn = root.querySelector('.sidebar-collapse-all');
     if (!collapseAllBtn) return;
-    collapseAllBtn.addEventListener("click", () => {
-      const symbols = content.querySelectorAll(".sidebar-symbol");
+    collapseAllBtn.addEventListener('click', () => {
+      const symbols = content.querySelectorAll('.sidebar-symbol');
       if (!symbols.length) return;
       const anyExpanded = Array.from(symbols).some(
-        s => s.getAttribute("data-collapsed") !== "true"
+        (s) => s.getAttribute('data-collapsed') !== 'true',
       );
       for (const symbolEl of symbols) {
         const locsEl = symbolEl.nextElementSibling;
-        if (!locsEl || !locsEl.classList.contains("sidebar-locations")) continue;
-        const toggle = symbolEl.querySelector(".sidebar-toggle");
+        if (!locsEl || !locsEl.classList.contains('sidebar-locations'))
+          continue;
+        const toggle = symbolEl.querySelector('.sidebar-toggle');
         if (anyExpanded) {
-          symbolEl.setAttribute("data-collapsed", "true");
-          locsEl.style.display = "none";
-          if (toggle) toggle.innerHTML = "\u25B8";
+          symbolEl.setAttribute('data-collapsed', 'true');
+          locsEl.style.display = 'none';
+          if (toggle) toggle.innerHTML = '\u25B8';
         } else {
-          symbolEl.removeAttribute("data-collapsed");
-          locsEl.style.display = "";
-          if (toggle) toggle.innerHTML = "\u25BE";
+          symbolEl.removeAttribute('data-collapsed');
+          locsEl.style.display = '';
+          if (toggle) toggle.innerHTML = '\u25BE';
         }
       }
-      collapseAllBtn.innerHTML = anyExpanded ? "+" : "\u2212";
+      collapseAllBtn.innerHTML = anyExpanded ? '+' : '\u2212';
       SidebarLogic.updatePosition();
     });
   },
@@ -574,13 +619,13 @@ const SidebarLogic = {
   showNode(nodeId, relations) {
     const el = this._getElement();
     if (!el) return;
-    const innerDiv = el.querySelector(".sidebar-root");
+    const innerDiv = el.querySelector('.sidebar-root');
     if (innerDiv) {
       innerDiv.innerHTML = this.buildNodeContent(nodeId, relations);
-      innerDiv.classList.remove("sidebar-transient");
+      innerDiv.classList.remove('sidebar-transient');
       this._setupCollapseHandlers(innerDiv);
     }
-    el.style.display = "block";
+    el.style.display = 'block';
     this._isTransient = false;
     clearTimeout(this._debounceTimer);
     this._cachedX = this._calcX();
@@ -597,12 +642,12 @@ const SidebarLogic = {
     this._debounceTimer = setTimeout(() => {
       const el = this._getElement();
       if (!el) return;
-      const innerDiv = el.querySelector(".sidebar-root");
+      const innerDiv = el.querySelector('.sidebar-root');
       if (innerDiv) {
         innerDiv.innerHTML = this.buildNodeContent(nodeId, relations);
-        innerDiv.classList.add("sidebar-transient");
+        innerDiv.classList.add('sidebar-transient');
       }
-      el.style.display = "block";
+      el.style.display = 'block';
       this._isTransient = true;
       this._cachedX = this._calcX();
       this.updatePosition();
@@ -615,22 +660,25 @@ const SidebarLogic = {
   hide() {
     const el = this._getElement();
     if (!el) return;
-    el.style.display = "none";
+    el.style.display = 'none';
     this._cachedX = null;
     this._isTransient = false;
     clearTimeout(this._debounceTimer);
 
     // Restore original SVG canvas dimensions
-    if (this._originalViewBoxHeight !== null || this._originalViewBoxWidth !== null) {
+    if (
+      this._originalViewBoxHeight !== null ||
+      this._originalViewBoxWidth !== null
+    ) {
       const svg = DomAdapter.getSvgRoot();
       if (svg) {
         if (this._originalViewBoxHeight !== null) {
           svg.viewBox.baseVal.height = this._originalViewBoxHeight;
-          svg.setAttribute("height", String(this._originalViewBoxHeight));
+          svg.setAttribute('height', String(this._originalViewBoxHeight));
         }
         if (this._originalViewBoxWidth !== null) {
           svg.viewBox.baseVal.width = this._originalViewBoxWidth;
-          svg.setAttribute("width", String(this._originalViewBoxWidth));
+          svg.setAttribute('width', String(this._originalViewBoxWidth));
         }
       }
       this._originalViewBoxHeight = null;
@@ -645,7 +693,7 @@ const SidebarLogic = {
   isVisible() {
     const el = this._getElement();
     if (!el) return false;
-    return el.style.display === "block";
+    return el.style.display === 'block';
   },
 
   /**
@@ -662,13 +710,16 @@ const SidebarLogic = {
     // Previous approach (shrink → measure scrollWidth) failed because nested
     // overflow containers (sidebar-content has implicit overflow-x:auto) don't
     // propagate scrollWidth reliably in foreignObject context.
-    const innerDiv = el.querySelector(".sidebar-root");
-    el.setAttribute("width", "9999");
-    if (innerDiv) innerDiv.style.width = "max-content";
+    const innerDiv = el.querySelector('.sidebar-root');
+    el.setAttribute('width', '9999');
+    if (innerDiv) innerDiv.style.width = 'max-content';
     const naturalW = innerDiv ? innerDiv.offsetWidth : 0;
-    if (innerDiv) innerDiv.style.width = "";
+    if (innerDiv) innerDiv.style.width = '';
     const vpWidth = window.innerWidth;
-    const width = Math.max(SIDEBAR_MIN_WIDTH, Math.min(naturalW, vpWidth * 0.5));
+    const width = Math.max(
+      SIDEBAR_MIN_WIDTH,
+      Math.min(naturalW, vpWidth * 0.5),
+    );
 
     // Re-clamp X with actual width — _calcX() clamps with SIDEBAR_MIN_WIDTH
     // but actual width can be larger, pushing the sidebar beyond viewport (ca-0141)
@@ -680,16 +731,19 @@ const SidebarLogic = {
       const scaleX = vb.width / svgRect.width;
       const viewportRight = (window.innerWidth - svgRect.left) * scaleX;
       if (x + width + SIDEBAR_MARGIN_RIGHT > viewportRight) {
-        x = Math.max(0, Math.round(viewportRight - width - SIDEBAR_MARGIN_RIGHT));
+        x = Math.max(
+          0,
+          Math.round(viewportRight - width - SIDEBAR_MARGIN_RIGHT),
+        );
       }
     }
     x = Math.round(x);
 
-    el.setAttribute("width", String(Math.round(width) + SIDEBAR_SHADOW_PAD));
-    el.setAttribute("x", String(x));
-    el.setAttribute("y", String(pos.y));
-    el.setAttribute("height", String(pos.height + SIDEBAR_SHADOW_PAD));
-    if (innerDiv) innerDiv.style.height = pos.height + 'px';
+    el.setAttribute('width', String(Math.round(width) + SIDEBAR_SHADOW_PAD));
+    el.setAttribute('x', String(x));
+    el.setAttribute('y', String(pos.y));
+    el.setAttribute('height', String(pos.height + SIDEBAR_SHADOW_PAD));
+    if (innerDiv) innerDiv.style.height = `${pos.height}px`;
 
     // Expand SVG canvas if sidebar extends beyond viewBox
     if (svg) {
@@ -701,7 +755,7 @@ const SidebarLogic = {
       const neededH = Math.max(this._originalViewBoxHeight, sidebarBottom);
       if (vb.height !== neededH) {
         vb.height = neededH;
-        svg.setAttribute("height", String(neededH));
+        svg.setAttribute('height', String(neededH));
       }
 
       // Also expand width when sidebar extends beyond viewBox
@@ -712,13 +766,13 @@ const SidebarLogic = {
       const neededW = Math.max(this._originalViewBoxWidth, sidebarRight);
       if (vb.width !== neededW) {
         vb.width = neededW;
-        svg.setAttribute("width", String(neededW));
+        svg.setAttribute('width', String(neededW));
       }
     }
   },
 };
 
 // CommonJS export for tests (Node/Bun)
-if (typeof module !== "undefined") {
+if (typeof module !== 'undefined') {
   module.exports = { SidebarLogic };
 }

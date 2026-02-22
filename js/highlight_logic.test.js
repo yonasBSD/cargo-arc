@@ -82,18 +82,18 @@ describe('HighlightLogic', () => {
     test('combines all shadow calculations', () => {
       const result = HighlightLogic.calculateShadowData(1.0, 100);
 
-      expect(result.shadowWidth).toBe(4.0);  // 1.0 * 4
-      expect(result.overhang).toBe(1.5);     // (4 - 1) / 2
+      expect(result.shadowWidth).toBe(4.0); // 1.0 * 4
+      expect(result.overhang).toBe(1.5); // (4 - 1) / 2
       expect(result.visibleLength).toBe(97); // 100 - 1.5*2
-      expect(result.dashOffset).toBe(-1.5);  // -overhang
+      expect(result.dashOffset).toBe(-1.5); // -overhang
     });
 
     test('handles edge case where overhang exceeds path', () => {
       const result = HighlightLogic.calculateShadowData(10, 10);
 
       expect(result.shadowWidth).toBe(40);
-      expect(result.overhang).toBe(15);      // (40 - 10) / 2
-      expect(result.visibleLength).toBe(0);  // max(0, 10 - 30)
+      expect(result.overhang).toBe(15); // (40 - 10) / 2
+      expect(result.visibleLength).toBe(0); // max(0, 10 - 30)
       expect(result.dashOffset).toBe(-15);
     });
   });

@@ -7,7 +7,7 @@
 
 // IIFE for SVG embedding (DOM-code) - only runs in browser with placeholders replaced
 if (typeof document !== 'undefined') {
-  (function () {
+  (() => {
     const ROW_HEIGHT = __ROW_HEIGHT__;
     const MARGIN = __MARGIN__;
     const TOOLBAR_HEIGHT = __TOOLBAR_HEIGHT__;
@@ -20,7 +20,7 @@ if (typeof document !== 'undefined') {
       for (const arcId of StaticData.getAllArcIds()) {
         const width = StaticData.getArcStrokeWidth(arcId);
         const visibleArc = DomAdapter.getVisibleArc(arcId);
-        if (visibleArc) visibleArc.style.strokeWidth = width + 'px';
+        if (visibleArc) visibleArc.style.strokeWidth = `${width}px`;
         ArcLogic.scaleArrow(DomAdapter, arcId, width);
       }
     }
@@ -46,10 +46,20 @@ if (typeof document !== 'undefined') {
         }
       }
       const positions = DerivedState.computeCurrentPositions(
-        appState.collapsed, StaticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT, widthOverrides
+        appState.collapsed,
+        StaticData,
+        MARGIN,
+        TOOLBAR_HEIGHT,
+        ROW_HEIGHT,
+        widthOverrides,
       );
       const state = DerivedState.deriveHighlightState(
-        appState, StaticData, virtualArcUsages, appState.hiddenArcIds, positions, ROW_HEIGHT
+        appState,
+        StaticData,
+        virtualArcUsages,
+        appState.hiddenArcIds,
+        positions,
+        ROW_HEIGHT,
       );
       HighlightRenderer.apply(DomAdapter, StaticData, virtualArcUsages, state);
     }
@@ -59,12 +69,15 @@ if (typeof document !== 'undefined') {
     function toggleHighlight(type, id, showSidebar) {
       const isPinned = AppState.togglePinned(appState, type, id);
       rerenderHighlights();
-      if (!isPinned) { SidebarLogic.hide(); return; }
+      if (!isPinned) {
+        SidebarLogic.hide();
+        return;
+      }
       showSidebar();
     }
 
     function highlightEdge(from, to) {
-      const edgeId = from + '-' + to;
+      const edgeId = `${from}-${to}`;
       toggleHighlight('arc', edgeId, () => SidebarLogic.show(edgeId));
     }
 
@@ -78,8 +91,12 @@ if (typeof document !== 'undefined') {
     function collectNodeRelations(nodeId) {
       const base = StaticData.getNodeRelations(nodeId);
       // Filter base arcs to hidden nodes — virtual arcs already represent them
-      base.outgoing = base.outgoing.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
-      base.incoming = base.incoming.filter(e => getVisibleAncestor(e.targetId) === e.targetId);
+      base.outgoing = base.outgoing.filter(
+        (e) => getVisibleAncestor(e.targetId) === e.targetId,
+      );
+      base.incoming = base.incoming.filter(
+        (e) => getVisibleAncestor(e.targetId) === e.targetId,
+      );
       for (const [key, usages] of virtualArcUsages) {
         const [fromId, toId] = key.split('-');
         const origArcs = virtualArcOriginals.get(key) || [];
@@ -87,7 +104,10 @@ if (typeof document !== 'undefined') {
         const merged = SidebarLogic.mergeSymbolGroups(usages);
         const entry = {
           targetId: fromId === nodeId ? toId : fromId,
-          weight, usages: merged, arcId: key, originalArcs: origArcs
+          weight,
+          usages: merged,
+          arcId: key,
+          originalArcs: origArcs,
         };
         if (fromId === nodeId) base.outgoing.push(entry);
         else if (toId === nodeId) base.incoming.push(entry);
@@ -123,7 +143,12 @@ if (typeof document !== 'undefined') {
       const usages = virtualArcUsages.get(arcId) || [];
       const originalArcs = virtualArcOriginals.get(arcId) || [];
       const mergedUsages = SidebarLogic.mergeSymbolGroups(usages);
-      SidebarLogic.showTransient(arcId, { from: fromId, to: toId, usages: mergedUsages, originalArcs });
+      SidebarLogic.showTransient(arcId, {
+        from: fromId,
+        to: toId,
+        usages: mergedUsages,
+        originalArcs,
+      });
     }
 
     // === Collapse functionality ===
@@ -138,7 +163,11 @@ if (typeof document !== 'undefined') {
     }
 
     function getVisibleAncestor(nodeId) {
-      return TreeLogic.getVisibleAncestor(nodeId, appState.collapsed, parentMap);
+      return TreeLogic.getVisibleAncestor(
+        nodeId,
+        appState.collapsed,
+        parentMap,
+      );
     }
 
     function countDescendants(nodeId) {
@@ -148,7 +177,7 @@ if (typeof document !== 'undefined') {
     // Update tree lines for a node at new Y position
     function updateTreeLines(nodeId, newY, nodeHeight) {
       // Update lines where this node is the child
-      DomAdapter.getTreeLines(nodeId, 'child').forEach(line => {
+      DomAdapter.getTreeLines(nodeId, 'child').forEach((line) => {
         const midY = newY + nodeHeight / 2;
         if (line.getAttribute('x1') === line.getAttribute('x2')) {
           // Vertical line - update y2
@@ -161,7 +190,7 @@ if (typeof document !== 'undefined') {
       });
 
       // Update lines where this node is the parent (vertical line y1)
-      DomAdapter.getTreeLines(nodeId, 'parent').forEach(line => {
+      DomAdapter.getTreeLines(nodeId, 'parent').forEach((line) => {
         if (line.getAttribute('x1') === line.getAttribute('x2')) {
           // Vertical line - update y1 (parent bottom)
           line.setAttribute('y1', newY + nodeHeight);
@@ -174,14 +203,13 @@ if (typeof document !== 'undefined') {
       let currentY = MARGIN + TOOLBAR_HEIGHT;
 
       // Get all node IDs sorted by original Y position (no DOM query for list)
-      const sortedIds = StaticData.getAllNodeIds()
-        .sort((a, b) => {
-          const posA = StaticData.getOriginalPosition(a);
-          const posB = StaticData.getOriginalPosition(b);
-          return posA.y - posB.y;
-        });
+      const sortedIds = StaticData.getAllNodeIds().sort((a, b) => {
+        const posA = StaticData.getOriginalPosition(a);
+        const posB = StaticData.getOriginalPosition(b);
+        return posA.y - posB.y;
+      });
 
-      sortedIds.forEach(nodeId => {
+      sortedIds.forEach((nodeId) => {
         const node = DomAdapter.getNode(nodeId);
         if (!node) return;
         if (node.classList.contains(C.collapsed)) return;
@@ -195,7 +223,11 @@ if (typeof document !== 'undefined') {
 
         // Update label position (next text sibling)
         const label = node.nextElementSibling;
-        if (label && label.tagName === 'text' && label.classList.contains(C.label)) {
+        if (
+          label &&
+          label.tagName === 'text' &&
+          label.classList.contains(C.label)
+        ) {
           label.setAttribute('y', currentY + height / 2 + 4);
         }
 
@@ -225,14 +257,20 @@ if (typeof document !== 'undefined') {
 
     // Helper: Calculate arc path from position objects (no DOM read)
     function calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight) {
-      return ArcLogic.calculateArcPathFromPositions(fromPos, toPos, yOffset, maxRight, ROW_HEIGHT);
+      return ArcLogic.calculateArcPathFromPositions(
+        fromPos,
+        toPos,
+        yOffset,
+        maxRight,
+        ROW_HEIGHT,
+      );
     }
 
     // Helper: Extract edge data from DOM hitareas to pure objects
     // Uses DerivedState for visibility instead of per-edge getVisibleAncestor calls
     function extractEdgeData(hitareas, visibleNodes) {
       const edges = [];
-      hitareas.forEach(hitarea => {
+      hitareas.forEach((hitarea) => {
         const fromId = hitarea.dataset.from;
         const toId = hitarea.dataset.to;
 
@@ -251,7 +289,7 @@ if (typeof document !== 'undefined') {
           toHidden: toIsHidden,
           sourceLocations: StaticData.getArcUsages(arcId),
           // Compute direction from hierarchy (no DOM read)
-          direction: DerivedState._determineDirection(fromId, toId, parentMap)
+          direction: DerivedState._determineDirection(fromId, toId, parentMap),
         });
       });
       return edges;
@@ -259,24 +297,32 @@ if (typeof document !== 'undefined') {
 
     // Remove virtual elements and reset original edge display
     function cleanupVirtualElements() {
-      DomAdapter.querySelectorAll(Selectors.allVirtualElements()).forEach(el => el.remove());
-      DomAdapter.querySelectorAll(Selectors.allBaseEdges()).forEach(edge => {
+      DomAdapter.querySelectorAll(Selectors.allVirtualElements()).forEach(
+        (el) => {
+          el.remove();
+        },
+      );
+      DomAdapter.querySelectorAll(Selectors.allBaseEdges()).forEach((edge) => {
         edge.style.display = '';
       });
-      DomAdapter.querySelectorAll(Selectors.allBaseArrows()).forEach(arrow => {
-        arrow.style.display = '';
-      });
+      DomAdapter.querySelectorAll(Selectors.allBaseArrows()).forEach(
+        (arrow) => {
+          arrow.style.display = '';
+        },
+      );
       virtualArcUsages.clear();
       virtualArcOriginals.clear();
     }
 
     // Hide original elements when from/to hidden, update visible arc paths
     function updateOriginalEdges(edgeData, currentPositions, maxRight) {
-      edgeData.forEach(edge => {
+      edgeData.forEach((edge) => {
         const { hitarea, arcId, fromId, toId, fromHidden, toHidden } = edge;
 
         if (window.DEBUG_ARCS) {
-          console.log(`Arc ${arcId}: from=${fromId}(${fromHidden ? 'hidden' : 'visible'}), to=${toId}(${toHidden ? 'hidden' : 'visible'})`);
+          console.log(
+            `Arc ${arcId}: from=${fromId}(${fromHidden ? 'hidden' : 'visible'}), to=${toId}(${toHidden ? 'hidden' : 'visible'})`,
+          );
         }
 
         if (fromHidden || toHidden) {
@@ -284,14 +330,20 @@ if (typeof document !== 'undefined') {
           hitarea.style.display = 'none';
           const visibleArc = DomAdapter.getVisibleArc(arcId);
           if (visibleArc) visibleArc.style.display = 'none';
-          DomAdapter.getArrows(fromId + '-' + toId)
-            .forEach(arr => arr.style.display = 'none');
+          DomAdapter.getArrows(`${fromId}-${toId}`).forEach((arr) => {
+            arr.style.display = 'none';
+          });
         } else {
           // Update visible arc paths using computed positions (no DOM read)
           const fromPos = currentPositions.get(fromId);
           const toPos = currentPositions.get(toId);
           if (fromPos && toPos) {
-            const arc = calculateArcPathFromPositions(fromPos, toPos, 3, maxRight);
+            const arc = calculateArcPathFromPositions(
+              fromPos,
+              toPos,
+              3,
+              maxRight,
+            );
             hitarea.setAttribute('d', arc.path);
             const visibleArc = DomAdapter.getVisibleArc(arcId);
             if (visibleArc) visibleArc.setAttribute('d', arc.path);
@@ -299,8 +351,11 @@ if (typeof document !== 'undefined') {
             const strokeWidth = StaticData.getArcStrokeWidth(arcId);
             const scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
             // Update ALL arrow positions (even hidden ones) so they have correct position when shown
-            DomAdapter.getArrows(fromId + '-' + toId).forEach(arrow => {
-              arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
+            DomAdapter.getArrows(`${fromId}-${toId}`).forEach((arrow) => {
+              arrow.setAttribute(
+                'points',
+                ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale),
+              );
             });
           }
         }
@@ -311,7 +366,10 @@ if (typeof document !== 'undefined') {
     function recalculateVirtualEdges() {
       cleanupVirtualElements();
 
-      const visibleNodes = DerivedState.deriveNodeVisibility(appState.collapsed, StaticData);
+      const visibleNodes = DerivedState.deriveNodeVisibility(
+        appState.collapsed,
+        StaticData,
+      );
       // Read current DOM widths for collapsed nodes whose boxes were expanded
       const widthOverrides = new Map();
       for (const nodeId of appState.collapsed) {
@@ -321,7 +379,12 @@ if (typeof document !== 'undefined') {
         }
       }
       const currentPositions = DerivedState.computeCurrentPositions(
-        appState.collapsed, StaticData, MARGIN, TOOLBAR_HEIGHT, ROW_HEIGHT, widthOverrides
+        appState.collapsed,
+        StaticData,
+        MARGIN,
+        TOOLBAR_HEIGHT,
+        ROW_HEIGHT,
+        widthOverrides,
       );
       const maxRight = DerivedState.computeMaxRight(currentPositions);
 
@@ -330,15 +393,22 @@ if (typeof document !== 'undefined') {
 
       updateOriginalEdges(edgeData, currentPositions, maxRight);
 
-      const virtualEdges = VirtualEdgeLogic.aggregateHiddenEdges(edgeData, getVisibleAncestor);
+      const virtualEdges = VirtualEdgeLogic.aggregateHiddenEdges(
+        edgeData,
+        getVisibleAncestor,
+      );
       const mergedEdges = VirtualEdgeLogic.prepareVirtualEdgeData(
-        virtualEdges, currentPositions, maxRight, ArcLogic, ROW_HEIGHT
+        virtualEdges,
+        currentPositions,
+        maxRight,
+        ArcLogic,
+        ROW_HEIGHT,
       );
 
       const layers = {
         baseArcs: DomAdapter.getElementById(LayerManager.LAYERS.BASE_ARCS),
         baseLabels: DomAdapter.getElementById(LayerManager.LAYERS.BASE_LABELS),
-        hitareas: DomAdapter.getElementById(LayerManager.LAYERS.HITAREAS)
+        hitareas: DomAdapter.getElementById(LayerManager.LAYERS.HITAREAS),
       };
       renderVirtualElements(mergedEdges, layers);
     }
@@ -346,9 +416,9 @@ if (typeof document !== 'undefined') {
     // Create virtual arc elements (arcs, arrows, labels, hitareas)
     function renderVirtualElements(mergedEdges, layers) {
       // Pass 1: Arcs + Arrows (bottom layer)
-      mergedEdges.forEach((data, key) => {
+      mergedEdges.forEach((data, _key) => {
         const { fromId, toId, arc, strokeWidth, direction } = data;
-        const arcId = fromId + '-' + toId;
+        const arcId = `${fromId}-${toId}`;
 
         // Visible path (styled, no pointer events)
         const path = DomAdapter.createSvgElement('path');
@@ -357,7 +427,7 @@ if (typeof document !== 'undefined') {
         path.setAttribute('data-arc-id', arcId);
         path.setAttribute('data-from', fromId);
         path.setAttribute('data-to', toId);
-        path.style.strokeWidth = strokeWidth + 'px';
+        path.style.strokeWidth = `${strokeWidth}px`;
         layers.baseArcs.appendChild(path);
 
         // Arrow (scaled to match stroke width)
@@ -367,8 +437,11 @@ if (typeof document !== 'undefined') {
         arrow.setAttribute('data-vedge', arcId);
         arrow.setAttribute('data-from', fromId);
         arrow.setAttribute('data-to', toId);
-        arrow.setAttribute('points', ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale));
-        arrow.addEventListener('click', e => {
+        arrow.setAttribute(
+          'points',
+          ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale),
+        );
+        arrow.addEventListener('click', (e) => {
           e.stopPropagation();
           highlightVirtualEdge(fromId, toId);
         });
@@ -376,16 +449,16 @@ if (typeof document !== 'undefined') {
       });
 
       // Pass 2: Labels (middle layer, above arcs)
-      mergedEdges.forEach((data, key) => {
+      mergedEdges.forEach((data, _key) => {
         const { fromId, toId, arc, count } = data;
 
         if (count > 1) {
           const labelGroup = DomAdapter.createSvgElement('g');
           labelGroup.setAttribute('class', C.arcCountGroup);
-          labelGroup.setAttribute('data-vedge', fromId + '-' + toId);
+          labelGroup.setAttribute('data-vedge', `${fromId}-${toId}`);
           labelGroup.setAttribute('data-from', fromId);
           labelGroup.setAttribute('data-to', toId);
-          const text = '(' + count + ')';
+          const text = `(${count})`;
           const x = arc.ctrlX + 5;
           const y = arc.midY + 3;
 
@@ -403,7 +476,7 @@ if (typeof document !== 'undefined') {
           // Text label
           const countLabel = DomAdapter.createSvgElement('text');
           countLabel.setAttribute('class', C.arcCount);
-          countLabel.setAttribute('data-vedge', fromId + '-' + toId);
+          countLabel.setAttribute('data-vedge', `${fromId}-${toId}`);
           countLabel.setAttribute('x', x);
           countLabel.setAttribute('y', y);
           countLabel.textContent = text;
@@ -411,11 +484,13 @@ if (typeof document !== 'undefined') {
           labelGroup.appendChild(bg);
           labelGroup.appendChild(countLabel);
           labelGroup.style.cursor = 'pointer';
-          labelGroup.addEventListener('click', e => {
+          labelGroup.addEventListener('click', (e) => {
             e.stopPropagation();
             highlightVirtualEdge(fromId, toId);
           });
-          labelGroup.addEventListener('mouseenter', () => handleMouseEnter('arc', fromId + '-' + toId));
+          labelGroup.addEventListener('mouseenter', () =>
+            handleMouseEnter('arc', `${fromId}-${toId}`),
+          );
           labelGroup.addEventListener('mouseleave', handleMouseLeave);
 
           layers.baseLabels.appendChild(labelGroup);
@@ -423,9 +498,9 @@ if (typeof document !== 'undefined') {
       });
 
       // Pass 3: Hitareas (hitareas layer, always on top)
-      mergedEdges.forEach((data, key) => {
-        const { fromId, toId, arc, hiddenEdgeData, count, originalArcs } = data;
-        const arcId = fromId + '-' + toId;
+      mergedEdges.forEach((data, _key) => {
+        const { fromId, toId, arc, hiddenEdgeData, originalArcs } = data;
+        const arcId = `${fromId}-${toId}`;
 
         const hitarea = DomAdapter.createSvgElement('path');
         hitarea.setAttribute('class', `${C.virtualHitarea} ${C.arcHitarea}`);
@@ -441,11 +516,13 @@ if (typeof document !== 'undefined') {
         if (originalArcs && originalArcs.length > 0) {
           virtualArcOriginals.set(arcId, originalArcs);
         }
-        hitarea.addEventListener('click', e => {
+        hitarea.addEventListener('click', (e) => {
           e.stopPropagation();
           highlightVirtualEdge(fromId, toId);
         });
-        hitarea.addEventListener('mouseenter', () => handleVirtualMouseEnter(arcId, fromId, toId));
+        hitarea.addEventListener('mouseenter', () =>
+          handleVirtualMouseEnter(arcId, fromId, toId),
+        );
         hitarea.addEventListener('mouseleave', () => {
           handleMouseLeave();
         });
@@ -454,12 +531,17 @@ if (typeof document !== 'undefined') {
     }
 
     function highlightVirtualEdge(fromId, toId) {
-      const edgeId = fromId + '-' + toId;
+      const edgeId = `${fromId}-${toId}`;
       toggleHighlight('arc', edgeId, () => {
         const usages = virtualArcUsages.get(edgeId) || [];
         const originalArcs = virtualArcOriginals.get(edgeId) || [];
         const mergedUsages = SidebarLogic.mergeSymbolGroups(usages);
-        SidebarLogic.show(edgeId, { from: fromId, to: toId, usages: mergedUsages, originalArcs });
+        SidebarLogic.show(edgeId, {
+          from: fromId,
+          to: toId,
+          usages: mergedUsages,
+          originalArcs,
+        });
       });
     }
 
@@ -478,7 +560,7 @@ if (typeof document !== 'undefined') {
         label?.classList.remove(C.collapsed);
         toggle?.classList.remove(C.collapsed);
       }
-      DomAdapter.getTreeLines(descId, 'child').forEach(line => {
+      DomAdapter.getTreeLines(descId, 'child').forEach((line) => {
         if (collapsed) {
           line.classList.add(C.collapsed);
         } else if (!node?.classList.contains(C.collapsed)) {
@@ -492,7 +574,10 @@ if (typeof document !== 'undefined') {
       while (true) {
         const parentId = parentMap.get(checkId);
         if (!parentId) return false;
-        if (AppState.isCollapsed(appState, parentId) && parentId !== excludeNodeId) {
+        if (
+          AppState.isCollapsed(appState, parentId) &&
+          parentId !== excludeNodeId
+        ) {
           return true;
         }
         checkId = parentId;
@@ -509,16 +594,24 @@ if (typeof document !== 'undefined') {
       const nodeRect = DomAdapter.getNode(nodeId);
       if (!nodeRect) return;
       if (!nodeRect.hasAttribute('data-original-width')) {
-        nodeRect.setAttribute('data-original-width', nodeRect.getAttribute('width'));
+        nodeRect.setAttribute(
+          'data-original-width',
+          nodeRect.getAttribute('width'),
+        );
       }
       if (collapsed) {
-        countLabel.textContent = ' (+' + countDescendants(nodeId) + ')';
+        countLabel.textContent = ` (+${countDescendants(nodeId)})`;
         const labelText = countLabel.parentElement;
         if (labelText) {
-          const textWidth = TextMetrics.estimateWidth(labelText.textContent, 12);
+          const textWidth = TextMetrics.estimateWidth(
+            labelText.textContent,
+            12,
+          );
           const padding = 20;
           const neededWidth = textWidth + padding;
-          const originalWidth = parseFloat(nodeRect.getAttribute('data-original-width'));
+          const originalWidth = parseFloat(
+            nodeRect.getAttribute('data-original-width'),
+          );
           const newWidth = Math.max(originalWidth, neededWidth);
           nodeRect.setAttribute('width', newWidth);
           // Reposition toggle icon to right edge of expanded box
@@ -535,7 +628,10 @@ if (typeof document !== 'undefined') {
           // Restore toggle icon to original position
           if (toggleIcon) {
             const nodeX = parseFloat(nodeRect.getAttribute('x'));
-            toggleIcon.setAttribute('x', nodeX + parseFloat(originalWidth) - TOGGLE_OFFSET);
+            toggleIcon.setAttribute(
+              'x',
+              nodeX + parseFloat(originalWidth) - TOGGLE_OFFSET,
+            );
           }
         }
       }
@@ -545,7 +641,7 @@ if (typeof document !== 'undefined') {
     function toggleCollapse(nodeId) {
       const collapsed = AppState.toggleCollapsed(appState, nodeId);
 
-      getDescendants(nodeId).forEach(descId => {
+      getDescendants(nodeId).forEach((descId) => {
         if (collapsed || !hasCollapsedAncestor(descId, nodeId)) {
           updateDescendantVisibility(descId, collapsed);
         }
@@ -558,13 +654,17 @@ if (typeof document !== 'undefined') {
 
     // Toggle collapse/expand all parent nodes
     function toggleCollapseAll() {
-      const parentNodeIds = StaticData.getAllNodeIds().filter(id => StaticData.hasChildren(id));
-      const allExpanded = parentNodeIds.every(id => !AppState.isCollapsed(appState, id));
+      const parentNodeIds = StaticData.getAllNodeIds().filter((id) =>
+        StaticData.hasChildren(id),
+      );
+      const allExpanded = parentNodeIds.every(
+        (id) => !AppState.isCollapsed(appState, id),
+      );
       const collapsed = allExpanded;
 
-      parentNodeIds.forEach(nodeId => {
+      parentNodeIds.forEach((nodeId) => {
         AppState.setCollapsed(appState, nodeId, collapsed);
-        getDescendants(nodeId).forEach(descId => {
+        getDescendants(nodeId).forEach((descId) => {
           updateDescendantVisibility(descId, collapsed);
         });
         updateParentNodeUI(nodeId, collapsed);
@@ -584,7 +684,7 @@ if (typeof document !== 'undefined') {
 
       const isChecked = checkbox.classList.toggle(C.checked);
 
-      DomAdapter.querySelectorAll(`.${arcClass}`).forEach(arc => {
+      DomAdapter.querySelectorAll(`.${arcClass}`).forEach((arc) => {
         if (isChecked) {
           arc.classList.remove(C.hiddenByFilter);
         } else {
@@ -593,9 +693,13 @@ if (typeof document !== 'undefined') {
       });
 
       // Also hide/show associated hitareas and arrows, track in AppState
-      DomAdapter.querySelectorAll(`.${C.arcHitarea}:not(.${C.virtualHitarea})`).forEach(hitarea => {
+      DomAdapter.querySelectorAll(
+        `.${C.arcHitarea}:not(.${C.virtualHitarea})`,
+      ).forEach((hitarea) => {
         const arcId = hitarea.dataset.arcId;
-        const visibleArc = DomAdapter.querySelector(`.${arcClass}[data-arc-id="${arcId}"]`);
+        const visibleArc = DomAdapter.querySelector(
+          `.${arcClass}[data-arc-id="${arcId}"]`,
+        );
         if (visibleArc) {
           if (isChecked) {
             hitarea.classList.remove(C.hiddenByFilter);
@@ -604,7 +708,7 @@ if (typeof document !== 'undefined') {
             hitarea.classList.add(C.hiddenByFilter);
             AppState.hideArc(appState, arcId);
           }
-          DomAdapter.getArrows(arcId).forEach(arrow => {
+          DomAdapter.getArrows(arcId).forEach((arrow) => {
             if (isChecked) {
               arrow.classList.remove(C.hiddenByFilter);
             } else {
@@ -629,13 +733,15 @@ if (typeof document !== 'undefined') {
       // Virtual arcs are aggregated module-deps — toggle them too
       const checkbox = DomAdapter.querySelector('#module-dep-checkbox');
       const isChecked = checkbox?.classList.contains(C.checked);
-      DomAdapter.querySelectorAll(Selectors.allVirtualElements()).forEach(el => {
-        if (isChecked) {
-          el.classList.remove(C.hiddenByFilter);
-        } else {
-          el.classList.add(C.hiddenByFilter);
-        }
-      });
+      DomAdapter.querySelectorAll(Selectors.allVirtualElements()).forEach(
+        (el) => {
+          if (isChecked) {
+            el.classList.remove(C.hiddenByFilter);
+          } else {
+            el.classList.add(C.hiddenByFilter);
+          }
+        },
+      );
     }
 
     // Sync foreignObject height with actual toolbar content height (flex-wrap may grow)
@@ -672,25 +778,30 @@ if (typeof document !== 'undefined') {
     }
 
     window.addEventListener('scroll', updateToolbarPosition);
-    window.addEventListener('resize', () => { syncToolbarHeight(); updateToolbarPosition(); });
+    window.addEventListener('resize', () => {
+      syncToolbarHeight();
+      updateToolbarPosition();
+    });
 
     // === Event handlers ===
     // Iterate via StaticData instead of DOM query
-    StaticData.getAllNodeIds().forEach(nodeId => {
+    StaticData.getAllNodeIds().forEach((nodeId) => {
       const node = DomAdapter.getNode(nodeId);
       if (!node) return;
 
-      node.addEventListener('click', e => {
+      node.addEventListener('click', (e) => {
         e.stopPropagation();
         highlightNode(nodeId);
       });
 
-      node.addEventListener('mouseenter', () => handleMouseEnter('node', nodeId));
+      node.addEventListener('mouseenter', () =>
+        handleMouseEnter('node', nodeId),
+      );
       node.addEventListener('mouseleave', handleMouseLeave);
 
       // Double-click to toggle collapse (only for parents)
       if (StaticData.hasChildren(nodeId)) {
-        node.addEventListener('dblclick', e => {
+        node.addEventListener('dblclick', (e) => {
           e.stopPropagation();
           toggleCollapse(nodeId);
           updateToolbarPosition();
@@ -698,8 +809,8 @@ if (typeof document !== 'undefined') {
       }
     });
 
-    DomAdapter.querySelectorAll(`.${C.collapseToggle}`).forEach(toggle => {
-      toggle.addEventListener('click', e => {
+    DomAdapter.querySelectorAll(`.${C.collapseToggle}`).forEach((toggle) => {
+      toggle.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleCollapse(toggle.dataset.target);
         updateToolbarPosition();
@@ -707,31 +818,42 @@ if (typeof document !== 'undefined') {
     });
 
     // Toolbar button event handlers
-    DomAdapter.querySelector('#collapse-toggle-btn')?.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleCollapseAll();
-      updateToolbarPosition();
-    });
-    DomAdapter.querySelector('#crate-dep-checkbox')?.closest('label')?.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleCrateDepVisibility();
-    });
+    DomAdapter.querySelector('#collapse-toggle-btn')?.addEventListener(
+      'click',
+      (e) => {
+        e.stopPropagation();
+        toggleCollapseAll();
+        updateToolbarPosition();
+      },
+    );
+    DomAdapter.querySelector('#crate-dep-checkbox')
+      ?.closest('label')
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleCrateDepVisibility();
+      });
 
-    DomAdapter.querySelector('#module-dep-checkbox')?.closest('label')?.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleModuleDepVisibility();
-    });
+    DomAdapter.querySelector('#module-dep-checkbox')
+      ?.closest('label')
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleModuleDepVisibility();
+      });
 
     // Event handlers on hit-area paths (invisible, 12px wide) — regular arcs only
-    DomAdapter.querySelectorAll(`.${C.arcHitarea}:not(.${C.virtualHitarea})`).forEach(hitarea => {
-      const edgeId = hitarea.dataset.from + '-' + hitarea.dataset.to;
+    DomAdapter.querySelectorAll(
+      `.${C.arcHitarea}:not(.${C.virtualHitarea})`,
+    ).forEach((hitarea) => {
+      const edgeId = `${hitarea.dataset.from}-${hitarea.dataset.to}`;
 
-      hitarea.addEventListener('click', e => {
+      hitarea.addEventListener('click', (e) => {
         e.stopPropagation();
         highlightEdge(hitarea.dataset.from, hitarea.dataset.to);
       });
 
-      hitarea.addEventListener('mouseenter', () => handleMouseEnter('arc', edgeId));
+      hitarea.addEventListener('mouseenter', () =>
+        handleMouseEnter('arc', edgeId),
+      );
 
       hitarea.addEventListener('mouseleave', () => {
         handleMouseLeave();

@@ -1,156 +1,184 @@
-import { test, expect, describe } from "bun:test";
-import { createFakeElement, createMockDomAdapter } from "./dom_adapter.js";
+import { describe, expect, test } from 'bun:test';
+import { createFakeElement, createMockDomAdapter } from './dom_adapter.js';
 
 // Provide STATIC_DATA.classes for layer_manager (normally injected by render.rs)
 globalThis.STATIC_DATA = globalThis.STATIC_DATA || { classes: {} };
 globalThis.STATIC_DATA.classes = {
-  depArc: "dep-arc", cycleArc: "cycle-arc", virtualArc: "virtual-arc",
-  arcCountGroup: "arc-count-group", arcHitarea: "arc-hitarea",
+  depArc: 'dep-arc',
+  cycleArc: 'cycle-arc',
+  virtualArc: 'virtual-arc',
+  arcCountGroup: 'arc-count-group',
+  arcHitarea: 'arc-hitarea',
 };
 
-import { LayerManager } from "./layer_manager.js";
+import { LayerManager } from './layer_manager.js';
 
-describe("LayerManager", () => {
-  describe("LAYERS constants", () => {
-    test("defines all layer IDs", () => {
-      expect(LayerManager.LAYERS.BASE_ARCS).toBe("base-arcs-layer");
-      expect(LayerManager.LAYERS.BASE_LABELS).toBe("base-labels-layer");
-      expect(LayerManager.LAYERS.HIGHLIGHT_ARCS).toBe("highlight-arcs-layer");
-      expect(LayerManager.LAYERS.HIGHLIGHT_LABELS).toBe("highlight-labels-layer");
-      expect(LayerManager.LAYERS.HITAREAS).toBe("hitareas-layer");
-      expect(LayerManager.LAYERS.HIGHLIGHT_HITAREAS).toBe("highlight-hitareas-layer");
-      expect(LayerManager.LAYERS.SHADOWS).toBe("highlight-shadows");
+describe('LayerManager', () => {
+  describe('LAYERS constants', () => {
+    test('defines all layer IDs', () => {
+      expect(LayerManager.LAYERS.BASE_ARCS).toBe('base-arcs-layer');
+      expect(LayerManager.LAYERS.BASE_LABELS).toBe('base-labels-layer');
+      expect(LayerManager.LAYERS.HIGHLIGHT_ARCS).toBe('highlight-arcs-layer');
+      expect(LayerManager.LAYERS.HIGHLIGHT_LABELS).toBe(
+        'highlight-labels-layer',
+      );
+      expect(LayerManager.LAYERS.HITAREAS).toBe('hitareas-layer');
+      expect(LayerManager.LAYERS.HIGHLIGHT_HITAREAS).toBe(
+        'highlight-hitareas-layer',
+      );
+      expect(LayerManager.LAYERS.SHADOWS).toBe('highlight-shadows');
     });
   });
 
-  describe("getLayerForElement", () => {
-    test("returns null for null element", () => {
+  describe('getLayerForElement', () => {
+    test('returns null for null element', () => {
       expect(LayerManager.getLayerForElement(null, false)).toBeNull();
       expect(LayerManager.getLayerForElement(null, true)).toBeNull();
     });
 
-    test("returns arc layer for dep-arc", () => {
-      const el = createFakeElement("path");
-      el.classList.add("dep-arc");
-      expect(LayerManager.getLayerForElement(el, false)).toBe("base-arcs-layer");
-      expect(LayerManager.getLayerForElement(el, true)).toBe("highlight-arcs-layer");
+    test('returns arc layer for dep-arc', () => {
+      const el = createFakeElement('path');
+      el.classList.add('dep-arc');
+      expect(LayerManager.getLayerForElement(el, false)).toBe(
+        'base-arcs-layer',
+      );
+      expect(LayerManager.getLayerForElement(el, true)).toBe(
+        'highlight-arcs-layer',
+      );
     });
 
-    test("returns arc layer for cycle-arc", () => {
-      const el = createFakeElement("path");
-      el.classList.add("cycle-arc");
-      expect(LayerManager.getLayerForElement(el, false)).toBe("base-arcs-layer");
-      expect(LayerManager.getLayerForElement(el, true)).toBe("highlight-arcs-layer");
+    test('returns arc layer for cycle-arc', () => {
+      const el = createFakeElement('path');
+      el.classList.add('cycle-arc');
+      expect(LayerManager.getLayerForElement(el, false)).toBe(
+        'base-arcs-layer',
+      );
+      expect(LayerManager.getLayerForElement(el, true)).toBe(
+        'highlight-arcs-layer',
+      );
     });
 
-    test("returns arc layer for virtual-arc", () => {
-      const el = createFakeElement("path");
-      el.classList.add("virtual-arc");
-      expect(LayerManager.getLayerForElement(el, false)).toBe("base-arcs-layer");
-      expect(LayerManager.getLayerForElement(el, true)).toBe("highlight-arcs-layer");
+    test('returns arc layer for virtual-arc', () => {
+      const el = createFakeElement('path');
+      el.classList.add('virtual-arc');
+      expect(LayerManager.getLayerForElement(el, false)).toBe(
+        'base-arcs-layer',
+      );
+      expect(LayerManager.getLayerForElement(el, true)).toBe(
+        'highlight-arcs-layer',
+      );
     });
 
-    test("returns arc layer for polygon (arrow)", () => {
-      const el = createFakeElement("polygon");
-      expect(LayerManager.getLayerForElement(el, false)).toBe("base-arcs-layer");
-      expect(LayerManager.getLayerForElement(el, true)).toBe("highlight-arcs-layer");
+    test('returns arc layer for polygon (arrow)', () => {
+      const el = createFakeElement('polygon');
+      expect(LayerManager.getLayerForElement(el, false)).toBe(
+        'base-arcs-layer',
+      );
+      expect(LayerManager.getLayerForElement(el, true)).toBe(
+        'highlight-arcs-layer',
+      );
     });
 
-    test("returns label layer for arc-count-group", () => {
-      const el = createFakeElement("g");
-      el.classList.add("arc-count-group");
-      expect(LayerManager.getLayerForElement(el, false)).toBe("base-labels-layer");
-      expect(LayerManager.getLayerForElement(el, true)).toBe("highlight-labels-layer");
+    test('returns label layer for arc-count-group', () => {
+      const el = createFakeElement('g');
+      el.classList.add('arc-count-group');
+      expect(LayerManager.getLayerForElement(el, false)).toBe(
+        'base-labels-layer',
+      );
+      expect(LayerManager.getLayerForElement(el, true)).toBe(
+        'highlight-labels-layer',
+      );
     });
 
-    test("returns hitarea layer for arc-hitarea", () => {
-      const el = createFakeElement("path");
-      el.classList.add("arc-hitarea");
-      expect(LayerManager.getLayerForElement(el, false)).toBe("hitareas-layer");
-      expect(LayerManager.getLayerForElement(el, true)).toBe("highlight-hitareas-layer");
+    test('returns hitarea layer for arc-hitarea', () => {
+      const el = createFakeElement('path');
+      el.classList.add('arc-hitarea');
+      expect(LayerManager.getLayerForElement(el, false)).toBe('hitareas-layer');
+      expect(LayerManager.getLayerForElement(el, true)).toBe(
+        'highlight-hitareas-layer',
+      );
     });
 
-    test("returns null for unknown element type", () => {
-      const el = createFakeElement("rect");
-      el.classList.add("some-class");
+    test('returns null for unknown element type', () => {
+      const el = createFakeElement('rect');
+      el.classList.add('some-class');
       expect(LayerManager.getLayerForElement(el, false)).toBeNull();
       expect(LayerManager.getLayerForElement(el, true)).toBeNull();
     });
   });
 
-  describe("moveToLayer", () => {
-    test("appends element to layer", () => {
+  describe('moveToLayer', () => {
+    test('appends element to layer', () => {
       const mock = createMockDomAdapter();
-      const layer = createFakeElement("g");
-      const element = createFakeElement("path");
-      mock._registerElement("base-arcs-layer", layer);
+      const layer = createFakeElement('g');
+      const element = createFakeElement('path');
+      mock._registerElement('base-arcs-layer', layer);
 
-      LayerManager.moveToLayer(element, "base-arcs-layer", mock);
+      LayerManager.moveToLayer(element, 'base-arcs-layer', mock);
 
       expect(layer.children).toContain(element);
     });
 
-    test("does nothing for null element", () => {
+    test('does nothing for null element', () => {
       const mock = createMockDomAdapter();
-      const layer = createFakeElement("g");
-      mock._registerElement("base-arcs-layer", layer);
+      const layer = createFakeElement('g');
+      mock._registerElement('base-arcs-layer', layer);
 
-      LayerManager.moveToLayer(null, "base-arcs-layer", mock);
+      LayerManager.moveToLayer(null, 'base-arcs-layer', mock);
 
       expect(layer.children).toHaveLength(0);
     });
 
-    test("does nothing for null layerId", () => {
+    test('does nothing for null layerId', () => {
       const mock = createMockDomAdapter();
-      const element = createFakeElement("path");
+      const element = createFakeElement('path');
 
       // Should not throw
       LayerManager.moveToLayer(element, null, mock);
     });
   });
 
-  describe("clearLayer", () => {
-    test("clears all children from layer", () => {
+  describe('clearLayer', () => {
+    test('clears all children from layer', () => {
       const mock = createMockDomAdapter();
-      const layer = createFakeElement("g");
-      layer.appendChild(createFakeElement("path"));
-      layer.appendChild(createFakeElement("path"));
+      const layer = createFakeElement('g');
+      layer.appendChild(createFakeElement('path'));
+      layer.appendChild(createFakeElement('path'));
       expect(layer.children.length).toBe(2);
-      mock._registerElement("highlight-shadows", layer);
+      mock._registerElement('highlight-shadows', layer);
 
-      LayerManager.clearLayer("highlight-shadows", mock);
+      LayerManager.clearLayer('highlight-shadows', mock);
 
       expect(layer.children.length).toBe(0);
       expect(layer.firstChild).toBeNull();
     });
 
-    test("does nothing for non-existent layer", () => {
+    test('does nothing for non-existent layer', () => {
       const mock = createMockDomAdapter();
       // Should not throw
-      LayerManager.clearLayer("non-existent", mock);
+      LayerManager.clearLayer('non-existent', mock);
     });
   });
 
-  describe("moveToHighlightLayer", () => {
-    test("moves arc to highlight-arcs-layer", () => {
+  describe('moveToHighlightLayer', () => {
+    test('moves arc to highlight-arcs-layer', () => {
       const mock = createMockDomAdapter();
-      const layer = createFakeElement("g");
-      const arc = createFakeElement("path");
-      arc.classList.add("dep-arc");
-      mock._registerElement("highlight-arcs-layer", layer);
+      const layer = createFakeElement('g');
+      const arc = createFakeElement('path');
+      arc.classList.add('dep-arc');
+      mock._registerElement('highlight-arcs-layer', layer);
 
       LayerManager.moveToHighlightLayer(arc, mock);
 
       expect(layer.children).toContain(arc);
     });
 
-    test("does nothing for unknown element type", () => {
+    test('does nothing for unknown element type', () => {
       const mock = createMockDomAdapter();
-      const element = createFakeElement("rect");
+      const element = createFakeElement('rect');
 
       // Should not throw
       LayerManager.moveToHighlightLayer(element, mock);
     });
   });
-
 });

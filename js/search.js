@@ -71,7 +71,10 @@ const SearchLogic = {
    */
   executeSearch(query, scope) {
     const q = query.toLowerCase().trim();
-    if (!q) { this.clearSearch(); return 0; }
+    if (!q) {
+      this.clearSearch();
+      return 0;
+    }
 
     this._state.query = q;
     this._state.scope = scope;
@@ -95,7 +98,7 @@ const SearchLogic = {
         const arc = StaticData.getArc(arcId);
         if (!arc || !arc.usages) continue;
         for (const group of arc.usages) {
-          if (group.symbol && group.symbol.toLowerCase().includes(q)) {
+          if (group.symbol?.toLowerCase().includes(q)) {
             matchedNodes.add(arc.from);
             matchedNodes.add(arc.to);
             break;
@@ -129,7 +132,7 @@ const SearchLogic = {
       if (rect) {
         rect.classList.add(C.searchMatch);
         const label = rect.nextElementSibling;
-        if (label && label.classList.contains(C.label)) {
+        if (label?.classList.contains(C.label)) {
           label.classList.add(C.searchMatch);
         }
       }
@@ -141,7 +144,7 @@ const SearchLogic = {
       if (rect) {
         rect.classList.add(C.searchMatchParent);
         const label = rect.nextElementSibling;
-        if (label && label.classList.contains(C.label)) {
+        if (label?.classList.contains(C.label)) {
           label.classList.add(C.searchMatchParent);
         }
       }
@@ -153,7 +156,8 @@ const SearchLogic = {
 
     const total = directMatches.size + parentMatches.size;
     const countEl = DomAdapter.getElementById('search-result-count');
-    if (countEl) countEl.textContent = total + ' match' + (total !== 1 ? 'es' : '');
+    if (countEl)
+      countEl.textContent = `${total} match${total !== 1 ? 'es' : ''}`;
 
     // Update scope button active state
     this._updateScopeButtons(scope);
@@ -187,7 +191,9 @@ const SearchLogic = {
     }
   },
 
-  isActive() { return this._state.active; },
+  isActive() {
+    return this._state.active;
+  },
 
   refresh() {
     if (this._state.active && this._state.query) {
@@ -195,7 +201,9 @@ const SearchLogic = {
     }
   },
 
-  getMatchedNodeIds() { return this._state.matchedNodeIds; },
+  getMatchedNodeIds() {
+    return this._state.matchedNodeIds;
+  },
 
   // --- Internal helpers ---
 
@@ -241,7 +249,7 @@ const SearchLogic = {
     const selector = DomAdapter.querySelector('#scope-selector');
     if (!selector) return;
     const buttons = selector.querySelectorAll('[data-scope]');
-    buttons.forEach(btn => {
+    buttons.forEach((btn) => {
       if (btn.dataset.scope === scope) {
         btn.classList.add(C.toolbarScopeActive);
       } else {

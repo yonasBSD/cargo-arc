@@ -33,7 +33,7 @@ const ArcLogic = {
     const parts = points.split(' ');
     if (parts.length >= 2) {
       const [x, y] = parts[1].split(',').map(Number);
-      if (isNaN(x) || isNaN(y)) return null;
+      if (Number.isNaN(x) || Number.isNaN(y)) return null;
       return { x, y };
     }
     return null;
@@ -57,7 +57,7 @@ const ArcLogic = {
    */
   scaleArrow(dom, edgeId, strokeWidth) {
     const scale = this.scaleFromStrokeWidth(strokeWidth);
-    dom.getVisibleArrows(edgeId).forEach(arrow => {
+    dom.getVisibleArrows(edgeId).forEach((arrow) => {
       const points = arrow.getAttribute('points');
       const tip = this.parseTipFromPoints(points);
       if (tip) {
@@ -78,7 +78,7 @@ const ArcLogic = {
    * @returns {number} - Offset for arc control point
    */
   getArcOffset(hops) {
-    return 20 + (hops * 15);
+    return 20 + hops * 15;
   },
 
   /**
@@ -102,7 +102,7 @@ const ArcLogic = {
       toX,
       toY,
       ctrlX,
-      midY
+      midY,
     };
   },
 
@@ -140,10 +140,12 @@ const ArcLogic = {
    * @returns {number} - Stroke width in pixels (0.5 to 2.5)
    */
   calculateStrokeWidth(locationCount) {
-    const MIN = 0.5, MAX = 2.5, CAP = 50;
+    const MIN = 0.5,
+      MAX = 2.5,
+      CAP = 50;
     if (locationCount <= 0) return MIN;
     const count = Math.min(locationCount, CAP);
-    return MIN + (MAX - MIN) * Math.log(count) / Math.log(CAP);
+    return MIN + ((MAX - MIN) * Math.log(count)) / Math.log(CAP);
   },
 
   /**
@@ -173,20 +175,19 @@ const ArcLogic = {
 
     // Quadratic bezier approximation: (|P0-P1| + |P1-P2| + |P0-P2|) / 2
     // First segment: (fromX,fromY) -> control(ctrlX,fromY) -> (ctrlX,midY)
-    const d1_01 = Math.hypot(ctrlX - fromX, 0);  // fromY to fromY = 0
-    const d1_12 = Math.hypot(0, midY - fromY);    // ctrlX to ctrlX = 0
+    const d1_01 = Math.hypot(ctrlX - fromX, 0); // fromY to fromY = 0
+    const d1_12 = Math.hypot(0, midY - fromY); // ctrlX to ctrlX = 0
     const d1_02 = Math.hypot(ctrlX - fromX, midY - fromY);
     const len1 = (d1_01 + d1_12 + d1_02) / 2;
 
     // Second segment: (ctrlX,midY) -> control(ctrlX,toY) -> (toX,toY)
-    const d2_01 = Math.hypot(0, toY - midY);      // ctrlX to ctrlX = 0
-    const d2_12 = Math.hypot(toX - ctrlX, 0);     // toY to toY = 0
+    const d2_01 = Math.hypot(0, toY - midY); // ctrlX to ctrlX = 0
+    const d2_12 = Math.hypot(toX - ctrlX, 0); // toY to toY = 0
     const d2_02 = Math.hypot(toX - ctrlX, toY - midY);
     const len2 = (d2_01 + d2_12 + d2_02) / 2;
 
     return len1 + len2;
   },
-
 };
 
 // CommonJS export for tests (Node/Bun)

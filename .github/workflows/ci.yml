@@ -18,6 +18,7 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
       - uses: taiki-e/install-action@just
       - run: just lint
 
@@ -29,5 +30,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
       - uses: taiki-e/install-action@just
-      - run: bun install
       - run: just test

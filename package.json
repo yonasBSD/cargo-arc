@@ -6,5 +6,7 @@
   "scripts": {
     "test": "bun test"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.4"
+  }
 }

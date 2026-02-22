@@ -1,130 +1,150 @@
-import { test, expect, describe } from "bun:test";
-import { AppState } from "./app_state.js";
+import { describe, expect, test } from 'bun:test';
+import { AppState } from './app_state.js';
 
-describe("AppState", () => {
-  describe("create", () => {
-    test("creates state with empty collapsed set", () => {
+describe('AppState', () => {
+  describe('create', () => {
+    test('creates state with empty collapsed set', () => {
       const state = AppState.create();
       expect(state.collapsed).toBeInstanceOf(Set);
       expect(state.collapsed.size).toBe(0);
     });
 
-    test("creates state with default selection", () => {
+    test('creates state with default selection', () => {
       const state = AppState.create();
       expect(state.clickSelection).toEqual({ type: null, id: null });
       expect(state.hoverSelection).toEqual({ type: null, id: null });
-      expect(AppState.getSelection(state)).toEqual({ mode: 'none', type: null, id: null });
+      expect(AppState.getSelection(state)).toEqual({
+        mode: 'none',
+        type: null,
+        id: null,
+      });
     });
   });
 
-  describe("collapse operations", () => {
-    test("isCollapsed returns false by default", () => {
+  describe('collapse operations', () => {
+    test('isCollapsed returns false by default', () => {
       const state = AppState.create();
-      expect(AppState.isCollapsed(state, "any-node")).toBe(false);
+      expect(AppState.isCollapsed(state, 'any-node')).toBe(false);
     });
 
-    test("setCollapsed adds to set when true", () => {
+    test('setCollapsed adds to set when true', () => {
       const state = AppState.create();
-      AppState.setCollapsed(state, "node1", true);
-      expect(AppState.isCollapsed(state, "node1")).toBe(true);
+      AppState.setCollapsed(state, 'node1', true);
+      expect(AppState.isCollapsed(state, 'node1')).toBe(true);
     });
 
-    test("setCollapsed removes from set when false", () => {
+    test('setCollapsed removes from set when false', () => {
       const state = AppState.create();
-      AppState.setCollapsed(state, "node1", true);
-      AppState.setCollapsed(state, "node1", false);
-      expect(AppState.isCollapsed(state, "node1")).toBe(false);
+      AppState.setCollapsed(state, 'node1', true);
+      AppState.setCollapsed(state, 'node1', false);
+      expect(AppState.isCollapsed(state, 'node1')).toBe(false);
     });
 
-    test("toggleCollapsed changes state and returns new value", () => {
+    test('toggleCollapsed changes state and returns new value', () => {
       const state = AppState.create();
 
       // First toggle: false -> true
-      const result1 = AppState.toggleCollapsed(state, "node1");
+      const result1 = AppState.toggleCollapsed(state, 'node1');
       expect(result1).toBe(true);
-      expect(AppState.isCollapsed(state, "node1")).toBe(true);
+      expect(AppState.isCollapsed(state, 'node1')).toBe(true);
 
       // Second toggle: true -> false
-      const result2 = AppState.toggleCollapsed(state, "node1");
+      const result2 = AppState.toggleCollapsed(state, 'node1');
       expect(result2).toBe(false);
-      expect(AppState.isCollapsed(state, "node1")).toBe(false);
+      expect(AppState.isCollapsed(state, 'node1')).toBe(false);
     });
   });
 
-  describe("selection operations", () => {
-    test("getSelection returns default selection", () => {
+  describe('selection operations', () => {
+    test('getSelection returns default selection', () => {
       const state = AppState.create();
-      expect(AppState.getSelection(state)).toEqual({ mode: 'none', type: null, id: null });
+      expect(AppState.getSelection(state)).toEqual({
+        mode: 'none',
+        type: null,
+        id: null,
+      });
     });
 
-    test("setSelection sets click mode", () => {
+    test('setSelection sets click mode', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
-      expect(AppState.getSelection(state)).toEqual({ mode: 'click', type: 'node', id: 'node-1' });
+      expect(AppState.getSelection(state)).toEqual({
+        mode: 'click',
+        type: 'node',
+        id: 'node-1',
+      });
     });
 
-    test("setHover sets hover mode", () => {
+    test('setHover sets hover mode', () => {
       const state = AppState.create();
       AppState.setHover(state, 'arc', '1-2');
-      expect(AppState.getSelection(state)).toEqual({ mode: 'hover', type: 'arc', id: '1-2' });
+      expect(AppState.getSelection(state)).toEqual({
+        mode: 'hover',
+        type: 'arc',
+        id: '1-2',
+      });
     });
 
-    test("clearSelection resets to none", () => {
+    test('clearSelection resets to none', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       AppState.clearSelection(state);
-      expect(AppState.getSelection(state)).toEqual({ mode: 'none', type: null, id: null });
+      expect(AppState.getSelection(state)).toEqual({
+        mode: 'none',
+        type: null,
+        id: null,
+      });
     });
 
-    test("isSelected returns true for matching click selection", () => {
+    test('isSelected returns true for matching click selection', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       expect(AppState.isSelected(state, 'node', 'node-1')).toBe(true);
     });
 
-    test("isSelected returns false for different id", () => {
+    test('isSelected returns false for different id', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       expect(AppState.isSelected(state, 'node', 'node-2')).toBe(false);
     });
 
-    test("isSelected returns false for different type", () => {
+    test('isSelected returns false for different type', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       expect(AppState.isSelected(state, 'arc', 'node-1')).toBe(false);
     });
 
-    test("isSelected returns false for hover mode", () => {
+    test('isSelected returns false for hover mode', () => {
       const state = AppState.create();
       AppState.setHover(state, 'node', 'node-1');
       expect(AppState.isSelected(state, 'node', 'node-1')).toBe(false);
     });
 
-    test("hasPinnedSelection returns true for click mode", () => {
+    test('hasPinnedSelection returns true for click mode', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       expect(AppState.hasPinnedSelection(state)).toBe(true);
     });
 
-    test("hasPinnedSelection returns false for hover mode", () => {
+    test('hasPinnedSelection returns false for hover mode', () => {
       const state = AppState.create();
       AppState.setHover(state, 'node', 'node-1');
       expect(AppState.hasPinnedSelection(state)).toBe(false);
     });
 
-    test("hasPinnedSelection returns false for none mode", () => {
+    test('hasPinnedSelection returns false for none mode', () => {
       const state = AppState.create();
       expect(AppState.hasPinnedSelection(state)).toBe(false);
     });
 
-    test("toggleSelection selects when not selected", () => {
+    test('toggleSelection selects when not selected', () => {
       const state = AppState.create();
       const result = AppState.toggleSelection(state, 'node', 'node-1');
       expect(result).toBe(true);
       expect(AppState.isSelected(state, 'node', 'node-1')).toBe(true);
     });
 
-    test("toggleSelection deselects when already selected", () => {
+    test('toggleSelection deselects when already selected', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       const result = AppState.toggleSelection(state, 'node', 'node-1');
@@ -132,7 +152,7 @@ describe("AppState", () => {
       expect(AppState.isSelected(state, 'node', 'node-1')).toBe(false);
     });
 
-    test("toggleSelection switches to new element", () => {
+    test('toggleSelection switches to new element', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       const result = AppState.toggleSelection(state, 'node', 'node-2');
@@ -141,7 +161,7 @@ describe("AppState", () => {
       expect(AppState.isSelected(state, 'node', 'node-1')).toBe(false);
     });
 
-    test("click selection takes priority over hover", () => {
+    test('click selection takes priority over hover', () => {
       const state = AppState.create();
       AppState.setHover(state, 'node', 'hover-node');
       AppState.setSelection(state, 'node', 'click-node');
@@ -150,7 +170,7 @@ describe("AppState", () => {
       expect(sel.id).toBe('click-node');
     });
 
-    test("clearHover removes hover without affecting click", () => {
+    test('clearHover removes hover without affecting click', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'pinned');
       AppState.setHover(state, 'arc', '1-2');
@@ -160,7 +180,7 @@ describe("AppState", () => {
       expect(sel.id).toBe('pinned');
     });
 
-    test("clearHover with no click returns none", () => {
+    test('clearHover with no click returns none', () => {
       const state = AppState.create();
       AppState.setHover(state, 'node', 'tmp');
       AppState.clearHover(state);
@@ -168,25 +188,25 @@ describe("AppState", () => {
     });
   });
 
-  describe("legacy API compatibility", () => {
-    test("getPinned returns null when no selection", () => {
+  describe('legacy API compatibility', () => {
+    test('getPinned returns null when no selection', () => {
       const state = AppState.create();
       expect(AppState.getPinned(state)).toBeNull();
     });
 
-    test("getPinned returns object when selected", () => {
+    test('getPinned returns object when selected', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'arc', '1-2');
       expect(AppState.getPinned(state)).toEqual({ type: 'arc', id: '1-2' });
     });
 
-    test("getPinned returns null for hover mode", () => {
+    test('getPinned returns null for hover mode', () => {
       const state = AppState.create();
       AppState.setHover(state, 'node', 'node-1');
       expect(AppState.getPinned(state)).toBeNull();
     });
 
-    test("togglePinned works like toggleSelection", () => {
+    test('togglePinned works like toggleSelection', () => {
       const state = AppState.create();
       const result1 = AppState.togglePinned(state, 'node', 'node-1');
       expect(result1).toBe(true);
@@ -194,7 +214,7 @@ describe("AppState", () => {
       expect(result2).toBe(false);
     });
 
-    test("clearPinned works like clearSelection", () => {
+    test('clearPinned works like clearSelection', () => {
       const state = AppState.create();
       AppState.setSelection(state, 'node', 'node-1');
       AppState.clearPinned(state);
@@ -202,8 +222,8 @@ describe("AppState", () => {
     });
   });
 
-  describe("arc filter operations", () => {
-    test("hideArc/showArc/isArcHidden", () => {
+  describe('arc filter operations', () => {
+    test('hideArc/showArc/isArcHidden', () => {
       const state = AppState.create();
       expect(AppState.isArcHidden(state, '1-2')).toBe(false);
       AppState.hideArc(state, '1-2');

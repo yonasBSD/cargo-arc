@@ -23,7 +23,12 @@ const HighlightRenderer = {
     this._applyArcHighlights(dom, C, state.arcHighlights);
     this._applyArrowScaling(dom, C, state.arcHighlights);
     this._createShadows(dom, C, state.shadowData);
-    this._promoteToHighlightLayers(dom, C, state.arcHighlights, state.promotedHitareas);
+    this._promoteToHighlightLayers(
+      dom,
+      C,
+      state.arcHighlights,
+      state.promotedHitareas,
+    );
     this._activateDimming(dom, C);
   },
 
@@ -72,8 +77,14 @@ const HighlightRenderer = {
       }
     };
     moveBack(LayerManager.LAYERS.HIGHLIGHT_ARCS, LayerManager.LAYERS.BASE_ARCS);
-    moveBack(LayerManager.LAYERS.HIGHLIGHT_LABELS, LayerManager.LAYERS.BASE_LABELS);
-    moveBack(LayerManager.LAYERS.HIGHLIGHT_HITAREAS, LayerManager.LAYERS.HITAREAS);
+    moveBack(
+      LayerManager.LAYERS.HIGHLIGHT_LABELS,
+      LayerManager.LAYERS.BASE_LABELS,
+    );
+    moveBack(
+      LayerManager.LAYERS.HIGHLIGHT_HITAREAS,
+      LayerManager.LAYERS.HITAREAS,
+    );
   },
 
   /**
@@ -87,7 +98,14 @@ const HighlightRenderer = {
    * Remove highlight CSS classes from all nodes (data-iteration).
    */
   _resetNodeClasses(dom, C, staticData) {
-    const nodeClasses = [C.selectedCrate, C.selectedModule, C.groupMember, C.cycleMember, C.depNode, C.dependentNode];
+    const nodeClasses = [
+      C.selectedCrate,
+      C.selectedModule,
+      C.groupMember,
+      C.cycleMember,
+      C.depNode,
+      C.dependentNode,
+    ];
     for (const nodeId of staticData.getAllNodeIds()) {
       const node = dom.getNode(nodeId);
       if (node) {
@@ -104,13 +122,13 @@ const HighlightRenderer = {
       const arc = dom.getArc(arcId);
       if (arc) {
         arc.classList.remove(C.highlightedArc);
-        arc.style.strokeWidth = staticData.getArcStrokeWidth(arcId) + 'px';
+        arc.style.strokeWidth = `${staticData.getArcStrokeWidth(arcId)}px`;
       }
 
       // Reset arrows (including hidden — prevents stale state after collapse/expand)
       const originalWidth = staticData.getArcStrokeWidth(arcId);
       const scale = ArcLogic.scaleFromStrokeWidth(originalWidth);
-      dom.getArrows(arcId).forEach(arrow => {
+      dom.getArrows(arcId).forEach((arrow) => {
         arrow.classList.remove(C.highlightedArrow);
         const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
         if (tip) {
@@ -121,8 +139,10 @@ const HighlightRenderer = {
       // Reset labels
       const labelGroup = dom.getLabelGroup(arcId);
       if (labelGroup) {
-        const labels = labelGroup.querySelectorAll('.' + C.arcCount);
-        labels.forEach(el => el.classList.remove(C.highlightedLabel));
+        const labels = labelGroup.querySelectorAll(`.${C.arcCount}`);
+        labels.forEach((el) => {
+          el.classList.remove(C.highlightedLabel);
+        });
       }
     }
   },
@@ -146,22 +166,26 @@ const HighlightRenderer = {
       const arcId = isVirtual ? key.slice(2) : key;
 
       if (isVirtual) {
-        dom.querySelectorAll('.' + C.virtualArc + '[data-arc-id="' + arcId + '"]').forEach(arc => {
-          arc.classList.add(C.highlightedArc);
-          arc.style.strokeWidth = highlightWidth + 'px';
-        });
-        dom.querySelectorAll('.' + C.arcCount + '[data-vedge="' + arcId + '"]').forEach(el => {
-          el.classList.add(C.highlightedLabel);
-        });
+        dom
+          .querySelectorAll(`.${C.virtualArc}[data-arc-id="${arcId}"]`)
+          .forEach((arc) => {
+            arc.classList.add(C.highlightedArc);
+            arc.style.strokeWidth = `${highlightWidth}px`;
+          });
+        dom
+          .querySelectorAll(`.${C.arcCount}[data-vedge="${arcId}"]`)
+          .forEach((el) => {
+            el.classList.add(C.highlightedLabel);
+          });
       } else {
         const arc = dom.getVisibleArc(arcId);
         if (arc) {
           arc.classList.add(C.highlightedArc);
-          arc.style.strokeWidth = highlightWidth + 'px';
+          arc.style.strokeWidth = `${highlightWidth}px`;
         }
         const labelGroup = dom.getLabelGroup(arcId);
         if (labelGroup) {
-          labelGroup.querySelectorAll('.' + C.arcCount).forEach(el => {
+          labelGroup.querySelectorAll(`.${C.arcCount}`).forEach((el) => {
             el.classList.add(C.highlightedLabel);
           });
         }
@@ -176,14 +200,17 @@ const HighlightRenderer = {
     for (const [key, { arrowScale, isVirtual }] of arcHighlights) {
       const arcId = isVirtual ? key.slice(2) : key;
       const arrows = isVirtual
-        ? dom.querySelectorAll('.' + C.virtualArrow + '[data-vedge="' + arcId + '"]')
+        ? dom.querySelectorAll(`.${C.virtualArrow}[data-vedge="${arcId}"]`)
         : dom.getVisibleArrows(arcId);
 
-      arrows.forEach(arrow => {
+      arrows.forEach((arrow) => {
         arrow.classList.add(C.highlightedArrow);
         const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
         if (tip) {
-          arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, arrowScale));
+          arrow.setAttribute(
+            'points',
+            ArcLogic.getArrowPoints(tip, arrowScale),
+          );
         }
       });
     }
@@ -197,11 +224,14 @@ const HighlightRenderer = {
     const shadowLayer = dom.getElementById(LayerManager.LAYERS.SHADOWS);
     if (!shadowLayer) return;
 
-    for (const [key, { shadowWidth, visibleLength, dashOffset, glowClass }] of shadowData) {
+    for (const [
+      key,
+      { shadowWidth, visibleLength, dashOffset, glowClass },
+    ] of shadowData) {
       const isVirtual = key.startsWith('v:');
       const arcId = isVirtual ? key.slice(2) : key;
       const arcs = isVirtual
-        ? dom.querySelectorAll('.' + C.virtualArc + '[data-arc-id="' + arcId + '"]')
+        ? dom.querySelectorAll(`.${C.virtualArc}[data-arc-id="${arcId}"]`)
         : [dom.getVisibleArc(arcId)];
 
       for (const arc of arcs) {
@@ -214,11 +244,11 @@ const HighlightRenderer = {
         shadow.removeAttribute('data-arc-id');
 
         const pathLength = ArcLogic.estimatePathLength(arc.getAttribute('d'));
-        shadow.style.strokeWidth = shadowWidth + 'px';
+        shadow.style.strokeWidth = `${shadowWidth}px`;
         shadow.setAttribute('opacity', '0.25');
         shadow.style.strokeLinecap = 'round';
-        shadow.style.strokeDasharray = visibleLength + ' ' + pathLength;
-        shadow.style.strokeDashoffset = dashOffset + 'px';
+        shadow.style.strokeDasharray = `${visibleLength} ${pathLength}`;
+        shadow.style.strokeDashoffset = `${dashOffset}px`;
 
         shadowLayer.appendChild(shadow);
       }
@@ -233,15 +263,17 @@ const HighlightRenderer = {
       const arcId = isVirtual ? key.slice(2) : key;
 
       if (isVirtual) {
-        dom.querySelectorAll('.' + C.virtualArc + '[data-arc-id="' + arcId + '"]').forEach(el => {
-          LayerManager.moveToHighlightLayer(el, dom);
-        });
-        dom.getVirtualArrows(arcId).forEach(el => {
+        dom
+          .querySelectorAll(`.${C.virtualArc}[data-arc-id="${arcId}"]`)
+          .forEach((el) => {
+            LayerManager.moveToHighlightLayer(el, dom);
+          });
+        dom.getVirtualArrows(arcId).forEach((el) => {
           LayerManager.moveToHighlightLayer(el, dom);
         });
       } else {
         LayerManager.moveToHighlightLayer(dom.getVisibleArc(arcId), dom);
-        dom.getVisibleArrows(arcId).forEach(el => {
+        dom.getVisibleArrows(arcId).forEach((el) => {
           LayerManager.moveToHighlightLayer(el, dom);
         });
       }
@@ -249,7 +281,11 @@ const HighlightRenderer = {
     }
 
     for (const arcId of promotedHitareas) {
-      LayerManager.moveToLayer(dom.getHitarea(arcId), LayerManager.LAYERS.HIGHLIGHT_HITAREAS, dom);
+      LayerManager.moveToLayer(
+        dom.getHitarea(arcId),
+        LayerManager.LAYERS.HIGHLIGHT_HITAREAS,
+        dom,
+      );
     }
   },
 
@@ -263,24 +299,30 @@ const HighlightRenderer = {
       const scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
 
       // Virtual arc paths
-      dom.querySelectorAll('.' + C.virtualArc + '[data-arc-id="' + arcId + '"]').forEach(arc => {
-        arc.classList.remove(C.highlightedArc);
-        arc.style.strokeWidth = strokeWidth + 'px';
-      });
+      dom
+        .querySelectorAll(`.${C.virtualArc}[data-arc-id="${arcId}"]`)
+        .forEach((arc) => {
+          arc.classList.remove(C.highlightedArc);
+          arc.style.strokeWidth = `${strokeWidth}px`;
+        });
 
       // Virtual arrows
-      dom.querySelectorAll('.' + C.virtualArrow + '[data-vedge="' + arcId + '"]').forEach(arrow => {
-        arrow.classList.remove(C.highlightedArrow);
-        const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
-        if (tip) {
-          arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, scale));
-        }
-      });
+      dom
+        .querySelectorAll(`.${C.virtualArrow}[data-vedge="${arcId}"]`)
+        .forEach((arrow) => {
+          arrow.classList.remove(C.highlightedArrow);
+          const tip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
+          if (tip) {
+            arrow.setAttribute('points', ArcLogic.getArrowPoints(tip, scale));
+          }
+        });
 
       // Virtual labels
-      dom.querySelectorAll('.' + C.arcCount + '[data-vedge="' + arcId + '"]').forEach(el => {
-        el.classList.remove(C.highlightedLabel);
-      });
+      dom
+        .querySelectorAll(`.${C.arcCount}[data-vedge="${arcId}"]`)
+        .forEach((el) => {
+          el.classList.remove(C.highlightedLabel);
+        });
     }
   },
 };

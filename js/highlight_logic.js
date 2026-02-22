@@ -81,7 +81,7 @@ const HighlightLogic = {
     const dashOffset = this.calculateDashOffset(overhang);
 
     return { shadowWidth, overhang, visibleLength, dashOffset };
-  }
+  },
 };
 
 // CommonJS export for tests (Node/Bun)

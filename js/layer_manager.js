@@ -26,16 +26,24 @@ const LayerManager = {
     if (!element) return null;
 
     const cls = STATIC_DATA.classes;
-    const isArc = element.classList?.contains(cls.depArc) ||
-                  element.classList?.contains(cls.cycleArc) ||
-                  element.classList?.contains(cls.virtualArc) ||
-                  element.tagName === 'polygon';
+    const isArc =
+      element.classList?.contains(cls.depArc) ||
+      element.classList?.contains(cls.cycleArc) ||
+      element.classList?.contains(cls.virtualArc) ||
+      element.tagName === 'polygon';
     const isLabel = element.classList?.contains(cls.arcCountGroup);
     const isHitarea = element.classList?.contains(cls.arcHitarea);
 
-    if (isArc) return highlighted ? this.LAYERS.HIGHLIGHT_ARCS : this.LAYERS.BASE_ARCS;
-    if (isLabel) return highlighted ? this.LAYERS.HIGHLIGHT_LABELS : this.LAYERS.BASE_LABELS;
-    if (isHitarea) return highlighted ? this.LAYERS.HIGHLIGHT_HITAREAS : this.LAYERS.HITAREAS;
+    if (isArc)
+      return highlighted ? this.LAYERS.HIGHLIGHT_ARCS : this.LAYERS.BASE_ARCS;
+    if (isLabel)
+      return highlighted
+        ? this.LAYERS.HIGHLIGHT_LABELS
+        : this.LAYERS.BASE_LABELS;
+    if (isHitarea)
+      return highlighted
+        ? this.LAYERS.HIGHLIGHT_HITAREAS
+        : this.LAYERS.HITAREAS;
     return null;
   },
 
@@ -72,10 +80,9 @@ const LayerManager = {
     const layerId = this.getLayerForElement(element, true);
     if (layerId) this.moveToLayer(element, layerId, domAdapter);
   },
-
 };
 
 // Export for Bun/Node
-if (typeof module !== "undefined" && module.exports) {
+if (typeof module !== 'undefined' && module.exports) {
   module.exports = { LayerManager };
 }

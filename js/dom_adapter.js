@@ -12,27 +12,48 @@ function createFakeElement(tagName) {
   return {
     tagName,
     children,
-    get firstChild() { return children[0] ?? null; },
-    getAttribute(name) { return attrs.get(name) ?? null; },
-    setAttribute(name, value) { attrs.set(name, value); },
-    removeAttribute(name) { attrs.delete(name); },
+    get firstChild() {
+      return children[0] ?? null;
+    },
+    getAttribute(name) {
+      return attrs.get(name) ?? null;
+    },
+    setAttribute(name, value) {
+      attrs.set(name, value);
+    },
+    removeAttribute(name) {
+      attrs.delete(name);
+    },
     classList: {
-      add(c) { classes.add(c); },
-      remove(c) { classes.delete(c); },
-      contains(c) { return classes.has(c); },
+      add(c) {
+        classes.add(c);
+      },
+      remove(c) {
+        classes.delete(c);
+      },
+      contains(c) {
+        return classes.has(c);
+      },
     },
     style: new Proxy(styleData, {
-      get(target, prop) { return target[prop]; },
-      set(target, prop, value) { target[prop] = value; return true; },
+      get(target, prop) {
+        return target[prop];
+      },
+      set(target, prop, value) {
+        target[prop] = value;
+        return true;
+      },
     }),
-    cloneNode(deep) {
+    cloneNode(_deep) {
       const clone = createFakeElement(tagName);
       for (const [k, v] of attrs) clone.setAttribute(k, v);
       for (const c of classes) clone.classList.add(c);
       Object.assign(clone.style, { ...styleData });
       return clone;
     },
-    appendChild(child) { children.push(child); },
+    appendChild(child) {
+      children.push(child);
+    },
     removeChild(child) {
       const idx = children.indexOf(child);
       if (idx !== -1) children.splice(idx, 1);
@@ -44,33 +65,56 @@ function createFakeElement(tagName) {
 // These only call this.getElementById/querySelector/querySelectorAll,
 // so they work on any object that provides those four base methods.
 const convenienceMethods = {
-  getNode(nodeId) { return this.getElementById(Selectors.nodeId(nodeId)); },
+  getNode(nodeId) {
+    return this.getElementById(Selectors.nodeId(nodeId));
+  },
   // Raw access - returns arc regardless of visibility (for reset operations)
-  getArc(arcId) { return this.querySelector(Selectors.baseArc(arcId)); },
+  getArc(arcId) {
+    return this.querySelector(Selectors.baseArc(arcId));
+  },
   // Filtered access - returns only VISIBLE arc (for apply/highlight operations)
   getVisibleArc(arcId) {
     const arc = this.getArc(arcId);
     if (!arc || arc.style.display === 'none') return null;
     return arc;
   },
-  getHitarea(arcId) { return this.querySelector(Selectors.hitarea(arcId)); },
+  getHitarea(arcId) {
+    return this.querySelector(Selectors.hitarea(arcId));
+  },
   // Raw access - returns ALL arrows (including hidden ones, for reset operations)
-  getArrows(arcId) { return this.querySelectorAll(Selectors.arrows(arcId)); },
+  getArrows(arcId) {
+    return this.querySelectorAll(Selectors.arrows(arcId));
+  },
   // Filtered access - returns only VISIBLE arrows (for apply/highlight operations)
   getVisibleArrows(arcId) {
     const arrows = this.getArrows(arcId);
-    return Array.from(arrows).filter(arr => arr.style.display !== 'none');
+    return Array.from(arrows).filter((arr) => arr.style.display !== 'none');
   },
-  getVirtualArrows(arcId) { return this.querySelectorAll(Selectors.virtualArrows(arcId)); },
-  getLabelGroup(arcId) { return this.querySelector(Selectors.labelGroup(arcId)); },
-  getCollapseToggle(nodeId) { return this.querySelector(Selectors.collapseToggle(nodeId)); },
-  getCountLabel(nodeId) { return this.getElementById(Selectors.countId(nodeId)); },
+  getVirtualArrows(arcId) {
+    return this.querySelectorAll(Selectors.virtualArrows(arcId));
+  },
+  getLabelGroup(arcId) {
+    return this.querySelector(Selectors.labelGroup(arcId));
+  },
+  getCollapseToggle(nodeId) {
+    return this.querySelector(Selectors.collapseToggle(nodeId));
+  },
+  getCountLabel(nodeId) {
+    return this.getElementById(Selectors.countId(nodeId));
+  },
   getTreeLines(nodeId, role) {
-    const sel = role === 'child' ? Selectors.treeLineChild(nodeId) : Selectors.treeLineParent(nodeId);
+    const sel =
+      role === 'child'
+        ? Selectors.treeLineChild(nodeId)
+        : Selectors.treeLineParent(nodeId);
     return this.querySelectorAll(sel);
   },
-  getSvgRoot() { return this.querySelector('svg'); },
-  getAllHitareas() { return this.querySelectorAll(Selectors.allHitareas()); },
+  getSvgRoot() {
+    return this.querySelector('svg');
+  },
+  getAllHitareas() {
+    return this.querySelectorAll(Selectors.allHitareas());
+  },
 };
 
 function createMockDomAdapter() {
@@ -82,28 +126,54 @@ function createMockDomAdapter() {
     calls.get(method).push([...args]);
   }
   return {
-    getElementById(id) { track("getElementById", [id]); return elements.get(id) ?? null; },
-    querySelector(sel) { track("querySelector", [sel]); return selectorResults.get(sel) ?? null; },
-    querySelectorAll(sel) { track("querySelectorAll", [sel]); return selectorResults.get(sel) ?? []; },
-    createSvgElement(tag) { track("createSvgElement", [tag]); return createFakeElement(tag); },
+    getElementById(id) {
+      track('getElementById', [id]);
+      return elements.get(id) ?? null;
+    },
+    querySelector(sel) {
+      track('querySelector', [sel]);
+      return selectorResults.get(sel) ?? null;
+    },
+    querySelectorAll(sel) {
+      track('querySelectorAll', [sel]);
+      return selectorResults.get(sel) ?? [];
+    },
+    createSvgElement(tag) {
+      track('createSvgElement', [tag]);
+      return createFakeElement(tag);
+    },
     ...convenienceMethods,
-    _getCalls(method) { return calls.get(method) ?? []; },
-    _registerElement(id, el) { elements.set(id, el); },
-    _registerSelector(sel, result) { selectorResults.set(sel, result); },
+    _getCalls(method) {
+      return calls.get(method) ?? [];
+    },
+    _registerElement(id, el) {
+      elements.set(id, el);
+    },
+    _registerSelector(sel, result) {
+      selectorResults.set(sel, result);
+    },
   };
 }
 
-const SVG_NS = "http://www.w3.org/2000/svg";
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const DomAdapter = {
-  getElementById(id) { return document.getElementById(id); },
-  querySelector(sel) { return document.querySelector(sel); },
-  querySelectorAll(sel) { return document.querySelectorAll(sel); },
-  createSvgElement(tag) { return document.createElementNS(SVG_NS, tag); },
+  getElementById(id) {
+    return document.getElementById(id);
+  },
+  querySelector(sel) {
+    return document.querySelector(sel);
+  },
+  querySelectorAll(sel) {
+    return document.querySelectorAll(sel);
+  },
+  createSvgElement(tag) {
+    return document.createElementNS(SVG_NS, tag);
+  },
   ...convenienceMethods,
 };
 
 // Export for Bun/Node
-if (typeof module !== "undefined" && module.exports) {
+if (typeof module !== 'undefined' && module.exports) {
   module.exports = { DomAdapter, createMockDomAdapter, createFakeElement };
 }

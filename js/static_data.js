@@ -31,7 +31,9 @@ const StaticData = {
    */
   getOriginalPosition(nodeId) {
     const node = STATIC_DATA.nodes[nodeId];
-    return node ? { x: node.x, y: node.y, width: node.width, height: node.height } : null;
+    return node
+      ? { x: node.x, y: node.y, width: node.width, height: node.height }
+      : null;
   },
 
   /**
@@ -113,17 +115,33 @@ const StaticData = {
     const incoming = [];
     for (const [arcId, arc] of Object.entries(STATIC_DATA.arcs)) {
       if (arc.from === nodeId) {
-        const weight = (arc.usages || []).reduce((s, g) => s + g.locations.length, 0);
-        outgoing.push({ targetId: arc.to, weight, usages: arc.usages || [], arcId });
+        const weight = (arc.usages || []).reduce(
+          (s, g) => s + g.locations.length,
+          0,
+        );
+        outgoing.push({
+          targetId: arc.to,
+          weight,
+          usages: arc.usages || [],
+          arcId,
+        });
       } else if (arc.to === nodeId) {
-        const weight = (arc.usages || []).reduce((s, g) => s + g.locations.length, 0);
-        incoming.push({ targetId: arc.from, weight, usages: arc.usages || [], arcId });
+        const weight = (arc.usages || []).reduce(
+          (s, g) => s + g.locations.length,
+          0,
+        );
+        incoming.push({
+          targetId: arc.from,
+          weight,
+          usages: arc.usages || [],
+          arcId,
+        });
       }
     }
     outgoing.sort((a, b) => b.weight - a.weight);
     incoming.sort((a, b) => b.weight - a.weight);
     return { outgoing, incoming };
-  }
+  },
 };
 
 // CommonJS export for tests (Node/Bun)

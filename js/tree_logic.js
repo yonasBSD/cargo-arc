@@ -53,14 +53,18 @@ const TreeLogic = {
 
     // Parent is not collapsed, but check if parent is visible
     // (i.e., no ancestor of parent is collapsed)
-    const parentsVisibleAncestor = this.getVisibleAncestor(parentId, collapsedSet, parentMap);
+    const parentsVisibleAncestor = this.getVisibleAncestor(
+      parentId,
+      collapsedSet,
+      parentMap,
+    );
     if (parentsVisibleAncestor !== parentId) {
       // Parent is hidden (has collapsed ancestor) -> return that ancestor
       return parentsVisibleAncestor;
     }
 
     return nodeId; // This node is visible
-  }
+  },
 };
 
 // CommonJS export for tests (Node/Bun)

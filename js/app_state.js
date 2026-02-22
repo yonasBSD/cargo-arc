@@ -76,10 +76,18 @@ const AppState = {
    */
   getSelection(state) {
     if (state.clickSelection.type !== null) {
-      return { mode: 'click', type: state.clickSelection.type, id: state.clickSelection.id };
+      return {
+        mode: 'click',
+        type: state.clickSelection.type,
+        id: state.clickSelection.id,
+      };
     }
     if (state.hoverSelection.type !== null) {
-      return { mode: 'hover', type: state.hoverSelection.type, id: state.hoverSelection.id };
+      return {
+        mode: 'hover',
+        type: state.hoverSelection.type,
+        id: state.hoverSelection.id,
+      };
     }
     return { mode: 'none', type: null, id: null };
   },
@@ -128,8 +136,7 @@ const AppState = {
    * @returns {boolean}
    */
   isSelected(state, type, id) {
-    return state.clickSelection.type === type &&
-           state.clickSelection.id === id;
+    return state.clickSelection.type === type && state.clickSelection.id === id;
   },
 
   /**
@@ -218,7 +225,7 @@ const AppState = {
    */
   clearPinned(state) {
     this.clearSelection(state);
-  }
+  },
 };
 
 // CommonJS export for tests (Node/Bun)

@@ -13,7 +13,9 @@ const VirtualEdgeLogic = {
    */
   determineAggregatedDirection(directions) {
     if (!directions || directions.length === 0) return 'downward';
-    return directions.every(d => d === directions[0]) ? directions[0] : 'downward';
+    return directions.every((d) => d === directions[0])
+      ? directions[0]
+      : 'downward';
   },
 
   /**
@@ -26,7 +28,15 @@ const VirtualEdgeLogic = {
     const virtualEdges = new Map();
 
     for (const edge of edges) {
-      const { arcId, fromId, toId, fromHidden, toHidden, sourceLocations, direction } = edge;
+      const {
+        arcId,
+        fromId,
+        toId,
+        fromHidden,
+        toHidden,
+        sourceLocations,
+        direction,
+      } = edge;
 
       // Skip if both endpoints are visible
       if (!fromHidden && !toHidden) continue;
@@ -38,8 +48,13 @@ const VirtualEdgeLogic = {
       // Skip self-loops (both map to same visible ancestor)
       if (!visibleFrom || !visibleTo || visibleFrom === visibleTo) continue;
 
-      const key = visibleFrom + '-' + visibleTo;
-      const existing = virtualEdges.get(key) || { count: 0, hiddenEdgeData: [], directions: [], originalArcs: [] };
+      const key = `${visibleFrom}-${visibleTo}`;
+      const existing = virtualEdges.get(key) || {
+        count: 0,
+        hiddenEdgeData: [],
+        directions: [],
+        originalArcs: [],
+      };
 
       existing.count++;
       if (sourceLocations) existing.hiddenEdgeData.push(sourceLocations);
@@ -61,7 +76,13 @@ const VirtualEdgeLogic = {
    * @param {number} rowHeight - Row height for arc calculation
    * @returns {Map<string, {fromId: string, toId: string, count: number, hiddenEdgeData: string[], arc: Object, strokeWidth: number, direction: string, originalArcs: string[]}>}
    */
-  prepareVirtualEdgeData(virtualEdges, nodePositions, maxRight, arcLogic, rowHeight) {
+  prepareVirtualEdgeData(
+    virtualEdges,
+    nodePositions,
+    maxRight,
+    arcLogic,
+    rowHeight,
+  ) {
     const mergedEdges = new Map();
 
     virtualEdges.forEach((data, key) => {
@@ -72,12 +93,18 @@ const VirtualEdgeLogic = {
       if (!fromPos || !toPos) return;
 
       // Calculate arc path from position objects
-      const arc = arcLogic.calculateArcPathFromPositions(fromPos, toPos, 3, maxRight, rowHeight);
+      const arc = arcLogic.calculateArcPathFromPositions(
+        fromPos,
+        toPos,
+        3,
+        maxRight,
+        rowHeight,
+      );
 
       // Calculate stroke width from aggregated locations
       const totalLocations = data.hiddenEdgeData.reduce(
         (sum, locs) => sum + arcLogic.countLocations(locs),
-        0
+        0,
       );
       const strokeWidth = arcLogic.calculateStrokeWidth(totalLocations);
 
@@ -92,12 +119,12 @@ const VirtualEdgeLogic = {
         arc,
         strokeWidth,
         direction,
-        originalArcs: data.originalArcs
+        originalArcs: data.originalArcs,
       });
     });
 
     return mergedEdges;
-  }
+  },
 };
 
 // CommonJS export for tests (Node/Bun)
