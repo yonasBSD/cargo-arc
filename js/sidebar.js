@@ -50,6 +50,21 @@ const SidebarLogic = {
   },
 
   /**
+   * Format a compact symbol annotation string from usages for cycle sidebar headers.
+   * @param {Array<{symbol: string, modulePath: string|null, locations: Array}>} usages
+   * @returns {string} e.g. "::Symbol", "::{S1, S2}", "::{S1, S2, …}", or ""
+   */
+  formatArcSymbols(usages) {
+    const symbols = [
+      ...new Set((usages || []).map((g) => g.symbol).filter(Boolean)),
+    ];
+    if (symbols.length === 0) return '';
+    if (symbols.length === 1) return `::${symbols[0]}`;
+    if (symbols.length <= 3) return `::{${symbols.join(', ')}}`;
+    return `::{${symbols[0]}, ${symbols[1]}, \u2026}`;
+  },
+
+  /**
    * Build HTML content string for the sidebar.
    * Uses overrideData if provided, otherwise STATIC_DATA.arcs[arcId].
    * Expects structured usages: [{ symbol, modulePath, locations: [{ file, line }] }]
@@ -458,12 +473,20 @@ const SidebarLogic = {
         html += `<span class="sidebar-symbol-name">${fromName}</span>`;
         html += `<span class="sidebar-arrow">&#x2192;</span>`;
         html += `<span class="sidebar-symbol-name">${toName}</span>`;
+        const singleSymSuffix = this.formatArcSymbols(info.usages);
+        if (singleSymSuffix) {
+          html += `<span class="sidebar-arc-symbols">${singleSymSuffix}</span>`;
+        }
         html += `<span class="sidebar-ref-count">${info.count}</span>`;
         html += `</div>`;
 
         html += `<div class="sidebar-locations" style="display:none">`;
+        const seen = new Set();
         for (const group of info.usages) {
           for (const loc of group.locations) {
+            const key = `${loc.file}:${loc.line}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
             html += `<div class="sidebar-location">${loc.file}<span class="sidebar-line-badge">:${loc.line}</span></div>`;
           }
         }
@@ -524,12 +547,20 @@ const SidebarLogic = {
         contentHtml += `<span class="sidebar-symbol-name">${fromName}</span>`;
         contentHtml += `<span class="sidebar-arrow">&#x2192;</span>`;
         contentHtml += `<span class="sidebar-symbol-name">${toName}</span>`;
+        const multiSymSuffix = this.formatArcSymbols(info.usages);
+        if (multiSymSuffix) {
+          contentHtml += `<span class="sidebar-arc-symbols">${multiSymSuffix}</span>`;
+        }
         contentHtml += `<span class="sidebar-ref-count">${info.count}</span>`;
         contentHtml += `</div>`;
 
         contentHtml += `<div class="sidebar-locations" style="display:none">`;
+        const seen = new Set();
         for (const group of info.usages) {
           for (const loc of group.locations) {
+            const key = `${loc.file}:${loc.line}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
             contentHtml += `<div class="sidebar-location">${loc.file}<span class="sidebar-line-badge">:${loc.line}</span></div>`;
           }
         }

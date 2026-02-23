@@ -1625,5 +1625,180 @@ describe('SidebarLogic', () => {
       const html = SidebarLogic.buildContent('A-B');
       expect(html).toContain('>+</button>');
     });
+
+    test('single-cycle: arc headers show symbol annotation', () => {
+      const html = SidebarLogic.buildContent('A-B');
+      // Symbols should appear in sidebar-arc-symbols spans (WARN-001: separate spans)
+      expect(html).toContain('sidebar-arc-symbols');
+      expect(html).toContain('::sym1');
+      expect(html).toContain('::sym2');
+      expect(html).toContain('::sym3');
+    });
+
+    test('single-cycle: arc without symbols shows no annotation', () => {
+      // Add a bare arc to the cycle
+      globalThis.STATIC_DATA.arcs['A-B'] = {
+        from: 'A',
+        to: 'B',
+        cycleIds: [0],
+        usages: [
+          {
+            symbol: '',
+            modulePath: null,
+            locations: [{ file: 'a.rs', line: 1 }],
+          },
+        ],
+      };
+      globalThis.STATIC_DATA.cycles[0].arcs = ['A-B', 'B-C', 'C-A'];
+      const html = SidebarLogic.buildContent('A-B');
+      // B→C still has sym2, so sidebar-arc-symbols should appear there
+      expect(html).toContain('sidebar-arc-symbols');
+      // But A→B header area should not have ::
+      // Count: we should have 2 symbol annotations (B→C with sym2, C→A with sym3), not 3
+      const symbolSpans = html.match(/sidebar-arc-symbols/g) || [];
+      expect(symbolSpans).toHaveLength(2);
+    });
+
+    test('multi-cycle: arc headers show symbol annotation', () => {
+      setupMultiCycleData();
+      const html = SidebarLogic.buildContent('B-C');
+      expect(html).toContain('sidebar-arc-symbols');
+      expect(html).toContain('::sym2');
+      expect(html).toContain('::sym_cd');
+      expect(html).toContain('::sym_db');
+    });
+  });
+
+  describe('formatArcSymbols', () => {
+    test('empty usages returns empty string', () => {
+      expect(SidebarLogic.formatArcSymbols([])).toBe('');
+    });
+
+    test('single symbol returns ::Symbol', () => {
+      const usages = [
+        {
+          symbol: 'Package',
+          modulePath: null,
+          locations: [{ file: 'a.rs', line: 1 }],
+        },
+      ];
+      expect(SidebarLogic.formatArcSymbols(usages)).toBe('::Package');
+    });
+
+    test('multiple symbols returns ::{S1, S2}', () => {
+      const usages = [
+        {
+          symbol: 'Alpha',
+          modulePath: null,
+          locations: [{ file: 'a.rs', line: 1 }],
+        },
+        {
+          symbol: 'Beta',
+          modulePath: null,
+          locations: [{ file: 'b.rs', line: 2 }],
+        },
+      ];
+      expect(SidebarLogic.formatArcSymbols(usages)).toBe('::{Alpha, Beta}');
+    });
+
+    test('three symbols returns ::{S1, S2, S3}', () => {
+      const usages = [
+        {
+          symbol: 'A',
+          modulePath: null,
+          locations: [{ file: 'a.rs', line: 1 }],
+        },
+        {
+          symbol: 'B',
+          modulePath: null,
+          locations: [{ file: 'b.rs', line: 1 }],
+        },
+        {
+          symbol: 'C',
+          modulePath: null,
+          locations: [{ file: 'c.rs', line: 1 }],
+        },
+      ];
+      expect(SidebarLogic.formatArcSymbols(usages)).toBe('::{A, B, C}');
+    });
+
+    test('bare usages (symbol="") excluded', () => {
+      const usages = [
+        {
+          symbol: '',
+          modulePath: null,
+          locations: [{ file: 'a.rs', line: 1 }],
+        },
+        {
+          symbol: 'Foo',
+          modulePath: null,
+          locations: [{ file: 'b.rs', line: 1 }],
+        },
+      ];
+      expect(SidebarLogic.formatArcSymbols(usages)).toBe('::Foo');
+    });
+
+    test('all-bare usages returns empty string', () => {
+      const usages = [
+        {
+          symbol: '',
+          modulePath: null,
+          locations: [{ file: 'a.rs', line: 1 }],
+        },
+        {
+          symbol: '',
+          modulePath: null,
+          locations: [{ file: 'b.rs', line: 2 }],
+        },
+      ];
+      expect(SidebarLogic.formatArcSymbols(usages)).toBe('');
+    });
+
+    test('4+ symbols truncated with ellipsis', () => {
+      const usages = [
+        {
+          symbol: 'A',
+          modulePath: null,
+          locations: [{ file: 'a.rs', line: 1 }],
+        },
+        {
+          symbol: 'B',
+          modulePath: null,
+          locations: [{ file: 'b.rs', line: 1 }],
+        },
+        {
+          symbol: 'C',
+          modulePath: null,
+          locations: [{ file: 'c.rs', line: 1 }],
+        },
+        {
+          symbol: 'D',
+          modulePath: null,
+          locations: [{ file: 'd.rs', line: 1 }],
+        },
+      ];
+      expect(SidebarLogic.formatArcSymbols(usages)).toBe('::{A, B, \u2026}');
+    });
+
+    test('deduplicates symbols across groups', () => {
+      const usages = [
+        {
+          symbol: 'Foo',
+          modulePath: null,
+          locations: [{ file: 'a.rs', line: 1 }],
+        },
+        {
+          symbol: 'Foo',
+          modulePath: null,
+          locations: [{ file: 'b.rs', line: 2 }],
+        },
+        {
+          symbol: 'Bar',
+          modulePath: null,
+          locations: [{ file: 'c.rs', line: 3 }],
+        },
+      ];
+      expect(SidebarLogic.formatArcSymbols(usages)).toBe('::{Foo, Bar}');
+    });
   });
 });

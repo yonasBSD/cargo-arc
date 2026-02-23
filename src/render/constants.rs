@@ -339,6 +339,7 @@ pub(super) struct SidebarClasses {
     pub node_to: &'static str,
     pub node_selected: &'static str,
     pub transient: &'static str,
+    pub arc_symbols: &'static str,
 }
 
 #[allow(dead_code)]
@@ -450,6 +451,7 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         node_to: "sidebar-node-to",
         node_selected: "sidebar-node-selected",
         transient: "sidebar-transient",
+        arc_symbols: "sidebar-arc-symbols",
     },
     search: SearchClasses {
         search_active: "search-active",

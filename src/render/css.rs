@@ -624,6 +624,10 @@ fn build_css_rules() -> Vec<CssRule> {
             ],
         ),
         CssRule::class(c.sidebar.symbol_name, &[("font-weight", "bold")]),
+        CssRule::class(
+            c.sidebar.arc_symbols,
+            &[("opacity", "0.7"), ("font-size", "10px")],
+        ),
         CssRule::class(c.sidebar.ns, &[("color", GRAY_400), ("font-size", "10px")]),
         CssRule::class(
             c.sidebar.ref_count,
@@ -904,6 +908,10 @@ mod tests {
             css.contains(".sidebar-root.sidebar-transient .sidebar-collapse-all"),
             "CSS should contain transient sidebar collapse-all rule"
         );
+        assert!(
+            css.contains(&format!(".{}", CSS.sidebar.arc_symbols)),
+            "CSS should contain .sidebar-arc-symbols"
+        );
     }
 
     #[test]
@@ -1081,7 +1089,6 @@ mod tests {
         }
     }
 
-    #[test]
     #[test]
     fn test_arc_hitarea_css_class_exists() {
         let css = render_styles();
