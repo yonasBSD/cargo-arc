@@ -10,7 +10,7 @@ use crate::analyze::{
     collect_crate_reexports, normalize_crate_name,
 };
 use crate::graph::ArcGraph;
-use crate::layout::{ElementaryCycles, LayoutIR, build_layout};
+use crate::layout::{Cycle, ElementaryCycles, LayoutIR, build_layout};
 use crate::model::{CrateExportMap, ModulePathMap, WorkspaceCrates};
 use crate::render::{RenderConfig, render};
 use crate::volatility::{VolatilityAnalyzer, VolatilityConfig};
@@ -52,6 +52,10 @@ pub struct Args {
     #[arg(long)]
     pub include_tests: bool,
 
+    /// Validate dependency graph (exit 1 if cycles found)
+    #[arg(long)]
+    pub check: bool,
+
     /// Enable debug output to stderr (shows filtering decisions)
     #[arg(long)]
     pub debug: bool,
@@ -92,6 +96,29 @@ pub fn run(args: Args) -> Result<()> {
             .with_target(false)
             .with_writer(std::io::stderr)
             .init();
+    }
+
+    if args.check {
+        let feature_config = FeatureConfig {
+            features: args.features,
+            all_features: args.all_features,
+            no_default_features: args.no_default_features,
+            include_tests: args.include_tests,
+            debug: args.debug,
+        };
+
+        #[cfg(feature = "hir")]
+        let use_hir = args.hir;
+        #[cfg(not(feature = "hir"))]
+        let use_hir = false;
+
+        let graph = build_dependency_graph(&args.manifest_path, &feature_config, use_hir)?;
+        let cycles = graph.production_subgraph().elementary_cycles();
+        if cycles.is_empty() {
+            return Ok(());
+        }
+        eprint!("{}", format_cycle_errors(&graph, &cycles));
+        anyhow::bail!("dependency cycle(s) detected");
     }
 
     let vol_config = VolatilityConfig {
@@ -219,6 +246,40 @@ fn build_dependency_graph(
     Ok(ArcGraph::build(&crates, &modules))
 }
 
+/// Format detected cycles as compiler-style error messages.
+///
+/// Returns an empty string when `cycles` is empty. Otherwise produces one
+/// `error[cycle]:` line per cycle (using `<->` for direct / `->` chains for
+/// transitive) followed by a summary line.
+fn format_cycle_errors(graph: &ArcGraph, cycles: &[Cycle]) -> String {
+    use std::fmt::Write;
+
+    if cycles.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::new();
+    for cycle in cycles {
+        let names: Vec<&str> = cycle.path.iter().map(|&idx| graph[idx].name()).collect();
+        if names.len() == 2 {
+            let _ = writeln!(output, "error[cycle]: {} <-> {}", names[0], names[1]);
+        } else {
+            let _ = writeln!(
+                output,
+                "error[cycle]: {} -> {}",
+                names.join(" -> "),
+                names[0]
+            );
+        }
+    }
+    let _ = write!(
+        output,
+        "\nerror: found {} cycle(s) in dependency graph\n",
+        cycles.len()
+    );
+    output
+}
+
 fn enrich_volatility(layout: &mut LayoutIR, manifest_path: &Path, vol_config: VolatilityConfig) {
     let repo_path = resolve_repo_path(manifest_path);
     let mut analyzer = VolatilityAnalyzer::new(vol_config);
@@ -246,6 +307,83 @@ mod tests {
     fn parse_args(args: &[&str]) -> Args {
         let Cargo::Arc(args) = Cargo::parse_from(args);
         args
+    }
+
+    use crate::graph::Node;
+    use crate::layout::Cycle;
+    use petgraph::graph::NodeIndex;
+
+    /// Build a test graph with named module nodes.
+    fn test_graph(names: &[&str]) -> (ArcGraph, Vec<NodeIndex>) {
+        let mut graph = ArcGraph::new();
+        let crate_idx = graph.add_node(Node::Crate {
+            name: "test".into(),
+            path: "/test".into(),
+        });
+        let indices: Vec<_> = names
+            .iter()
+            .map(|name| {
+                graph.add_node(Node::Module {
+                    name: (*name).into(),
+                    crate_idx,
+                })
+            })
+            .collect();
+        (graph, indices)
+    }
+
+    #[test]
+    fn test_parse_check_flag() {
+        let args = parse_args(&["cargo", "arc", "--check"]);
+        assert!(args.check);
+    }
+
+    #[test]
+    fn test_parse_check_flag_default() {
+        let args = parse_args(&["cargo", "arc"]);
+        assert!(!args.check);
+    }
+
+    #[test]
+    fn test_format_cycle_errors_transitive() {
+        let (graph, idx) = test_graph(&["A", "B", "C"]);
+        let cycles = vec![Cycle {
+            path: vec![idx[0], idx[1], idx[2]],
+        }];
+        let output = format_cycle_errors(&graph, &cycles);
+        assert!(output.contains("error[cycle]: A -> B -> C -> A"));
+    }
+
+    #[test]
+    fn test_format_cycle_errors_direct() {
+        let (graph, idx) = test_graph(&["A", "B"]);
+        let cycles = vec![Cycle {
+            path: vec![idx[0], idx[1]],
+        }];
+        let output = format_cycle_errors(&graph, &cycles);
+        assert!(output.contains("error[cycle]: A <-> B"));
+    }
+
+    #[test]
+    fn test_format_cycle_errors_empty() {
+        let (graph, _) = test_graph(&["A", "B"]);
+        let output = format_cycle_errors(&graph, &[]);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_format_cycle_errors_summary() {
+        let (graph, idx) = test_graph(&["A", "B", "C", "D"]);
+        let cycles = vec![
+            Cycle {
+                path: vec![idx[0], idx[1]],
+            },
+            Cycle {
+                path: vec![idx[2], idx[3]],
+            },
+        ];
+        let output = format_cycle_errors(&graph, &cycles);
+        assert!(output.contains("error: found 2 cycle(s) in dependency graph"));
     }
 
     #[test]
@@ -331,6 +469,7 @@ mod tests {
             all_features: false,
             no_default_features: false,
             include_tests: false,
+            check: false,
             debug: false,
             volatility: false,
             no_volatility: false,

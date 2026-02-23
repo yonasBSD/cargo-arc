@@ -15,11 +15,12 @@ test-js:
 # Rust + JS
 test: test-rust test-js
 
-# clippy + biome + format check
+# clippy + biome + format check + cycle detection
 lint:
     cargo clippy -- -D warnings
     cargo fmt --check
     bunx biome check js/
+    cargo run -- arc --check
 
 # format Rust + JS
 fmt:
