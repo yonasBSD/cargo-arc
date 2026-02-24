@@ -438,8 +438,16 @@ impl GraphBuilder {
                 .add_edge(ws_idx, ext_idx, Edge::CrateDep { context });
         }
 
-        // External -> external edges intentionally skipped:
-        // only direct workspace dependencies are visualized.
+        // External -> external edges (only populated in transitive mode)
+        for dep in &ext.external_deps {
+            let from = pkg_index.get(dep.from_pkg_id.as_str());
+            let to = pkg_index.get(dep.to_pkg_id.as_str());
+            if let (Some(&from_idx), Some(&to_idx)) = (from, to) {
+                let context = edge_context_from_dep_kinds(&dep.dep_kinds);
+                self.graph
+                    .add_edge(from_idx, to_idx, Edge::CrateDep { context });
+            }
+        }
     }
 
     fn resolve_node(&self, name: &str) -> Option<NodeIndex> {
@@ -863,9 +871,9 @@ mod tests {
         let graph = ArcGraph::build(&crates, &[], Some(&externals));
         // 1 workspace + 2 external = 3 nodes
         assert_eq!(graph.node_count(), 3);
-        // 1 workspace->serde (extern->extern skipped)
+        // 1 workspace->serde + 1 serde->tokio = 2 CrateDep edges
         let (cd, _, _) = count_edges(&graph);
-        assert_eq!(cd, 1);
+        assert_eq!(cd, 2);
     }
 
     #[test]

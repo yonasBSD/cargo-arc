@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use cargo_metadata::{DependencyKind, Metadata};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Metadata for a single external crate (one entry per version).
 #[derive(Debug, Clone)]
@@ -43,12 +43,131 @@ pub(crate) struct ExternalsResult {
     pub(crate) crate_name_map: HashMap<String, HashMap<String, String>>,
 }
 
+fn is_relevant_dep(dep: &cargo_metadata::NodeDep) -> bool {
+    dep.dep_kinds.iter().any(|dk| {
+        matches!(
+            dk.kind,
+            DependencyKind::Normal | DependencyKind::Development
+        )
+    })
+}
+
+fn collect_dep_kinds(dep: &cargo_metadata::NodeDep) -> Vec<DependencyKind> {
+    dep.dep_kinds
+        .iter()
+        .filter(|dk| {
+            matches!(
+                dk.kind,
+                DependencyKind::Normal | DependencyKind::Development
+            )
+        })
+        .map(|dk| dk.kind)
+        .collect()
+}
+
+struct ReachableExternals {
+    seen: HashMap<String, ExternalCrateInfo>,
+    crate_name_map: HashMap<String, HashMap<String, String>>,
+}
+
+/// BFS from workspace direct dependencies to collect all transitively reachable
+/// external nodes. Guarantees completeness regardless of resolve.nodes order.
+fn collect_reachable_externals(
+    resolve: &cargo_metadata::Resolve,
+    workspace_member_ids: &HashSet<&str>,
+    pkg_by_id: &HashMap<&str, &cargo_metadata::Package>,
+    transitive: bool,
+) -> ReachableExternals {
+    let deps_by_id: HashMap<&str, &[cargo_metadata::NodeDep]> = resolve
+        .nodes
+        .iter()
+        .map(|n| (n.id.repr.as_str(), n.deps.as_slice()))
+        .collect();
+
+    let mut seen: HashMap<String, ExternalCrateInfo> = HashMap::new();
+    let mut crate_name_map: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut bfs_queue: VecDeque<String> = VecDeque::new();
+
+    // Seed: workspace nodes' direct external dependencies
+    for node in &resolve.nodes {
+        let node_id = node.id.repr.as_str();
+        if !workspace_member_ids.contains(node_id) {
+            continue;
+        }
+
+        let ws_name = pkg_by_id.get(node_id).map_or("?", |p| p.name.as_str());
+        let normalized_ws_name = crate::model::normalize_crate_name(ws_name);
+
+        for dep in &node.deps {
+            let dep_id = dep.pkg.repr.as_str();
+            let Some(dep_pkg) = pkg_by_id.get(dep_id) else {
+                continue;
+            };
+            if dep_pkg.source.is_none() || !is_relevant_dep(dep) {
+                continue;
+            }
+
+            if !seen.contains_key(dep_id) {
+                seen.insert(
+                    dep_id.to_string(),
+                    ExternalCrateInfo {
+                        name: dep_pkg.name.to_string(),
+                        version: dep_pkg.version.to_string(),
+                        package_id: dep_id.to_string(),
+                    },
+                );
+                if transitive {
+                    bfs_queue.push_back(dep_id.to_string());
+                }
+            }
+
+            // Build crate_name_map: code-side name -> package_id
+            // dep.name is the library target name (includes renames and - -> _ mapping)
+            crate_name_map
+                .entry(normalized_ws_name.clone())
+                .or_default()
+                .insert(dep.name.clone(), dep_id.to_string());
+        }
+    }
+
+    // BFS: follow external -> external edges to collect all transitively reachable nodes
+    while let Some(ext_id) = bfs_queue.pop_front() {
+        let Some(deps) = deps_by_id.get(ext_id.as_str()) else {
+            continue;
+        };
+        for dep in *deps {
+            let dep_id = dep.pkg.repr.as_str();
+            let Some(dep_pkg) = pkg_by_id.get(dep_id) else {
+                continue;
+            };
+            if dep_pkg.source.is_none() || !is_relevant_dep(dep) {
+                continue;
+            }
+            if !seen.contains_key(dep_id) {
+                seen.insert(
+                    dep_id.to_string(),
+                    ExternalCrateInfo {
+                        name: dep_pkg.name.to_string(),
+                        version: dep_pkg.version.to_string(),
+                        package_id: dep_id.to_string(),
+                    },
+                );
+                bfs_queue.push_back(dep_id.to_string());
+            }
+        }
+    }
+
+    ReachableExternals {
+        seen,
+        crate_name_map,
+    }
+}
+
 /// Analyze external crate dependencies from cargo metadata.
 ///
-/// BFS over `resolve.nodes[].deps` starting from `workspace_members`.
-/// Collects external crates (`pkg.source.is_some()`), their inter-dependencies,
-/// and the name mapping per workspace crate for use-parser resolution.
-pub(crate) fn analyze_externals(metadata: &Metadata) -> ExternalsResult {
+/// When `transitive` is false, only direct workspace→external edges are collected.
+/// When true, also collects transitive extern→extern edges via full BFS.
+pub(crate) fn analyze_externals(metadata: &Metadata, transitive: bool) -> ExternalsResult {
     let Some(resolve) = metadata.resolve.as_ref() else {
         return ExternalsResult {
             crates: Vec::new(),
@@ -58,7 +177,7 @@ pub(crate) fn analyze_externals(metadata: &Metadata) -> ExternalsResult {
         };
     };
 
-    let workspace_member_ids: std::collections::HashSet<&str> = metadata
+    let workspace_member_ids: HashSet<&str> = metadata
         .workspace_members
         .iter()
         .map(|id| id.repr.as_str())
@@ -70,83 +189,52 @@ pub(crate) fn analyze_externals(metadata: &Metadata) -> ExternalsResult {
         .map(|p| (p.id.repr.as_str(), p))
         .collect();
 
-    let mut seen_externals: HashMap<String, ExternalCrateInfo> = HashMap::new();
-    let external_deps: Vec<ExternalDep> = Vec::new();
+    let reachable =
+        collect_reachable_externals(resolve, &workspace_member_ids, &pkg_by_id, transitive);
+
+    // All reachable nodes are now collected, so edge creation is independent
+    // of resolve.nodes iteration order.
+    let mut external_deps: Vec<ExternalDep> = Vec::new();
     let mut workspace_deps: Vec<WorkspaceExternalDep> = Vec::new();
-    let mut crate_name_map: HashMap<String, HashMap<String, String>> = HashMap::new();
 
     for node in &resolve.nodes {
         let node_id = node.id.repr.as_str();
         let is_workspace = workspace_member_ids.contains(node_id);
-        let node_pkg = pkg_by_id.get(node_id);
 
         for dep in &node.deps {
             let dep_id = dep.pkg.repr.as_str();
-            let Some(dep_pkg) = pkg_by_id.get(dep_id) else {
+            if !reachable.seen.contains_key(dep_id) {
                 continue;
-            };
+            }
 
-            // Only include production and dev dependencies (skip build)
-            let dep_kinds: Vec<DependencyKind> = dep
-                .dep_kinds
-                .iter()
-                .filter(|dk| {
-                    matches!(
-                        dk.kind,
-                        DependencyKind::Normal | DependencyKind::Development
-                    )
-                })
-                .map(|dk| dk.kind)
-                .collect();
-
+            let dep_kinds = collect_dep_kinds(dep);
             if dep_kinds.is_empty() {
                 continue;
             }
 
-            // External crate: has a source (registry, git, etc.)
-            let dep_is_external = dep_pkg.source.is_some();
-            if !dep_is_external {
-                continue;
-            }
+            if is_workspace {
+                let ws_name = pkg_by_id.get(node_id).map_or("?", |p| p.name.as_str());
 
-            // Only direct workspace dependencies — skip transitive extern→extern
-            if !is_workspace {
-                continue;
-            }
-
-            // Record external crate info (deduplicated by package_id)
-            seen_externals
-                .entry(dep_id.to_string())
-                .or_insert_with(|| ExternalCrateInfo {
-                    name: dep_pkg.name.to_string(),
-                    version: dep_pkg.version.to_string(),
-                    package_id: dep_id.to_string(),
+                workspace_deps.push(WorkspaceExternalDep {
+                    workspace_crate: crate::model::normalize_crate_name(ws_name),
+                    external_pkg_id: dep_id.to_string(),
+                    dep_kinds,
                 });
-
-            // Workspace -> external edge
-            let ws_name = node_pkg.map_or("?", |p| p.name.as_str());
-            let normalized_ws_name = crate::model::normalize_crate_name(ws_name);
-
-            workspace_deps.push(WorkspaceExternalDep {
-                workspace_crate: normalized_ws_name.clone(),
-                external_pkg_id: dep_id.to_string(),
-                dep_kinds: dep_kinds.clone(),
-            });
-
-            // Build crate_name_map: code-side name -> package_id
-            // dep.name is the library target name (includes renames and - -> _ mapping)
-            crate_name_map
-                .entry(normalized_ws_name)
-                .or_default()
-                .insert(dep.name.clone(), dep_id.to_string());
+            } else if transitive && reachable.seen.contains_key(node_id) {
+                external_deps.push(ExternalDep {
+                    from_pkg_id: node_id.to_string(),
+                    to_pkg_id: dep_id.to_string(),
+                    dep_kinds,
+                });
+            }
         }
     }
 
     ExternalsResult {
-        crates: seen_externals.into_values().collect(),
+        crates: reachable.seen.into_values().collect(),
         external_deps,
         workspace_deps,
-        crate_name_map,
+        crate_name_map: reachable.crate_name_map,
     }
 }
 
@@ -200,7 +288,7 @@ mod tests {
     #[test]
     fn test_analyze_externals_self() {
         let metadata = own_metadata();
-        let result = analyze_externals(&metadata);
+        let result = analyze_externals(&metadata, false);
 
         // cargo-arc has external deps like petgraph, syn, clap
         assert!(!result.crates.is_empty(), "should find external crates");
@@ -227,7 +315,7 @@ mod tests {
     #[test]
     fn test_analyze_externals_known_crates() {
         let metadata = own_metadata();
-        let result = analyze_externals(&metadata);
+        let result = analyze_externals(&metadata, false);
 
         let crate_names: Vec<&str> = result.crates.iter().map(|c| c.name.as_str()).collect();
         assert!(
@@ -247,7 +335,7 @@ mod tests {
     #[test]
     fn test_analyze_externals_no_workspace_crates_in_externals() {
         let metadata = own_metadata();
-        let result = analyze_externals(&metadata);
+        let result = analyze_externals(&metadata, false);
 
         // cargo-arc itself should NOT appear as an external crate
         let external_names: Vec<&str> = result.crates.iter().map(|c| c.name.as_str()).collect();
@@ -260,7 +348,7 @@ mod tests {
     #[test]
     fn test_analyze_externals_filters_build_only_deps() {
         let metadata = own_metadata();
-        let result = analyze_externals(&metadata);
+        let result = analyze_externals(&metadata, false);
 
         // All workspace_deps should have Normal or Development kinds, not Build-only
         for dep in &result.workspace_deps {
@@ -273,5 +361,41 @@ mod tests {
                 dep.dep_kinds
             );
         }
+    }
+
+    #[test]
+    fn test_transitive_no_orphan_nodes() {
+        let metadata = own_metadata();
+        let result = analyze_externals(&metadata, true);
+
+        assert!(
+            !result.external_deps.is_empty(),
+            "transitive mode should produce external->external edges"
+        );
+
+        // Collect all package_ids that appear in at least one edge
+        let mut connected: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for dep in &result.workspace_deps {
+            connected.insert(dep.external_pkg_id.as_str());
+        }
+        for dep in &result.external_deps {
+            connected.insert(dep.from_pkg_id.as_str());
+            connected.insert(dep.to_pkg_id.as_str());
+        }
+
+        // Every collected crate must appear in at least one edge
+        let orphans: Vec<&str> = result
+            .crates
+            .iter()
+            .map(|c| c.package_id.as_str())
+            .filter(|id| !connected.contains(id))
+            .collect();
+
+        assert!(
+            orphans.is_empty(),
+            "found {} orphan nodes (no incoming or outgoing edges): {:?}",
+            orphans.len(),
+            orphans
+        );
     }
 }

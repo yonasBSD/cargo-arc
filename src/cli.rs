@@ -84,6 +84,10 @@ pub struct Args {
     #[arg(long)]
     pub externals: bool,
 
+    /// Include transitive external dependencies (requires --externals)
+    #[arg(long)]
+    pub transitive_deps: bool,
+
     /// Use rust-analyzer HIR backend instead of syn (slower but may catch more)
     #[cfg(feature = "hir")]
     #[arg(long)]
@@ -121,6 +125,7 @@ pub fn run(args: Args) -> Result<()> {
             &feature_config,
             use_hir,
             args.externals,
+            args.transitive_deps,
         )?;
         let cycles = graph.production_subgraph().elementary_cycles();
         if cycles.is_empty() {
@@ -158,6 +163,7 @@ pub fn run(args: Args) -> Result<()> {
         &feature_config,
         use_hir,
         args.externals,
+        args.transitive_deps,
     )?;
     let cycles = graph.production_subgraph().elementary_cycles();
     let mut layout = build_layout(&graph, &cycles);
@@ -202,6 +208,7 @@ fn build_dependency_graph(
     feature_config: &FeatureConfig,
     use_hir: bool,
     externals: bool,
+    transitive_deps: bool,
 ) -> Result<ArcGraph> {
     let crates = analyze_workspace(manifest_path, feature_config)?;
     let workspace_crates: WorkspaceCrates = crates.iter().map(|krate| krate.name.clone()).collect();
@@ -244,7 +251,7 @@ fn build_dependency_graph(
     let ext_result = if externals {
         use cargo_metadata::MetadataCommand;
         let metadata = MetadataCommand::new().manifest_path(manifest_path).exec()?;
-        Some(analyze_externals(&metadata))
+        Some(analyze_externals(&metadata, transitive_deps))
     } else {
         None
     };
@@ -494,6 +501,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_transitive_deps_flag() {
+        let args = parse_args(&["cargo", "arc", "--externals", "--transitive-deps"]);
+        assert!(args.externals);
+        assert!(args.transitive_deps);
+    }
+
+    #[test]
+    fn test_parse_transitive_deps_flag_default() {
+        let args = parse_args(&["cargo", "arc"]);
+        assert!(!args.transitive_deps);
+    }
+
+    #[test]
     fn test_cli_volatility_config_defaults() {
         let args = parse_args(&["cargo", "arc"]);
         assert!(!args.no_volatility);
@@ -521,6 +541,7 @@ mod tests {
             volatility_low: 2,
             volatility_high: 10,
             externals: false,
+            transitive_deps: false,
             #[cfg(feature = "hir")]
             hir: false,
         };
