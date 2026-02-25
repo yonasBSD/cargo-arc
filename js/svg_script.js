@@ -332,6 +332,10 @@ if (typeof document !== 'undefined') {
           arrow.style.display = '';
         },
       );
+      // Evict virtual arc cache entries before clearing usage maps
+      for (const arcId of virtualArcUsages.keys()) {
+        DomAdapter.evictArcCache(arcId);
+      }
       virtualArcUsages.clear();
       virtualArcOriginals.clear();
     }
@@ -564,6 +568,29 @@ if (typeof document !== 'undefined') {
           handleMouseLeave();
         });
         layers.hitareas.appendChild(hitarea);
+      });
+
+      // Cache virtual arc elements for O(1) lookups during highlight
+      mergedEdges.forEach((data, _key) => {
+        const { fromId, toId } = data;
+        const arcId = `${fromId}-${toId}`;
+        const arcs = DomAdapter.querySelectorAll(
+          `.${C.virtualArc}[data-arc-id="${arcId}"]`,
+        );
+        const arrows = Array.from(
+          DomAdapter.querySelectorAll(
+            `.${C.virtualArrow}[data-vedge="${arcId}"]`,
+          ),
+        );
+        const labelGroup = DomAdapter.querySelector(
+          `.${C.arcCountGroup}[data-vedge="${arcId}"]`,
+        );
+        DomAdapter.cacheArcElements(
+          arcId,
+          arcs.length === 1 ? arcs[0] : null,
+          arrows,
+          labelGroup,
+        );
       });
     }
 
@@ -1008,6 +1035,16 @@ if (typeof document !== 'undefined') {
 
     // Apply initial arc weights based on source location counts
     applyInitialArcWeights();
+
+    // Populate arc element cache for O(1) lookups during highlight
+    for (const arcId of StaticData.getAllArcIds()) {
+      DomAdapter.cacheArcElements(
+        arcId,
+        DomAdapter.querySelector(Selectors.baseArc(arcId)),
+        Array.from(DomAdapter.querySelectorAll(Selectors.arrows(arcId))),
+        DomAdapter.querySelector(Selectors.labelGroup(arcId)),
+      );
+    }
 
     // Initialize search module
     SearchLogic.init(appState);

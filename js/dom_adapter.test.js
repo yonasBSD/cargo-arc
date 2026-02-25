@@ -199,3 +199,75 @@ describe('Convenience methods', () => {
     ]);
   });
 });
+
+describe('Arc element cache', () => {
+  test('cacheArcElements stores and retrieves arc via getArc', () => {
+    const mock = createMockDomAdapter();
+    const arcEl = createFakeElement('path');
+    mock.cacheArcElements('a-b', arcEl, [], null);
+    expect(mock.getArc('a-b')).toBe(arcEl);
+    // Should NOT call querySelector — served from cache
+    expect(mock._getCalls('querySelector')).toEqual([]);
+  });
+
+  test('cacheArcElements stores and retrieves arrows via getArrows', () => {
+    const mock = createMockDomAdapter();
+    const arr1 = createFakeElement('polygon');
+    const arr2 = createFakeElement('polygon');
+    mock.cacheArcElements('a-b', null, [arr1, arr2], null);
+    expect(mock.getArrows('a-b')).toEqual([arr1, arr2]);
+    expect(mock._getCalls('querySelectorAll')).toEqual([]);
+  });
+
+  test('cacheArcElements stores and retrieves labelGroup via getLabelGroup', () => {
+    const mock = createMockDomAdapter();
+    const labelGroup = createFakeElement('g');
+    mock.cacheArcElements('a-b', null, [], labelGroup);
+    expect(mock.getLabelGroup('a-b')).toBe(labelGroup);
+    expect(mock._getCalls('querySelector')).toEqual([]);
+  });
+
+  test('getArc falls back to querySelector when arcId not cached', () => {
+    const mock = createMockDomAdapter();
+    const arcEl = createFakeElement('path');
+    mock._registerSelector(Selectors.baseArc('x-y'), arcEl);
+    expect(mock.getArc('x-y')).toBe(arcEl);
+    expect(mock._getCalls('querySelector')).toContainEqual([
+      Selectors.baseArc('x-y'),
+    ]);
+  });
+
+  test('clearArcCache removes all cached entries', () => {
+    const mock = createMockDomAdapter();
+    const arcEl = createFakeElement('path');
+    mock.cacheArcElements('a-b', arcEl, [], null);
+    mock.clearArcCache();
+    // After clearing, getArc falls back to querySelector (returns null for unregistered selector)
+    expect(mock.getArc('a-b')).toBe(null);
+    expect(mock._getCalls('querySelector')).toContainEqual([
+      Selectors.baseArc('a-b'),
+    ]);
+  });
+
+  test('evictArcCache removes specific entry', () => {
+    const mock = createMockDomAdapter();
+    const arcA = createFakeElement('path');
+    const arcB = createFakeElement('path');
+    mock.cacheArcElements('a-b', arcA, [], null);
+    mock.cacheArcElements('c-d', arcB, [], null);
+    mock.evictArcCache('a-b');
+    // a-b evicted — falls back to querySelector
+    expect(mock.getArc('a-b')).toBe(null);
+    // c-d still cached
+    expect(mock.getArc('c-d')).toBe(arcB);
+  });
+
+  test('cached null arc is returned without querySelector fallback', () => {
+    const mock = createMockDomAdapter();
+    // Cache entry with arc: null (happens for multi-segment virtual arcs)
+    mock.cacheArcElements('v-arc', null, [], null);
+    expect(mock.getArc('v-arc')).toBe(null);
+    // Must NOT fall back to querySelector — null is a valid cached value
+    expect(mock._getCalls('querySelector')).toEqual([]);
+  });
+});

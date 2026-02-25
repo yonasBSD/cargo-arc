@@ -1628,7 +1628,7 @@ describe('SidebarLogic', () => {
 
     test('single-cycle: arc headers show symbol annotation', () => {
       const html = SidebarLogic.buildContent('A-B');
-      // Symbols should appear in sidebar-arc-symbols spans (WARN-001: separate spans)
+      // Symbols should appear in sidebar-arc-symbols spans
       expect(html).toContain('sidebar-arc-symbols');
       expect(html).toContain('::sym1');
       expect(html).toContain('::sym2');
