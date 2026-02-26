@@ -132,6 +132,28 @@ const StaticData = {
   },
 
   /**
+   * Check if a node is a transitive external dependency.
+   * @param {string} nodeId
+   * @returns {boolean}
+   */
+  isTransitiveNode(nodeId) {
+    const node = STATIC_DATA.nodes[nodeId];
+    if (!node) return false;
+    return node.type === 'external-transitive';
+  },
+
+  /**
+   * Check if an arc connects to any transitive external node.
+   * @param {string} arcId
+   * @returns {boolean}
+   */
+  isTransitiveArc(arcId) {
+    const arc = STATIC_DATA.arcs[arcId];
+    if (!arc) return false;
+    return this.isTransitiveNode(arc.from) || this.isTransitiveNode(arc.to);
+  },
+
+  /**
    * Get external crate nodes grouped by name.
    * Crates with same name but different versions are grouped together.
    * @returns {Map<string, string[]>} name -> [nodeId, ...] sorted by version

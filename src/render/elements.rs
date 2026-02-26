@@ -35,9 +35,27 @@ pub(super) fn render_sidebar(width: f32) -> String {
 }
 
 #[allow(clippy::cast_possible_truncation)] // SVG pixel coordinates fit in i32
-pub(super) fn render_toolbar(width: f32, has_externals: bool) -> String {
+pub(super) fn render_toolbar(
+    width: f32,
+    has_externals: bool,
+    has_transitive_externals: bool,
+) -> String {
     let ct = &CSS.toolbar;
     let height = LAYOUT.toolbar.height as i32;
+
+    let transitive_checkbox = if has_transitive_externals {
+        format!(
+            concat!(
+                "          <label class=\"{}\">\n",
+                "            <span class=\"{} {}\" id=\"transitive-dep-checkbox\"></span>\n",
+                "            Transitive Dependencies\n",
+                "          </label>\n",
+            ),
+            ct.toggle, ct.checkbox, ct.checked,
+        )
+    } else {
+        String::new()
+    };
 
     let external_checkbox = if has_externals {
         format!(
@@ -46,8 +64,9 @@ pub(super) fn render_toolbar(width: f32, has_externals: bool) -> String {
                 "            <span class=\"{} {}\" id=\"external-dep-checkbox\"></span>\n",
                 "            External Dependencies\n",
                 "          </label>\n",
+                "{}",
             ),
-            ct.toggle, ct.checkbox, ct.checked,
+            ct.toggle, ct.checkbox, ct.checked, transitive_checkbox,
         )
     } else {
         String::new()
@@ -610,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_contains_elements() {
-        let output = render_toolbar(800.0, false);
+        let output = render_toolbar(800.0, false, false);
         assert!(
             output.contains(r#"id="toolbar-fo""#),
             "Should have foreignObject with toolbar-fo id"
@@ -675,7 +694,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_external_checkbox_when_externals_present() {
-        let output = render_toolbar(800.0, true);
+        let output = render_toolbar(800.0, true, false);
         assert!(
             output.contains(r#"id="external-dep-checkbox""#),
             "Should have external-dep checkbox when externals present"
@@ -688,10 +707,41 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_no_external_checkbox_without_externals() {
-        let output = render_toolbar(800.0, false);
+        let output = render_toolbar(800.0, false, false);
         assert!(
             !output.contains(r#"id="external-dep-checkbox""#),
             "Should NOT have external-dep checkbox without externals"
+        );
+    }
+
+    #[test]
+    fn test_render_toolbar_transitive_checkbox_when_transitive_present() {
+        let output = render_toolbar(800.0, true, true);
+        assert!(
+            output.contains(r#"id="transitive-dep-checkbox""#),
+            "Should have transitive-dep checkbox when transitive externals present"
+        );
+        assert!(
+            output.contains("Transitive Dependencies"),
+            "Should have transitive dependency label"
+        );
+    }
+
+    #[test]
+    fn test_render_toolbar_no_transitive_checkbox_without_transitive() {
+        let output = render_toolbar(800.0, true, false);
+        assert!(
+            !output.contains(r#"id="transitive-dep-checkbox""#),
+            "Should NOT have transitive-dep checkbox without transitive externals"
+        );
+    }
+
+    #[test]
+    fn test_render_toolbar_no_transitive_checkbox_without_externals() {
+        let output = render_toolbar(800.0, false, true);
+        assert!(
+            !output.contains(r#"id="transitive-dep-checkbox""#),
+            "Transitive checkbox should be nested inside external checkbox block"
         );
     }
 

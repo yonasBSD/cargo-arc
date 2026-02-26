@@ -53,7 +53,20 @@ pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
         .items
         .iter()
         .any(|item| matches!(item.kind, ItemKind::ExternalSection));
-    svg.push_str(&render_toolbar(width, has_externals));
+    let has_transitive_externals = ir.items.iter().any(|item| {
+        matches!(
+            item.kind,
+            ItemKind::ExternalCrate {
+                is_direct_dependency: false,
+                ..
+            }
+        )
+    });
+    svg.push_str(&render_toolbar(
+        width,
+        has_externals,
+        has_transitive_externals,
+    ));
     svg.push_str(&render_sidebar(width));
     svg.push_str(&render_script(config, ir, &positioned, &parents));
     svg.push_str("</svg>\n");

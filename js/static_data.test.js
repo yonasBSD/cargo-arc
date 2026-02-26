@@ -413,6 +413,119 @@ describe('StaticData', () => {
     });
   });
 
+  describe('isTransitiveNode', () => {
+    test('returns false for non-external node types', () => {
+      expect(StaticData.isTransitiveNode('crate')).toBe(false);
+      expect(StaticData.isTransitiveNode('mod_a')).toBe(false);
+    });
+
+    test('returns false for non-existent node', () => {
+      expect(StaticData.isTransitiveNode('nonexistent')).toBe(false);
+    });
+
+    test('returns false for direct external crate', () => {
+      TEST_STATIC_DATA.nodes.ext_direct = {
+        type: 'external',
+        name: 'serde',
+        parent: null,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 20,
+        hasChildren: false,
+      };
+
+      expect(StaticData.isTransitiveNode('ext_direct')).toBe(false);
+
+      delete TEST_STATIC_DATA.nodes.ext_direct;
+    });
+
+    test('returns true for external-transitive type', () => {
+      TEST_STATIC_DATA.nodes.ext_trans = {
+        type: 'external-transitive',
+        name: 'syn',
+        parent: null,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 20,
+        hasChildren: false,
+      };
+
+      expect(StaticData.isTransitiveNode('ext_trans')).toBe(true);
+
+      delete TEST_STATIC_DATA.nodes.ext_trans;
+    });
+  });
+
+  describe('isTransitiveArc', () => {
+    test('returns false for arc between internal nodes', () => {
+      expect(StaticData.isTransitiveArc('fn_1-fn_2')).toBe(false);
+    });
+
+    test('returns false for non-existent arc', () => {
+      expect(StaticData.isTransitiveArc('nonexistent')).toBe(false);
+    });
+
+    test('returns true when to-node is transitive', () => {
+      TEST_STATIC_DATA.nodes.ext_trans = {
+        type: 'external-transitive',
+        name: 'syn',
+        parent: null,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 20,
+        hasChildren: false,
+      };
+      TEST_STATIC_DATA.arcs['fn_1-ext_trans'] = {
+        from: 'fn_1',
+        to: 'ext_trans',
+        usages: [
+          {
+            symbol: 'parse',
+            modulePath: null,
+            locations: [{ file: 'mod_a.rs', line: 1 }],
+          },
+        ],
+      };
+
+      expect(StaticData.isTransitiveArc('fn_1-ext_trans')).toBe(true);
+
+      delete TEST_STATIC_DATA.nodes.ext_trans;
+      delete TEST_STATIC_DATA.arcs['fn_1-ext_trans'];
+    });
+
+    test('returns false for arc to direct external', () => {
+      TEST_STATIC_DATA.nodes.ext_direct = {
+        type: 'external',
+        name: 'serde',
+        parent: null,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 20,
+        hasChildren: false,
+      };
+      TEST_STATIC_DATA.arcs['fn_1-ext_direct'] = {
+        from: 'fn_1',
+        to: 'ext_direct',
+        usages: [
+          {
+            symbol: 'Serialize',
+            modulePath: null,
+            locations: [{ file: 'mod_a.rs', line: 1 }],
+          },
+        ],
+      };
+
+      expect(StaticData.isTransitiveArc('fn_1-ext_direct')).toBe(false);
+
+      delete TEST_STATIC_DATA.nodes.ext_direct;
+      delete TEST_STATIC_DATA.arcs['fn_1-ext_direct'];
+    });
+  });
+
   describe('getExternalGroups', () => {
     test('returns empty map when no external nodes', () => {
       const groups = StaticData.getExternalGroups();

@@ -881,6 +881,97 @@ if (typeof document !== 'undefined') {
         });
       });
 
+      // Sync transitive checkbox state when externals are toggled off
+      const transitiveCheckbox = DomAdapter.querySelector(
+        '#transitive-dep-checkbox',
+      );
+      if (transitiveCheckbox) {
+        if (!isChecked) {
+          // Externals hidden → force transitive unchecked
+          transitiveCheckbox.classList.remove(C.checked);
+        } else {
+          // Externals shown → restore transitive to checked
+          transitiveCheckbox.classList.add(C.checked);
+        }
+      }
+
+      relayout();
+    }
+
+    // Toggle visibility of transitive external dependency nodes and their arcs
+    function toggleTransitiveDepVisibility() {
+      const checkbox = DomAdapter.querySelector('#transitive-dep-checkbox');
+      if (!checkbox) return;
+
+      // If external deps are hidden, transitive toggle is a no-op
+      const extCheckbox = DomAdapter.querySelector('#external-dep-checkbox');
+      if (extCheckbox && !extCheckbox.classList.contains(C.checked)) return;
+
+      const isChecked = checkbox.classList.toggle(C.checked);
+
+      // Toggle transitive external nodes
+      StaticData.getAllNodeIds().forEach((nodeId) => {
+        if (!StaticData.isTransitiveNode(nodeId)) return;
+        const rect = DomAdapter.getNode(nodeId);
+        if (!rect) return;
+        const label = rect.nextElementSibling;
+        const toggle = DomAdapter.getCollapseToggle(nodeId);
+        if (isChecked) {
+          rect.classList.remove(C.hiddenByFilter);
+          label?.classList.remove(C.hiddenByFilter);
+          toggle?.classList.remove(C.hiddenByFilter);
+        } else {
+          rect.classList.add(C.hiddenByFilter);
+          label?.classList.add(C.hiddenByFilter);
+          toggle?.classList.add(C.hiddenByFilter);
+        }
+        DomAdapter.getTreeLines(nodeId, 'child').forEach((line) => {
+          if (isChecked) {
+            line.classList.remove(C.hiddenByFilter);
+          } else {
+            line.classList.add(C.hiddenByFilter);
+          }
+        });
+        DomAdapter.getTreeLines(nodeId, 'parent').forEach((line) => {
+          if (isChecked) {
+            line.classList.remove(C.hiddenByFilter);
+          } else {
+            line.classList.add(C.hiddenByFilter);
+          }
+        });
+      });
+
+      // Toggle arcs connected to transitive nodes
+      DomAdapter.querySelectorAll(
+        `.${C.arcHitarea}:not(.${C.virtualHitarea})`,
+      ).forEach((hitarea) => {
+        const arcId = hitarea.dataset.arcId;
+        if (!StaticData.isTransitiveArc(arcId)) return;
+
+        if (isChecked) {
+          hitarea.classList.remove(C.hiddenByFilter);
+          AppState.showArc(appState, arcId);
+        } else {
+          hitarea.classList.add(C.hiddenByFilter);
+          AppState.hideArc(appState, arcId);
+        }
+        const visibleArc = DomAdapter.getArc(arcId);
+        if (visibleArc) {
+          if (isChecked) {
+            visibleArc.classList.remove(C.hiddenByFilter);
+          } else {
+            visibleArc.classList.add(C.hiddenByFilter);
+          }
+        }
+        DomAdapter.getArrows(arcId).forEach((arrow) => {
+          if (isChecked) {
+            arrow.classList.remove(C.hiddenByFilter);
+          } else {
+            arrow.classList.add(C.hiddenByFilter);
+          }
+        });
+      });
+
       relayout();
     }
 
@@ -1002,6 +1093,13 @@ if (typeof document !== 'undefined') {
       ?.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleExternalDepVisibility();
+      });
+
+    DomAdapter.querySelector('#transitive-dep-checkbox')
+      ?.closest('label')
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleTransitiveDepVisibility();
       });
 
     // Dropdown toggle for "View" button
