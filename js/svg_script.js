@@ -819,8 +819,7 @@ if (typeof document !== 'undefined') {
       StaticData.getAllNodeIds().forEach((nodeId) => {
         const node = StaticData.getNode(nodeId);
         if (!node) return;
-        if (node.type !== 'external-section' && node.type !== 'external')
-          return;
+        if (!StaticData.isExternalNode(nodeId)) return;
         const rect = DomAdapter.getNode(nodeId);
         if (!rect) return;
         const label = rect.nextElementSibling;
@@ -891,12 +890,16 @@ if (typeof document !== 'undefined') {
       const root = DomAdapter.querySelector(`.${C.toolbarRoot}`);
       const graph = DomAdapter.getElementById('graph-content');
       if (!fo || !root) return;
-      const h = root.offsetHeight;
-      if (h > 0) {
-        fo.setAttribute('height', h);
+      const baseH = root.offsetHeight;
+      if (baseH > 0) {
+        // Include dropdown panel height when visible (absolutely positioned, outside normal flow)
+        const panel = DomAdapter.querySelector(`.${C.toolbarDropdownPanel}`);
+        const panelH =
+          panel && panel.style.display !== 'none' ? panel.offsetHeight : 0;
+        fo.setAttribute('height', baseH + panelH);
         // Shift graph content down by the delta between actual and default toolbar height
         if (graph) {
-          const delta = h - TOOLBAR_HEIGHT;
+          const delta = baseH - TOOLBAR_HEIGHT;
           if (delta !== 0) {
             graph.setAttribute('transform', `translate(0, ${delta})`);
           } else {
@@ -994,6 +997,23 @@ if (typeof document !== 'undefined') {
         toggleExternalDepVisibility();
       });
 
+    // Dropdown toggle for "View" button
+    const viewDropdownBtn = DomAdapter.getElementById('view-dropdown-btn');
+    const dropdownPanel = DomAdapter.querySelector(
+      `.${C.toolbarDropdownPanel}`,
+    );
+    if (viewDropdownBtn && dropdownPanel) {
+      viewDropdownBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = dropdownPanel.style.display !== 'none';
+        dropdownPanel.style.display = isOpen ? 'none' : '';
+        syncToolbarHeight();
+      });
+      dropdownPanel.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+    }
+
     // Event handlers on hit-area paths (invisible, 12px wide) — regular arcs only
     DomAdapter.querySelectorAll(
       `.${C.arcHitarea}:not(.${C.virtualHitarea})`,
@@ -1018,6 +1038,10 @@ if (typeof document !== 'undefined') {
       AppState.clearPinned(appState);
       highlightTiming.immediate();
       SidebarLogic.hide();
+      if (dropdownPanel) {
+        dropdownPanel.style.display = 'none';
+        syncToolbarHeight();
+      }
     });
 
     // Close-button and click isolation for sidebar foreignObject

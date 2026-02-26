@@ -317,6 +317,9 @@ pub(super) struct ToolbarClasses {
     pub scope_btn: &'static str,
     pub scope_active: &'static str,
     pub result_count: &'static str,
+    pub dropdown: &'static str,
+    pub dropdown_btn: &'static str,
+    pub dropdown_panel: &'static str,
 }
 
 #[allow(dead_code, clippy::struct_field_names)] // "search_" prefix groups related CSS classes
@@ -445,6 +448,9 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         scope_btn: "toolbar-scope-btn",
         scope_active: "active",
         result_count: "toolbar-result-count",
+        dropdown: "toolbar-dropdown",
+        dropdown_btn: "toolbar-dropdown-btn",
+        dropdown_panel: "toolbar-dropdown-panel",
     },
     labels: LabelClasses {
         arc_count: "arc-count",

@@ -380,6 +380,30 @@ fn build_css_rules() -> Vec<CssRule> {
             &format!(".{}:hover", c.toolbar.html_btn),
             &[("background", "#e8e8e8")],
         ),
+        CssRule::class(c.toolbar.dropdown, &[("position", "relative")]),
+        CssRule::class(
+            c.toolbar.dropdown_panel,
+            &[
+                ("position", "absolute"),
+                ("top", "100%"),
+                ("left", "0"),
+                ("background", "#fff"),
+                ("border", "1px solid #ccc"),
+                ("border-radius", "3px"),
+                ("box-shadow", "0 2px 8px rgba(0,0,0,0.12)"),
+                ("padding", "4px 0"),
+                ("z-index", "10"),
+                ("min-width", "200px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{} .{}", c.toolbar.dropdown_panel, c.toolbar.toggle),
+            &[("padding", "4px 12px")],
+        ),
+        CssRule::new(
+            &format!(".{} .{}:hover", c.toolbar.dropdown_panel, c.toolbar.toggle),
+            &[("background", "#f0f0f0")],
+        ),
         CssRule::class(
             c.toolbar.toggle,
             &[
@@ -830,6 +854,8 @@ mod tests {
         assert!(css.contains(&format!(".{}", CSS.toolbar.html_btn)));
         assert!(css.contains(&format!(".{}", CSS.toolbar.checkbox)));
         assert!(css.contains(&format!(".{}", CSS.toolbar.toggle)));
+        assert!(css.contains(&format!(".{}", CSS.toolbar.dropdown)));
+        assert!(css.contains(&format!(".{}", CSS.toolbar.dropdown_panel)));
         assert!(css.contains(&format!(".{}", CSS.toolbar.scope)));
 
         // Search highlighting

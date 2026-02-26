@@ -42,10 +42,10 @@ pub(super) fn render_toolbar(width: f32, has_externals: bool) -> String {
     let external_checkbox = if has_externals {
         format!(
             concat!(
-                "      <label class=\"{}\">\n",
-                "        <span class=\"{} {}\" id=\"external-dep-checkbox\"></span>\n",
-                "        External Dependencies\n",
-                "      </label>\n",
+                "          <label class=\"{}\">\n",
+                "            <span class=\"{} {}\" id=\"external-dep-checkbox\"></span>\n",
+                "            External Dependencies\n",
+                "          </label>\n",
             ),
             ct.toggle, ct.checkbox, ct.checked,
         )
@@ -60,15 +60,20 @@ pub(super) fn render_toolbar(width: f32, has_externals: bool) -> String {
             "    <div class=\"{}\" xmlns=\"http://www.w3.org/1999/xhtml\">\n",
             "      <button id=\"collapse-toggle-btn\" class=\"{}\">Collapse All</button>\n",
             "      <span class=\"{}\"></span>\n",
-            "      <label class=\"{}\">\n",
-            "        <span class=\"{} {}\" id=\"crate-dep-checkbox\"></span>\n",
-            "        Show Crate Dependencies\n",
-            "      </label>\n",
-            "      <label class=\"{}\">\n",
-            "        <span class=\"{} {}\" id=\"module-dep-checkbox\"></span>\n",
-            "        Show Module Dependencies\n",
-            "      </label>\n",
+            "      <div class=\"{}\">\n",
+            "        <button id=\"view-dropdown-btn\" class=\"{} {}\">View \u{25be}</button>\n",
+            "        <div class=\"{}\" style=\"display:none\">\n",
+            "          <label class=\"{}\">\n",
+            "            <span class=\"{} {}\" id=\"crate-dep-checkbox\"></span>\n",
+            "            Show Crate Dependencies\n",
+            "          </label>\n",
+            "          <label class=\"{}\">\n",
+            "            <span class=\"{} {}\" id=\"module-dep-checkbox\"></span>\n",
+            "            Show Module Dependencies\n",
+            "          </label>\n",
             "{}",
+            "        </div>\n",
+            "      </div>\n",
             "      <span class=\"{}\"></span>\n",
             "      <div class=\"{}\">\n",
             "        <div class=\"{}\">\n",
@@ -87,12 +92,16 @@ pub(super) fn render_toolbar(width: f32, has_externals: bool) -> String {
             "    </div>\n",
             "  </foreignObject>\n",
         ),
-        width,          // foreignObject width
-        height,         // foreignObject height
-        ct.root,        // .toolbar-root
-        ct.html_btn,    // button class
-        ct.separator_v, // separator
-        ct.toggle,      // label.toolbar-toggle (crate dep)
+        width,             // foreignObject width
+        height,            // foreignObject height
+        ct.root,           // .toolbar-root
+        ct.html_btn,       // collapse button class
+        ct.separator_v,    // separator
+        ct.dropdown,       // .toolbar-dropdown container
+        ct.html_btn,       // dropdown button base class
+        ct.dropdown_btn,   // dropdown button marker class
+        ct.dropdown_panel, // .toolbar-dropdown-panel
+        ct.toggle,         // label.toolbar-toggle (crate dep)
         ct.checkbox,
         ct.checked, // checkbox span (checked)
         ct.toggle,  // label.toolbar-toggle (module dep)
@@ -617,6 +626,18 @@ mod tests {
         assert!(
             output.contains("Collapse All"),
             "Should have 'Collapse All' text"
+        );
+        assert!(
+            output.contains(r#"id="view-dropdown-btn""#),
+            "Should have View dropdown button"
+        );
+        assert!(
+            output.contains(&format!(r#"class="{}""#, CSS.toolbar.dropdown)),
+            "Should have dropdown container"
+        );
+        assert!(
+            output.contains(&format!(r#"class="{}""#, CSS.toolbar.dropdown_panel)),
+            "Should have dropdown panel"
         );
         assert!(
             output.contains(r#"id="crate-dep-checkbox""#),
