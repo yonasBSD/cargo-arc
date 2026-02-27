@@ -321,9 +321,12 @@ const SidebarLogic = {
 
   /**
    * Find the rightmost X coordinate among all visible arc paths.
+   * Uses cached value when available — cache is invalidated by
+   * invalidateLayout() (collapse/relayout) and hide().
    * @returns {number}
    */
   _getMaxArcRightX() {
+    if (this._cachedMaxArcRightX != null) return this._cachedMaxArcRightX;
     const arcs = DomAdapter.querySelectorAll(Selectors.allArcPaths());
     let maxX = 0;
     for (const arc of arcs) {
@@ -331,11 +334,23 @@ const SidebarLogic = {
       const bbox = arc.getBBox();
       maxX = Math.max(maxX, bbox.x + bbox.width);
     }
+    this._cachedMaxArcRightX = maxX;
     return maxX;
+  },
+
+  /**
+   * Invalidate cached layout values. Call after collapse/expand or relayout
+   * so the next sidebar positioning recomputes arc extents.
+   */
+  invalidateLayout() {
+    this._cachedMaxArcRightX = null;
+    this._cachedX = null;
   },
 
   /** Cached X position — set once in show(), reused by updatePosition(). */
   _cachedX: null,
+  /** Cached max arc right X — only changes on collapse/relayout, not on hover. */
+  _cachedMaxArcRightX: null,
   /** Original SVG viewBox height — stored to restore after sidebar close. */
   _originalViewBoxHeight: null,
   /** Original SVG viewBox width — stored to restore after sidebar close. */
@@ -438,6 +453,7 @@ const SidebarLogic = {
     el.style.display = 'block';
     this._isTransient = false;
     clearTimeout(this._debounceTimer);
+    this._cachedMaxArcRightX = null;
     this._cachedX = this._calcX();
     this.updatePosition();
   },
@@ -671,6 +687,7 @@ const SidebarLogic = {
     el.style.display = 'block';
     this._isTransient = false;
     clearTimeout(this._debounceTimer);
+    this._cachedMaxArcRightX = null;
     this._cachedX = this._calcX();
     this.updatePosition();
   },
@@ -705,6 +722,7 @@ const SidebarLogic = {
     if (!el) return;
     el.style.display = 'none';
     this._cachedX = null;
+    this._cachedMaxArcRightX = null;
     this._isTransient = false;
     clearTimeout(this._debounceTimer);
 

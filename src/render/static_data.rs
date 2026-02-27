@@ -293,7 +293,6 @@ fn generate_static_data(
         ("toolbarDropdown", CSS.toolbar.dropdown),
         ("toolbarDropdownBtn", CSS.toolbar.dropdown_btn),
         ("toolbarDropdownPanel", CSS.toolbar.dropdown_panel),
-        ("searchActive", CSS.search.search_active),
         ("searchMatch", CSS.search.search_match),
         ("searchMatchParent", CSS.search.search_match_parent),
         ("searchDimmed", CSS.search.search_dimmed),

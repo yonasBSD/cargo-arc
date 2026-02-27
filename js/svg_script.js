@@ -273,7 +273,8 @@ if (typeof document !== 'undefined') {
       // Re-apply highlights after edges were recreated
       highlightTiming.immediate();
 
-      // Update sidebar position after layout changed arc positions
+      // Invalidate sidebar layout cache after arc positions changed
+      SidebarLogic.invalidateLayout();
       if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
     }
 

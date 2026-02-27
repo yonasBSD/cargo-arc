@@ -324,7 +324,6 @@ pub(super) struct ToolbarClasses {
 
 #[allow(dead_code, clippy::struct_field_names)] // "search_" prefix groups related CSS classes
 pub(super) struct SearchClasses {
-    pub search_active: &'static str,
     pub search_match: &'static str,
     pub search_match_parent: &'static str,
     pub search_dimmed: &'static str,
@@ -488,7 +487,6 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         arc_symbols: "sidebar-arc-symbols",
     },
     search: SearchClasses {
-        search_active: "search-active",
         search_match: "search-match",
         search_match_parent: "search-match-parent",
         search_dimmed: "search-dimmed",
@@ -591,7 +589,6 @@ mod tests {
         assert!(!CSS.toolbar.scope_active.is_empty());
         assert!(!CSS.toolbar.result_count.is_empty());
 
-        assert!(!CSS.search.search_active.is_empty());
         assert!(!CSS.search.search_match.is_empty());
         assert!(!CSS.search.search_match_parent.is_empty());
         assert!(!CSS.search.search_dimmed.is_empty());

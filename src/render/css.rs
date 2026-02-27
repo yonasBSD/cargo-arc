@@ -522,10 +522,7 @@ fn build_css_rules() -> Vec<CssRule> {
             ],
         ),
         // Search dimming: direct class on non-matching elements (no ancestor selector)
-        CssRule::class(
-            c.search.search_dimmed,
-            &[("opacity", "0.15"), ("transition", "opacity 0.15s")],
-        ),
+        CssRule::class(c.search.search_dimmed, &[("opacity", "0.15")]),
         CssRule::new(
             &format!("rect.{}", c.search.search_match_parent),
             &[
