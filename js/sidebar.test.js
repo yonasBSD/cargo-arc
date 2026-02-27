@@ -1029,6 +1029,8 @@ describe('SidebarLogic', () => {
       const content = {
         querySelectorAll(sel) {
           if (sel === '.sidebar-symbol') return symbolEls;
+          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+            return symbolEls;
           return [];
         },
         addEventListener(_evt, fn) {
@@ -1084,6 +1086,94 @@ describe('SidebarLogic', () => {
         expect(s.symbolEl.getAttribute('data-collapsed')).toBe('true');
         expect(s.locsEl.style.display).toBe('none');
       }
+      expect(dom.collapseAllBtn.innerHTML).toBe('+');
+    });
+
+    function makeNestedHandlerDom(l1Defs) {
+      const l1Symbols = l1Defs.map((d) => makeSymbolEl(d.collapsed));
+      const l2Symbols = l1Defs.flatMap((d) =>
+        (d.l2 || []).map((l2d) => makeSymbolEl(l2d.collapsed)),
+      );
+      const l1Els = l1Symbols.map((s) => s.symbolEl);
+      const allEls = [...l1Els, ...l2Symbols.map((s) => s.symbolEl)];
+      const listeners = new Map();
+      let collapseAllInner = '+';
+      const collapseAllBtn = {
+        get innerHTML() {
+          return collapseAllInner;
+        },
+        set innerHTML(v) {
+          collapseAllInner = v;
+        },
+        addEventListener(_evt, fn) {
+          if (!listeners.has('collapseAll')) listeners.set('collapseAll', []);
+          listeners.get('collapseAll').push(fn);
+        },
+      };
+      const content = {
+        querySelectorAll(sel) {
+          if (sel === '.sidebar-symbol') return allEls;
+          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+            return l1Els;
+          return [];
+        },
+        addEventListener(_evt, fn) {
+          if (!listeners.has('content')) listeners.set('content', []);
+          listeners.get('content').push(fn);
+        },
+      };
+      const root = {
+        querySelector(sel) {
+          if (sel === '.sidebar-content') return content;
+          if (sel === '.sidebar-collapse-all') return collapseAllBtn;
+          return null;
+        },
+      };
+      return { root, l1Symbols, l2Symbols, collapseAllBtn, listeners };
+    }
+
+    test('collapse-all ignores nested L2 symbols (first click expands L1)', () => {
+      const dom = makeNestedHandlerDom([
+        { collapsed: true, l2: [{ collapsed: false }] },
+        { collapsed: true, l2: [{ collapsed: false }] },
+      ]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+      for (const fn of dom.listeners.get('collapseAll')) fn();
+      // All L1 were collapsed → should expand all L1
+      for (const s of dom.l1Symbols) {
+        expect(s.symbolEl.getAttribute('data-collapsed')).toBeNull();
+        expect(s.locsEl.style.display).toBe('');
+        expect(s.toggleEl.innerHTML).toBe('\u25BE');
+      }
+      expect(dom.collapseAllBtn.innerHTML).toBe('\u2212');
+    });
+
+    test('button sync after single-toggle ignores L2 state', () => {
+      const dom = makeNestedHandlerDom([
+        { collapsed: true, l2: [{ collapsed: false }] },
+        { collapsed: true, l2: [{ collapsed: false }] },
+      ]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+      const contentHandler = dom.listeners.get('content')[0];
+      // Expand L1 #1 via simulated click
+      contentHandler({
+        target: {
+          closest(sel) {
+            return sel === '.sidebar-symbol' ? dom.l1Symbols[0].symbolEl : null;
+          },
+        },
+      });
+      // At least one L1 expanded → button −
+      expect(dom.collapseAllBtn.innerHTML).toBe('\u2212');
+      // Collapse L1 #1 back
+      contentHandler({
+        target: {
+          closest(sel) {
+            return sel === '.sidebar-symbol' ? dom.l1Symbols[0].symbolEl : null;
+          },
+        },
+      });
+      // All L1 collapsed → button should show + (L2 state irrelevant)
       expect(dom.collapseAllBtn.innerHTML).toBe('+');
     });
 

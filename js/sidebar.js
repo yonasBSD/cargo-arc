@@ -636,7 +636,9 @@ const SidebarLogic = {
       const allBtn = root.querySelector('.sidebar-collapse-all');
       if (allBtn) {
         const allCollapsed = Array.from(
-          content.querySelectorAll('.sidebar-symbol'),
+          content.querySelectorAll(
+            ':scope > .sidebar-usage-group > .sidebar-symbol',
+          ),
         ).every((s) => s.getAttribute('data-collapsed') === 'true');
         allBtn.innerHTML = allCollapsed ? '+' : '\u2212';
       }
@@ -645,7 +647,9 @@ const SidebarLogic = {
     const collapseAllBtn = root.querySelector('.sidebar-collapse-all');
     if (!collapseAllBtn) return;
     collapseAllBtn.addEventListener('click', () => {
-      const symbols = content.querySelectorAll('.sidebar-symbol');
+      const symbols = content.querySelectorAll(
+        ':scope > .sidebar-usage-group > .sidebar-symbol',
+      );
       if (!symbols.length) return;
       const anyExpanded = Array.from(symbols).some(
         (s) => s.getAttribute('data-collapsed') !== 'true',
