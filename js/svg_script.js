@@ -139,6 +139,8 @@ if (typeof document !== 'undefined') {
       return base;
     }
 
+    let _isNavigating = false;
+
     function scrollToNode(nodeId) {
       const nodeRect = DomAdapter.getNode(nodeId);
       if (!nodeRect) return;
@@ -155,6 +157,17 @@ if (typeof document !== 'undefined') {
       const targetScroll = nodeCenterPage - window.innerHeight / 2;
       const maxScroll =
         document.documentElement.scrollHeight - window.innerHeight;
+      _isNavigating = true;
+      window.addEventListener(
+        'scrollend',
+        () => {
+          _isNavigating = false;
+        },
+        { once: true },
+      );
+      setTimeout(() => {
+        _isNavigating = false;
+      }, 600);
       window.scrollTo({
         top: Math.max(0, Math.min(targetScroll, maxScroll)),
         behavior: 'smooth',
@@ -1053,7 +1066,8 @@ if (typeof document !== 'undefined') {
       fo.setAttribute('x', scrollLeft);
       fo.setAttribute('width', visibleWidth);
 
-      if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
+      if (SidebarLogic.isVisible() && !_isNavigating)
+        SidebarLogic.updatePosition();
     }
 
     window.addEventListener('scroll', updateToolbarPosition);
