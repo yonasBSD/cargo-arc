@@ -222,6 +222,32 @@ describe('AppState', () => {
     });
   });
 
+  describe('deselect clears stale hover (ca-0301 regression)', () => {
+    test('clearPinned without clearHover leaves stale hover', () => {
+      const state = AppState.create();
+      // Simulate: hover node A, then pin it
+      AppState.setHover(state, 'node', 'A');
+      AppState.setSelection(state, 'node', 'A');
+      // Simulate: deselect via background click (only clearPinned, no clearHover)
+      AppState.clearPinned(state);
+      // BUG: getSelection returns stale hover instead of none
+      const sel = AppState.getSelection(state);
+      expect(sel.mode).toBe('hover');
+      expect(sel.id).toBe('A');
+    });
+
+    test('full deselect clears both click and hover', () => {
+      const state = AppState.create();
+      AppState.setHover(state, 'node', 'A');
+      AppState.setSelection(state, 'node', 'A');
+      // Correct deselect: clear both
+      AppState.clearPinned(state);
+      AppState.clearHover(state);
+      const sel = AppState.getSelection(state);
+      expect(sel.mode).toBe('none');
+    });
+  });
+
   describe('arc filter operations', () => {
     test('hideArc/showArc/isArcHidden', () => {
       const state = AppState.create();

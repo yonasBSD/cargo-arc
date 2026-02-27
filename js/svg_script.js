@@ -1154,6 +1154,7 @@ if (typeof document !== 'undefined') {
 
     DomAdapter.getSvgRoot().addEventListener('click', () => {
       AppState.clearPinned(appState);
+      AppState.clearHover(appState);
       highlightTiming.immediate();
       SidebarLogic.hide();
       if (dropdownPanel) {
@@ -1169,6 +1170,7 @@ if (typeof document !== 'undefined') {
         e.stopPropagation(); // Prevent SVG background click
         if (e.target.classList.contains('sidebar-close')) {
           AppState.clearPinned(appState);
+          AppState.clearHover(appState);
           highlightTiming.immediate();
           SidebarLogic.hide();
         }
