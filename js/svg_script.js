@@ -765,15 +765,16 @@ if (typeof document !== 'undefined') {
       SearchLogic.refresh();
     }
 
-    // Toggle collapse/expand all parent nodes
+    // Toggle collapse/expand all parent nodes.
+    // Action follows the button label: "Collapse All" collapses, "Expand All" expands.
+    // Returns true when nodes were collapsed, false when expanded.
     function toggleCollapseAll() {
+      const btn = DomAdapter.getElementById('collapse-toggle-btn');
+      const collapsed = btn?.textContent?.trim() === 'Collapse All';
+
       const parentNodeIds = StaticData.getAllNodeIds().filter((id) =>
         StaticData.hasChildren(id),
       );
-      const allExpanded = parentNodeIds.every(
-        (id) => !AppState.isCollapsed(appState, id),
-      );
-      const collapsed = allExpanded;
 
       parentNodeIds.forEach((nodeId) => {
         AppState.setCollapsed(appState, nodeId, collapsed);
@@ -783,11 +784,12 @@ if (typeof document !== 'undefined') {
         updateParentNodeUI(nodeId, collapsed);
       });
 
-      const btn = DomAdapter.getElementById('collapse-toggle-btn');
       if (btn) btn.textContent = collapsed ? 'Expand All' : 'Collapse All';
 
       relayout();
       SearchLogic.refresh();
+
+      return collapsed;
     }
 
     // Generic toggle for arc-class visibility (shared by crate-dep and module-dep)
@@ -1123,8 +1125,9 @@ if (typeof document !== 'undefined') {
       'click',
       (e) => {
         e.stopPropagation();
-        toggleCollapseAll();
+        const collapsed = toggleCollapseAll();
         updateToolbarPosition();
+        if (collapsed) window.scrollTo(0, 0);
       },
     );
     DomAdapter.querySelector('#crate-dep-checkbox')
