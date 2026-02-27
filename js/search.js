@@ -120,35 +120,17 @@ const SearchLogic = {
       }
     }
 
-    // Apply DOM updates
-    this._clearDom();
+    // Diff-based DOM updates: only touch elements whose highlight state changed
+    this._applySearchDiff(
+      this._state.matchedNodeIds,
+      this._state.matchParentIds,
+      directMatches,
+      parentMatches,
+    );
 
     const C = STATIC_DATA.classes;
     const svg = DomAdapter.getSvgRoot();
     if (svg) svg.classList.add(C.searchActive);
-
-    for (const nodeId of directMatches) {
-      const rect = DomAdapter.getNode(nodeId);
-      if (rect) {
-        rect.classList.add(C.searchMatch);
-        const label = rect.nextElementSibling;
-        if (label?.classList.contains(C.label)) {
-          label.classList.add(C.searchMatch);
-        }
-      }
-    }
-
-    for (const nodeId of parentMatches) {
-      if (directMatches.has(nodeId)) continue;
-      const rect = DomAdapter.getNode(nodeId);
-      if (rect) {
-        rect.classList.add(C.searchMatchParent);
-        const label = rect.nextElementSibling;
-        if (label?.classList.contains(C.label)) {
-          label.classList.add(C.searchMatchParent);
-        }
-      }
-    }
 
     this._state.matchedNodeIds = directMatches;
     this._state.matchParentIds = parentMatches;
@@ -213,20 +195,58 @@ const SearchLogic = {
     if (svg) svg.classList.remove(C.searchActive);
 
     for (const nodeId of this._state.matchedNodeIds) {
-      const rect = DomAdapter.getNode(nodeId);
-      if (rect) {
-        rect.classList.remove(C.searchMatch);
-        const label = rect.nextElementSibling;
-        if (label) label.classList.remove(C.searchMatch);
-      }
+      this._setNodeClass(nodeId, C.searchMatch, false);
     }
     for (const nodeId of this._state.matchParentIds) {
-      const rect = DomAdapter.getNode(nodeId);
-      if (rect) {
-        rect.classList.remove(C.searchMatchParent);
-        const label = rect.nextElementSibling;
-        if (label) label.classList.remove(C.searchMatchParent);
+      this._setNodeClass(nodeId, C.searchMatchParent, false);
+    }
+  },
+
+  /**
+   * Diff old vs new match sets; only touch DOM elements whose state changed.
+   * Reduces DOM mutations from O(total) to O(delta) during incremental typing.
+   */
+  _applySearchDiff(oldDirect, oldParent, newDirect, newParent) {
+    const C = STATIC_DATA.classes;
+
+    // Remove classes from nodes that left their set
+    for (const nodeId of oldDirect) {
+      if (!newDirect.has(nodeId)) {
+        this._setNodeClass(nodeId, C.searchMatch, false);
       }
+    }
+    for (const nodeId of oldParent) {
+      if (!newParent.has(nodeId) || newDirect.has(nodeId)) {
+        this._setNodeClass(nodeId, C.searchMatchParent, false);
+      }
+    }
+
+    // Add classes to nodes that joined their set
+    for (const nodeId of newDirect) {
+      if (!oldDirect.has(nodeId)) {
+        this._setNodeClass(nodeId, C.searchMatch, true);
+      }
+    }
+    for (const nodeId of newParent) {
+      if (newDirect.has(nodeId)) continue;
+      if (!oldParent.has(nodeId)) {
+        this._setNodeClass(nodeId, C.searchMatchParent, true);
+      }
+    }
+  },
+
+  _setNodeClass(nodeId, className, add) {
+    const rect = DomAdapter.getNode(nodeId);
+    if (!rect) return;
+    const label = rect.nextElementSibling;
+    if (add) {
+      rect.classList.add(className);
+      if (label?.classList.contains(STATIC_DATA.classes.label)) {
+        label.classList.add(className);
+      }
+    } else {
+      rect.classList.remove(className);
+      if (label) label.classList.remove(className);
     }
   },
 

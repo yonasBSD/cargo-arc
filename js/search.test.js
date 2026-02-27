@@ -160,6 +160,73 @@ describe('SearchLogic', () => {
       StaticData.getNode = origGetNode;
     });
 
+    test('diff-based update skips stable matches during incremental typing', () => {
+      const origGetAllNodeIds = StaticData.getAllNodeIds;
+      const origGetNode = StaticData.getNode;
+      const origDomGetNode = DomAdapter.getNode;
+
+      StaticData.getAllNodeIds = () => ['a', 'b', 'c'];
+      StaticData.getNode = (id) =>
+        ({
+          a: { name: 'auth-service', type: 'crate', parent: null },
+          b: { name: 'auth-utils', type: 'crate', parent: null },
+          c: { name: 'database', type: 'crate', parent: null },
+        })[id];
+
+      // Tracking fake elements: count classList.add/remove calls
+      function trackingElement() {
+        const classes = new Set();
+        const counts = { add: 0, remove: 0 };
+        const label = {
+          classList: {
+            contains: () => true,
+            add: () => counts.add++,
+            remove: () => counts.remove++,
+          },
+        };
+        return {
+          classList: {
+            add(c) { counts.add++; classes.add(c); },
+            remove(c) { counts.remove++; classes.delete(c); },
+            contains(c) { return classes.has(c); },
+          },
+          nextElementSibling: label,
+          _counts: counts,
+          _resetCounts() { counts.add = 0; counts.remove = 0; },
+        };
+      }
+
+      const elements = { a: trackingElement(), b: trackingElement(), c: trackingElement() };
+      DomAdapter.getNode = (id) => elements[id] ?? null;
+
+      // First search: "a" matches all three (auth-service, auth-utils, database)
+      SearchLogic.executeSearch('a', 'all');
+      expect(SearchLogic.getMatchedNodeIds().size).toBe(3);
+
+      // Reset counters after initial apply
+      elements.a._resetCounts();
+      elements.b._resetCounts();
+      elements.c._resetCounts();
+
+      // Incremental search: "auth" narrows to a + b, drops c
+      SearchLogic.executeSearch('auth', 'all');
+      expect(SearchLogic.getMatchedNodeIds().size).toBe(2);
+
+      // Stable matches (a, b) should have zero DOM operations
+      expect(elements.a._counts.add).toBe(0);
+      expect(elements.a._counts.remove).toBe(0);
+      expect(elements.b._counts.add).toBe(0);
+      expect(elements.b._counts.remove).toBe(0);
+
+      // Dropped match (c) should have remove operations only
+      expect(elements.c._counts.remove).toBeGreaterThan(0);
+      expect(elements.c._counts.add).toBe(0);
+
+      StaticData.getAllNodeIds = origGetAllNodeIds;
+      StaticData.getNode = origGetNode;
+      DomAdapter.getNode = origDomGetNode;
+    });
+
     test('respects scope filter for crate', () => {
       const origGetAllNodeIds = StaticData.getAllNodeIds;
       const origGetNode = StaticData.getNode;
