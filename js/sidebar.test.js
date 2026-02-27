@@ -798,7 +798,7 @@ describe('SidebarLogic', () => {
       expect(fakeEl.getAttribute('x')).toBe('1584');
     });
 
-    test('height is capped at MAX_HEIGHT', () => {
+    test('height uses content height when it fits within viewport', () => {
       const fakeEl = createFakeElement('foreignObject');
       const innerDiv = createFakeElement('div');
       Object.defineProperty(innerDiv, 'innerHTML', {
@@ -835,10 +835,10 @@ describe('SidebarLogic', () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 2000;
       SidebarLogic.show('crate_a-crate_b');
-      // vpHeight = 2000 * (1600/800) = 4000, 4000 - 0 - 20 = 3980, capped at 500
-      // naturalH=800 > cap=500, so effectiveH=500
-      expect(parseInt(innerDiv.style.height, 10)).toBe(500);
-      expect(parseInt(fakeEl.getAttribute('height'), 10)).toBe(512);
+      // vpHeight = 2000 * (1600/800) = 4000, viewport cap = 4000 - 0 - 20 = 3980
+      // naturalH=800 < 3980 → effectiveH=800 (content fits, no capping)
+      expect(parseInt(innerDiv.style.height, 10)).toBe(800);
+      expect(parseInt(fakeEl.getAttribute('height'), 10)).toBe(812);
     });
 
     test('sets dynamic width from max-content offsetWidth', () => {
@@ -1040,10 +1040,10 @@ describe('SidebarLogic', () => {
       globalThis.window.innerWidth = 1000;
       globalThis.window.innerHeight = 300;
       SidebarLogic.show('crate_a-crate_b');
-      // vpHeight = 300 * (1600/800) = 600, cap = min(600-0-20, 500) = 500
-      // naturalH=800 > cap=500, so effectiveH=500 (viewport-capped)
-      expect(parseInt(innerDiv.style.height, 10)).toBe(500);
-      expect(parseInt(fakeEl.getAttribute('height'), 10)).toBe(512);
+      // vpHeight = 300 * (1600/800) = 600, viewport cap = 600 - 0 - 20 = 580
+      // naturalH=800 > cap=580, so effectiveH=580 (viewport-capped)
+      expect(parseInt(innerDiv.style.height, 10)).toBe(580);
+      expect(parseInt(fakeEl.getAttribute('height'), 10)).toBe(592);
     });
   });
 

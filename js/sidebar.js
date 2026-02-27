@@ -5,7 +5,6 @@
 // Shows usage locations when an arc is selected (pinned)
 // foreignObject-based HTML sidebar with scroll tracking
 
-const SIDEBAR_MAX_HEIGHT = 500;
 const TOOLBAR_HEIGHT =
   typeof __TOOLBAR_HEIGHT__ !== 'undefined' ? __TOOLBAR_HEIGHT__ : 0;
 const SIDEBAR_GAP_X = 24;
@@ -394,12 +393,7 @@ const SidebarLogic = {
 
     return {
       y: Math.round(y),
-      height: Math.round(
-        Math.min(
-          vpHeight - TOOLBAR_HEIGHT - SIDEBAR_GAP_TOP,
-          SIDEBAR_MAX_HEIGHT,
-        ),
-      ),
+      height: Math.round(vpHeight - TOOLBAR_HEIGHT - SIDEBAR_GAP_TOP),
     };
   },
 

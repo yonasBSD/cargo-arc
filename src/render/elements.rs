@@ -23,7 +23,7 @@ pub(super) fn render_sidebar(width: f32) -> String {
     let cs = &CSS.sidebar;
     // overflow:visible lets box-shadow and border-radius render outside the
     // foreignObject boundary (SVG foreignObject defaults to overflow:hidden).
-    // Initial height 500 — JS updatePosition() caps dynamically via SIDEBAR_MAX_HEIGHT
+    // Initial height 500 — JS updatePosition() resizes dynamically to content/viewport
     format!(
         concat!(
             "<foreignObject id=\"relation-sidebar\" x=\"{}\" y=\"0\" width=\"280\" height=\"500\" style=\"display:none; overflow:visible\">\n",
