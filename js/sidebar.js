@@ -164,7 +164,7 @@ const SidebarLogic = {
 
     // Header: Node name + Collapse-All ("+", since all L1 start collapsed) + Close
     let html = `<div class="sidebar-header">`;
-    html += `<span class="sidebar-title"><span class="sidebar-node-${nodeType}">${nodeName}</span></span>`;
+    html += `<span class="sidebar-title"><span class="sidebar-node-${nodeType} sidebar-node-selected">${nodeName}</span></span>`;
     if (hasRelations) {
       html += `<div class="sidebar-header-actions">`;
       html += `<button class="sidebar-collapse-all">+</button>`;

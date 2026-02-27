@@ -1471,6 +1471,17 @@ describe('SidebarLogic', () => {
       expect(html).toContain('sidebar-node-crate sidebar-node-selected');
     });
 
+    test('header badge has sidebar-node-selected class', () => {
+      const html = SidebarLogic.buildNodeContent('crate_a', makeRelations());
+      const headerMatch = html.match(
+        /<div class="sidebar-header">[\s\S]*?<\/div>/,
+      );
+      expect(headerMatch).not.toBeNull();
+      expect(headerMatch[0]).toContain(
+        'sidebar-node-crate sidebar-node-selected',
+      );
+    });
+
     test('incoming sections appear before outgoing', () => {
       const html = SidebarLogic.buildNodeContent('crate_a', makeRelations());
       const renderIdx = html.indexOf('render');
