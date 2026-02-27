@@ -816,6 +816,20 @@ fn build_css_rules() -> Vec<CssRule> {
         ),
         // Badge navigation: clickable node badges
         CssRule::new("[data-node-id]", &[("cursor", "pointer")]),
+        // Collapse indicator (+/−) inside node badges
+        CssRule::class(
+            c.sidebar.collapse_indicator,
+            &[
+                ("cursor", "pointer"),
+                ("margin-left", "2px"),
+                ("font-weight", "bold"),
+                ("opacity", "0.6"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}:hover", c.sidebar.collapse_indicator),
+            &[("opacity", "1")],
+        ),
         // Transient sidebar mode (hover preview): hide close button and collapse toggles
         CssRule::new(
             &format!(
@@ -842,6 +856,13 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("margin", "0"),
                 ("padding", "0"),
             ],
+        ),
+        CssRule::new(
+            &format!(
+                ".{}.{} .{}",
+                c.sidebar.root, c.sidebar.transient, c.sidebar.collapse_indicator
+            ),
+            &[("display", "none")],
         ),
     ]
 }
@@ -1205,6 +1226,42 @@ mod tests {
                 CSS.node_selection.cycle_member, COLORS.direction.cycle
             )),
             "cycle-member should use cycle color for stroke"
+        );
+    }
+
+    #[test]
+    fn test_css_contains_sidebar_collapse_indicator() {
+        let css = render_styles();
+        let cls = CSS.sidebar.collapse_indicator;
+        assert!(
+            css.contains(&format!(".{cls}")),
+            "CSS should contain .sidebar-collapse-indicator"
+        );
+        // Base rule: cursor pointer, opacity
+        let base_idx = css
+            .find(&format!(".{cls} {{"))
+            .expect(".sidebar-collapse-indicator base rule should exist");
+        let base_section = &css[base_idx..base_idx + 150];
+        assert!(
+            base_section.contains("cursor: pointer"),
+            "collapse-indicator should have cursor: pointer, got: {base_section}"
+        );
+        assert!(
+            base_section.contains("opacity: 0.6"),
+            "collapse-indicator should have opacity: 0.6, got: {base_section}"
+        );
+        // Hover rule
+        assert!(
+            css.contains(&format!(".{cls}:hover")),
+            "CSS should contain .sidebar-collapse-indicator:hover"
+        );
+        // Transient mode: hidden
+        assert!(
+            css.contains(&format!(
+                ".{}.{} .{cls}",
+                CSS.sidebar.root, CSS.sidebar.transient
+            )),
+            "CSS should hide collapse-indicator in transient sidebar"
         );
     }
 

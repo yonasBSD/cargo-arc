@@ -104,6 +104,9 @@ globalThis.StaticData = {
   getNode(id) {
     return globalThis.STATIC_DATA.nodes?.[id] || null;
   },
+  hasChildren(nodeId) {
+    return globalThis.STATIC_DATA.nodes?.[nodeId]?.hasChildren ?? false;
+  },
 };
 
 describe('SidebarLogic', () => {
@@ -2312,6 +2315,277 @@ describe('SidebarLogic', () => {
       // Should not throw
       expect(() => {
         badge._fire('click', { stopPropagation() {} });
+      }).not.toThrow();
+    });
+  });
+
+  describe('_renderCollapseIndicator', () => {
+    afterEach(() => {
+      SidebarLogic._isNodeCollapsed = null;
+    });
+
+    test('returns empty string for leaf node (no children)', () => {
+      SidebarLogic._isNodeCollapsed = () => false;
+      // crate_a has hasChildren: false in STATIC_DATA
+      expect(SidebarLogic._renderCollapseIndicator('crate_a')).toBe('');
+    });
+
+    test('returns + for collapsed parent node', () => {
+      SidebarLogic._isNodeCollapsed = () => true;
+      // Temporarily make node a parent
+      const saved = globalThis.STATIC_DATA.nodes.crate_a.hasChildren;
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = true;
+
+      const html = SidebarLogic._renderCollapseIndicator('crate_a');
+      expect(html).toContain('sidebar-collapse-indicator');
+      expect(html).toContain('data-collapse-target="crate_a"');
+      expect(html).toContain('>+<');
+
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = saved;
+    });
+
+    test('returns \u2212 for expanded parent node', () => {
+      SidebarLogic._isNodeCollapsed = () => false;
+      const saved = globalThis.STATIC_DATA.nodes.crate_a.hasChildren;
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = true;
+
+      const html = SidebarLogic._renderCollapseIndicator('crate_a');
+      expect(html).toContain('sidebar-collapse-indicator');
+      expect(html).toContain('data-collapse-target="crate_a"');
+      expect(html).toContain('>\u2212<');
+
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = saved;
+    });
+
+    test('returns empty string when _isNodeCollapsed callback is not set', () => {
+      SidebarLogic._isNodeCollapsed = null;
+      const saved = globalThis.STATIC_DATA.nodes.crate_a.hasChildren;
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = true;
+
+      expect(SidebarLogic._renderCollapseIndicator('crate_a')).toBe('');
+
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = saved;
+    });
+
+    test('returns empty string for unknown node', () => {
+      SidebarLogic._isNodeCollapsed = () => false;
+      expect(SidebarLogic._renderCollapseIndicator('nonexistent')).toBe('');
+    });
+  });
+
+  describe('collapse indicator in badge rendering', () => {
+    afterEach(() => {
+      SidebarLogic._isNodeCollapsed = null;
+    });
+
+    test('buildNodeContent contains indicator for parent node', () => {
+      const saved = globalThis.STATIC_DATA.nodes.crate_a.hasChildren;
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = true;
+      SidebarLogic._isNodeCollapsed = () => false;
+
+      const html = SidebarLogic.buildNodeContent('crate_a', {
+        incoming: [],
+        outgoing: [],
+      });
+      expect(html).toContain('sidebar-collapse-indicator');
+      expect(html).toContain('data-collapse-target="crate_a"');
+
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = saved;
+    });
+
+    test('buildNodeContent contains no indicator for leaf node', () => {
+      // crate_a has hasChildren: false
+      SidebarLogic._isNodeCollapsed = () => false;
+
+      const html = SidebarLogic.buildNodeContent('crate_a', {
+        incoming: [],
+        outgoing: [],
+      });
+      expect(html).not.toContain('sidebar-collapse-indicator');
+    });
+
+    test('buildContent header contains indicators for parent nodes', () => {
+      const savedA = globalThis.STATIC_DATA.nodes.crate_a.hasChildren;
+      const savedB = globalThis.STATIC_DATA.nodes.crate_b.hasChildren;
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = true;
+      globalThis.STATIC_DATA.nodes.crate_b.hasChildren = true;
+      SidebarLogic._isNodeCollapsed = (id) => id === 'crate_a';
+
+      const html = SidebarLogic.buildContent('crate_a-crate_b');
+      // Both from and to should have indicators
+      expect(html).toContain('data-collapse-target="crate_a"');
+      expect(html).toContain('data-collapse-target="crate_b"');
+      // crate_a is collapsed → +, crate_b is expanded → −
+      const indicatorMatches = html.match(
+        /sidebar-collapse-indicator[^>]*>([^<]+)</g,
+      );
+      expect(indicatorMatches).not.toBeNull();
+      expect(indicatorMatches.length).toBeGreaterThanOrEqual(2);
+
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = savedA;
+      globalThis.STATIC_DATA.nodes.crate_b.hasChildren = savedB;
+    });
+
+    test('buildContent header has no indicators for leaf nodes', () => {
+      // Both crate_a and crate_b have hasChildren: false by default
+      SidebarLogic._isNodeCollapsed = () => false;
+
+      const html = SidebarLogic.buildContent('crate_a-crate_b');
+      expect(html).not.toContain('sidebar-collapse-indicator');
+    });
+
+    test('_buildRelationSection contains indicators for parent nodes', () => {
+      const savedA = globalThis.STATIC_DATA.nodes.crate_a.hasChildren;
+      const savedB = globalThis.STATIC_DATA.nodes.crate_b.hasChildren;
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = true;
+      globalThis.STATIC_DATA.nodes.crate_b.hasChildren = true;
+      SidebarLogic._isNodeCollapsed = () => false;
+
+      const relations = {
+        incoming: [],
+        outgoing: [
+          {
+            targetId: 'crate_b',
+            weight: 2,
+            arcId: 'crate_a-crate_b',
+            usages: [
+              {
+                symbol: 'Foo',
+                modulePath: null,
+                locations: [{ file: 'a.rs', line: 1 }],
+              },
+            ],
+          },
+        ],
+      };
+      const html = SidebarLogic.buildNodeContent('crate_a', relations);
+      expect(html).toContain('data-collapse-target="crate_a"');
+      expect(html).toContain('data-collapse-target="crate_b"');
+
+      globalThis.STATIC_DATA.nodes.crate_a.hasChildren = savedA;
+      globalThis.STATIC_DATA.nodes.crate_b.hasChildren = savedB;
+    });
+  });
+
+  describe('collapse indicator click handler', () => {
+    function makeIndicatorMock(collapseTarget) {
+      const listeners = new Map();
+      return {
+        dataset: { collapseTarget },
+        addEventListener(evt, fn) {
+          if (!listeners.has(evt)) listeners.set(evt, []);
+          listeners.get(evt).push(fn);
+        },
+        _fire(evt, event) {
+          for (const fn of listeners.get(evt) || []) fn(event);
+        },
+      };
+    }
+
+    function makeIndicatorHandlerDom(indicators, badges = []) {
+      const contentListeners = new Map();
+      const content = {
+        querySelectorAll(sel) {
+          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+            return [];
+          return [];
+        },
+        addEventListener(evt, fn) {
+          if (!contentListeners.has(evt)) contentListeners.set(evt, []);
+          contentListeners.get(evt).push(fn);
+        },
+      };
+      const root = {
+        querySelector(sel) {
+          if (sel === '.sidebar-content') return content;
+          if (sel === '.sidebar-collapse-all') return null;
+          return null;
+        },
+        querySelectorAll(sel) {
+          if (sel === '.sidebar-collapse-indicator') return indicators;
+          if (sel === '[data-node-id]') return badges;
+          return [];
+        },
+      };
+      return { root, content };
+    }
+
+    afterEach(() => {
+      SidebarLogic._onCollapseToggle = null;
+    });
+
+    test('_onCollapseToggle is null by default', () => {
+      // Reset in case previous test changed it
+      const saved = SidebarLogic._onCollapseToggle;
+      SidebarLogic._onCollapseToggle = null;
+      expect(SidebarLogic._onCollapseToggle).toBeNull();
+      SidebarLogic._onCollapseToggle = saved;
+    });
+
+    test('indicator click calls _onCollapseToggle with correct nodeId', () => {
+      const calls = [];
+      SidebarLogic._onCollapseToggle = (id) => calls.push(id);
+
+      const indicator = makeIndicatorMock('parent_crate');
+      const dom = makeIndicatorHandlerDom([indicator]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+
+      indicator._fire('click', { stopPropagation() {} });
+      expect(calls).toEqual(['parent_crate']);
+    });
+
+    test('indicator click calls stopPropagation', () => {
+      SidebarLogic._onCollapseToggle = () => {};
+
+      const indicator = makeIndicatorMock('parent_crate');
+      const dom = makeIndicatorHandlerDom([indicator]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+
+      let stopped = false;
+      indicator._fire('click', {
+        stopPropagation() {
+          stopped = true;
+        },
+      });
+      expect(stopped).toBe(true);
+    });
+
+    test('indicator click does not trigger badge navigation', () => {
+      const badgeCalls = [];
+      const collapseCalls = [];
+      SidebarLogic._onBadgeClick = (id) => badgeCalls.push(id);
+      SidebarLogic._onCollapseToggle = (id) => collapseCalls.push(id);
+
+      const indicator = makeIndicatorMock('parent_crate');
+      // Inline badge mock (makeBadgeMock is scoped to sibling describe)
+      const badgeListeners = new Map();
+      const badge = {
+        dataset: { nodeId: 'parent_crate' },
+        addEventListener(evt, fn) {
+          if (!badgeListeners.has(evt)) badgeListeners.set(evt, []);
+          badgeListeners.get(evt).push(fn);
+        },
+      };
+      const dom = makeIndicatorHandlerDom([indicator], [badge]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+
+      // Click the indicator — should only trigger collapse, not badge nav
+      indicator._fire('click', { stopPropagation() {} });
+      expect(collapseCalls).toEqual(['parent_crate']);
+      expect(badgeCalls).toEqual([]);
+
+      SidebarLogic._onBadgeClick = null;
+    });
+
+    test('indicator click does nothing when _onCollapseToggle is null', () => {
+      SidebarLogic._onCollapseToggle = null;
+
+      const indicator = makeIndicatorMock('parent_crate');
+      const dom = makeIndicatorHandlerDom([indicator]);
+      SidebarLogic._setupCollapseHandlers(dom.root);
+
+      expect(() => {
+        indicator._fire('click', { stopPropagation() {} });
       }).not.toThrow();
     });
   });

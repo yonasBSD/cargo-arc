@@ -192,6 +192,12 @@ if (typeof document !== 'undefined') {
     }
 
     SidebarLogic._onBadgeClick = (nodeId) => scrollToNode(nodeId);
+    SidebarLogic._onCollapseToggle = (nodeId) => {
+      toggleCollapse(nodeId);
+      updateToolbarPosition();
+    };
+    SidebarLogic._isNodeCollapsed = (nodeId) =>
+      AppState.isCollapsed(appState, nodeId);
 
     function handleMouseEnter(type, id) {
       if (AppState.hasPinnedSelection(appState)) return;

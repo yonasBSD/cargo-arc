@@ -21,6 +21,8 @@ const SidebarLogic = {
   _isTransient: false,
   _debounceTimer: null,
   _onBadgeClick: null,
+  _onCollapseToggle: null,
+  _isNodeCollapsed: null,
   /**
    * Merge symbol groups: combine groups with same symbol, deduplicate locations by file+line.
    * @param {Array<{symbol: string, modulePath: string|null, locations: Array<{file: string, line: number}>}>} groups
@@ -95,7 +97,7 @@ const SidebarLogic = {
     const toClass = `${toNode ? `sidebar-node-${toNode.type} ` : ''}sidebar-node-to`;
 
     let html = `<div class="sidebar-header">`;
-    html += `<span class="sidebar-title"><span class="${fromClass}" data-node-id="${arc.from}">${fromName}</span><span class="sidebar-arrow">&#x2192;</span><span class="${toClass}" data-node-id="${arc.to}">${toName}</span></span>`;
+    html += `<span class="sidebar-title"><span class="${fromClass}" data-node-id="${arc.from}">${fromName}${this._renderCollapseIndicator(arc.from)}</span><span class="sidebar-arrow">&#x2192;</span><span class="${toClass}" data-node-id="${arc.to}">${toName}${this._renderCollapseIndicator(arc.to)}</span></span>`;
     const hasSymbols = groups.some((g) => g.symbol);
     if (hasSymbols) {
       html += `<div class="sidebar-header-actions">`;
@@ -167,7 +169,7 @@ const SidebarLogic = {
 
     // Header: Node name + Collapse-All ("+", since all L1 start collapsed) + Close
     let html = `<div class="sidebar-header">`;
-    html += `<span class="sidebar-title"><span class="sidebar-node-${nodeType} sidebar-node-selected" data-node-id="${nodeId}">${nodeName}</span></span>`;
+    html += `<span class="sidebar-title"><span class="sidebar-node-${nodeType} sidebar-node-selected" data-node-id="${nodeId}">${nodeName}${this._renderCollapseIndicator(nodeId)}</span></span>`;
     if (hasRelations) {
       html += `<div class="sidebar-header-actions">`;
       html += `<button class="sidebar-collapse-all">+</button>`;
@@ -275,9 +277,9 @@ const SidebarLogic = {
     if (groups.length === 0) {
       html += `<div class="sidebar-symbol" style="cursor:default">`;
       html += `<span class="sidebar-toggle"></span>`;
-      html += `<span class="${fromClass} sidebar-symbol-name" data-node-id="${fromId}">${fromName}</span>`;
+      html += `<span class="${fromClass} sidebar-symbol-name" data-node-id="${fromId}">${fromName}${this._renderCollapseIndicator(fromId)}</span>`;
       html += `<span class="sidebar-arrow">&#x2192;</span>`;
-      html += `<span class="${toClass} sidebar-symbol-name" data-node-id="${toId}">${toName}</span>`;
+      html += `<span class="${toClass} sidebar-symbol-name" data-node-id="${toId}">${toName}${this._renderCollapseIndicator(toId)}</span>`;
       html += `<span class="sidebar-ext-info" title="Cargo.toml dependency &#8212; source references are not tracked for external crates">i</span>`;
       html += `</div>`;
       html += `</div>`;
@@ -287,9 +289,9 @@ const SidebarLogic = {
     // Level 1 header (collapsed)
     html += `<div class="sidebar-symbol" data-collapsed="true">`;
     html += `<span class="sidebar-toggle">&#x25B8;</span>`;
-    html += `<span class="${fromClass} sidebar-symbol-name" data-node-id="${fromId}">${fromName}</span>`;
+    html += `<span class="${fromClass} sidebar-symbol-name" data-node-id="${fromId}">${fromName}${this._renderCollapseIndicator(fromId)}</span>`;
     html += `<span class="sidebar-arrow">&#x2192;</span>`;
-    html += `<span class="${toClass} sidebar-symbol-name" data-node-id="${toId}">${toName}</span>`;
+    html += `<span class="${toClass} sidebar-symbol-name" data-node-id="${toId}">${toName}${this._renderCollapseIndicator(toId)}</span>`;
     html += `<span class="sidebar-ref-count">${rel.weight}</span>`;
     html += `</div>`;
 
@@ -333,6 +335,20 @@ const SidebarLogic = {
     if (!node) return fallback;
     if (node.version) return `${node.name} v${node.version}`;
     return node.name;
+  },
+
+  /**
+   * Render a +/- collapse indicator span for a node badge.
+   * Returns empty string for leaf nodes or when state callback is not set.
+   * @param {string} nodeId
+   * @returns {string}
+   */
+  _renderCollapseIndicator(nodeId) {
+    if (!StaticData.hasChildren(nodeId)) return '';
+    const collapsed = this._isNodeCollapsed?.(nodeId);
+    if (collapsed === undefined || collapsed === null) return '';
+    const symbol = collapsed ? '+' : '\u2212';
+    return `<span class="sidebar-collapse-indicator" data-collapse-target="${nodeId}">${symbol}</span>`;
   },
 
   /**
@@ -517,9 +533,9 @@ const SidebarLogic = {
         html += `<div class="sidebar-usage-group${isSelected ? ' sidebar-selected-arc' : ''}">`;
         html += `<div class="sidebar-symbol" data-collapsed="true">`;
         html += `<span class="sidebar-toggle">&#x25B8;</span>`;
-        html += `<span class="sidebar-symbol-name" data-node-id="${info.arc.from}">${fromName}</span>`;
+        html += `<span class="sidebar-symbol-name" data-node-id="${info.arc.from}">${fromName}${this._renderCollapseIndicator(info.arc.from)}</span>`;
         html += `<span class="sidebar-arrow">&#x2192;</span>`;
-        html += `<span class="sidebar-symbol-name" data-node-id="${info.arc.to}">${toName}</span>`;
+        html += `<span class="sidebar-symbol-name" data-node-id="${info.arc.to}">${toName}${this._renderCollapseIndicator(info.arc.to)}</span>`;
         const singleSymSuffix = this.formatArcSymbols(info.usages);
         if (singleSymSuffix) {
           html += `<span class="sidebar-arc-symbols">${singleSymSuffix}</span>`;
@@ -591,9 +607,9 @@ const SidebarLogic = {
         contentHtml += `<div class="sidebar-usage-group${isSelected ? ' sidebar-selected-arc' : ''}">`;
         contentHtml += `<div class="sidebar-symbol" data-collapsed="true">`;
         contentHtml += `<span class="sidebar-toggle">&#x25B8;</span>`;
-        contentHtml += `<span class="sidebar-symbol-name" data-node-id="${info.arc.from}">${fromName}</span>`;
+        contentHtml += `<span class="sidebar-symbol-name" data-node-id="${info.arc.from}">${fromName}${this._renderCollapseIndicator(info.arc.from)}</span>`;
         contentHtml += `<span class="sidebar-arrow">&#x2192;</span>`;
-        contentHtml += `<span class="sidebar-symbol-name" data-node-id="${info.arc.to}">${toName}</span>`;
+        contentHtml += `<span class="sidebar-symbol-name" data-node-id="${info.arc.to}">${toName}${this._renderCollapseIndicator(info.arc.to)}</span>`;
         const multiSymSuffix = this.formatArcSymbols(info.usages);
         if (multiSymSuffix) {
           contentHtml += `<span class="sidebar-arc-symbols">${multiSymSuffix}</span>`;
@@ -664,6 +680,15 @@ const SidebarLogic = {
       SidebarLogic.updatePosition();
     });
     if (root.querySelectorAll) {
+      const indicators = root.querySelectorAll('.sidebar-collapse-indicator');
+      for (const indicator of indicators) {
+        indicator.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (SidebarLogic._onCollapseToggle) {
+            SidebarLogic._onCollapseToggle(indicator.dataset.collapseTarget);
+          }
+        });
+      }
       const badges = root.querySelectorAll('[data-node-id]');
       for (const badge of badges) {
         badge.addEventListener('click', (e) => {
