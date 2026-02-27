@@ -19,8 +19,17 @@ function createHighlightDebouncer(renderFn, delay) {
   };
 }
 
+function createPinnedSidebarRefresher(getPinned, collectRelations, showNode) {
+  return function refreshPinnedSidebar() {
+    const pinned = getPinned();
+    if (!pinned || pinned.type !== 'node') return;
+    const relations = collectRelations(pinned.id);
+    showNode(pinned.id, relations);
+  };
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { createHighlightDebouncer };
+  module.exports = { createHighlightDebouncer, createPinnedSidebarRefresher };
 }
 
 // IIFE for SVG embedding (DOM-code) - only runs in browser with placeholders replaced
@@ -138,6 +147,12 @@ if (typeof document !== 'undefined') {
       base.incoming.sort((a, b) => b.weight - a.weight);
       return base;
     }
+
+    const refreshPinnedSidebar = createPinnedSidebarRefresher(
+      () => AppState.getPinned(appState),
+      collectNodeRelations,
+      (id, rels) => SidebarLogic.showNode(id, rels),
+    );
 
     let _isNavigating = false;
 
@@ -763,6 +778,7 @@ if (typeof document !== 'undefined') {
       updateParentNodeUI(nodeId, collapsed);
       relayout();
       SearchLogic.refresh();
+      refreshPinnedSidebar();
     }
 
     // Toggle collapse/expand all parent nodes.
@@ -788,6 +804,7 @@ if (typeof document !== 'undefined') {
 
       relayout();
       SearchLogic.refresh();
+      refreshPinnedSidebar();
 
       return collapsed;
     }
