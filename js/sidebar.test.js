@@ -809,6 +809,7 @@ describe('SidebarLogic', () => {
           this._innerHTML = v;
         },
       });
+      innerDiv.offsetHeight = 800;
       fakeEl.querySelector = () => innerDiv;
       // Large viewport: innerHeight=2000 * scaleY=2 = 4000 SVG units
       const svgMock = {
@@ -835,8 +836,9 @@ describe('SidebarLogic', () => {
       globalThis.window.innerHeight = 2000;
       SidebarLogic.show('crate_a-crate_b');
       // vpHeight = 2000 * (1600/800) = 4000, 4000 - 0 - 20 = 3980, capped at 500
-      // Inner div gets content height, foreignObject gets +12 for shadow padding
-      expect(parseInt(innerDiv.style.height, 10)).toBeLessThanOrEqual(500);
+      // naturalH=800 > cap=500, so effectiveH=500
+      expect(parseInt(innerDiv.style.height, 10)).toBe(500);
+      expect(parseInt(fakeEl.getAttribute('height'), 10)).toBe(512);
     });
 
     test('sets dynamic width from max-content offsetWidth', () => {
@@ -957,6 +959,91 @@ describe('SidebarLogic', () => {
       SidebarLogic.show('crate_a-crate_b');
       // offsetWidth=0 (max-content), max(280, min(0, 500)) = 280, +12 shadow pad
       expect(parseInt(fakeEl.getAttribute('width'), 10)).toBe(292);
+    });
+
+    test('height shrinks to content when content is shorter than max', () => {
+      const fakeEl = createFakeElement('foreignObject');
+      const innerDiv = createFakeElement('div');
+      Object.defineProperty(innerDiv, 'innerHTML', {
+        get() {
+          return this._innerHTML || '';
+        },
+        set(v) {
+          this._innerHTML = v;
+        },
+      });
+      innerDiv.offsetHeight = 200;
+      fakeEl.querySelector = () => innerDiv;
+      const svgMock = {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+        setAttribute() {},
+      };
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === 'relation-sidebar') return fakeEl;
+          return null;
+        },
+        getSvgRoot() {
+          return svgMock;
+        },
+        querySelectorAll() {
+          return [];
+        },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 2000;
+      SidebarLogic.show('crate_a-crate_b');
+      // vpHeight = 2000 * 2 = 4000, cap = min(4000-0-20, 500) = 500
+      // naturalH=200 < cap=500, so effectiveH=200 (shrink-to-content)
+      expect(parseInt(innerDiv.style.height, 10)).toBe(200);
+      expect(parseInt(fakeEl.getAttribute('height'), 10)).toBe(212);
+    });
+
+    test('height capped when content exceeds viewport limit', () => {
+      const fakeEl = createFakeElement('foreignObject');
+      const innerDiv = createFakeElement('div');
+      Object.defineProperty(innerDiv, 'innerHTML', {
+        get() {
+          return this._innerHTML || '';
+        },
+        set(v) {
+          this._innerHTML = v;
+        },
+      });
+      innerDiv.offsetHeight = 800;
+      fakeEl.querySelector = () => innerDiv;
+      // Small viewport: innerHeight=300 * scaleY=2 = 600 SVG units
+      const svgMock = {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 1000, height: 800 };
+        },
+        viewBox: { baseVal: { width: 2000, height: 1600 } },
+        setAttribute() {},
+      };
+      globalThis.DomAdapter = {
+        getElementById(id) {
+          if (id === 'relation-sidebar') return fakeEl;
+          return null;
+        },
+        getSvgRoot() {
+          return svgMock;
+        },
+        querySelectorAll() {
+          return [];
+        },
+      };
+      globalThis.window = globalThis.window || {};
+      globalThis.window.innerWidth = 1000;
+      globalThis.window.innerHeight = 300;
+      SidebarLogic.show('crate_a-crate_b');
+      // vpHeight = 300 * (1600/800) = 600, cap = min(600-0-20, 500) = 500
+      // naturalH=800 > cap=500, so effectiveH=500 (viewport-capped)
+      expect(parseInt(innerDiv.style.height, 10)).toBe(500);
+      expect(parseInt(fakeEl.getAttribute('height'), 10)).toBe(512);
     });
   });
 

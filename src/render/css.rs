@@ -624,6 +624,7 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("overflow-y", "auto"),
                 ("padding", "8px 10px"),
                 ("flex", "1"),
+                ("min-height", "0"),
             ],
         ),
         CssRule::class(c.sidebar.usage_group, &[("margin-bottom", "10px")]),
@@ -1108,6 +1109,21 @@ mod tests {
         assert!(
             css.contains("opacity: 0.15"),
             "search-dimmed should set opacity to 0.15"
+        );
+    }
+
+    #[test]
+    fn test_sidebar_content_has_min_height_zero() {
+        let css = render_styles();
+        // .sidebar-content needs min-height: 0 for robust flex shrinking
+        // in foreignObject context (default min-height: auto prevents shrinking)
+        let content_start = css
+            .find(".sidebar-content")
+            .expect(".sidebar-content rule should exist");
+        let content_section = &css[content_start..content_start + 200];
+        assert!(
+            content_section.contains("min-height: 0"),
+            ".sidebar-content should have min-height: 0, got: {content_section}"
         );
     }
 

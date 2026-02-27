@@ -780,6 +780,14 @@ const SidebarLogic = {
     if (innerDiv) innerDiv.style.width = 'max-content';
     const naturalW = innerDiv ? innerDiv.offsetWidth : 0;
     if (innerDiv) innerDiv.style.width = '';
+
+    // Measure natural content height (analogous to width measurement above).
+    // Must happen after width is finalized — width affects text wrap → height.
+    if (innerDiv) innerDiv.style.height = 'auto';
+    const naturalH = innerDiv ? innerDiv.offsetHeight : 0;
+    const effectiveH =
+      naturalH > 0 ? Math.min(naturalH, pos.height) : pos.height;
+
     const vpWidth = window.innerWidth;
     const width = Math.max(
       SIDEBAR_MIN_WIDTH,
@@ -807,8 +815,8 @@ const SidebarLogic = {
     el.setAttribute('width', String(Math.round(width) + SIDEBAR_SHADOW_PAD));
     el.setAttribute('x', String(x));
     el.setAttribute('y', String(pos.y));
-    el.setAttribute('height', String(pos.height + SIDEBAR_SHADOW_PAD));
-    if (innerDiv) innerDiv.style.height = `${pos.height}px`;
+    el.setAttribute('height', String(effectiveH + SIDEBAR_SHADOW_PAD));
+    if (innerDiv) innerDiv.style.height = `${effectiveH}px`;
 
     // Expand SVG canvas if sidebar extends beyond viewBox
     if (svg) {
@@ -816,7 +824,7 @@ const SidebarLogic = {
       if (this._originalViewBoxHeight === null) {
         this._originalViewBoxHeight = vb.height;
       }
-      const sidebarBottom = pos.y + pos.height + SIDEBAR_SHADOW_PAD;
+      const sidebarBottom = pos.y + effectiveH + SIDEBAR_SHADOW_PAD;
       const neededH = Math.max(this._originalViewBoxHeight, sidebarBottom);
       if (vb.height !== neededH) {
         vb.height = neededH;
