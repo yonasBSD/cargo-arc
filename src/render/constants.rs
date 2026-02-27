@@ -127,9 +127,9 @@ pub(super) const ORANGE_300: &str = "#fdba74";
 
 pub(super) const GRAY_600: &str = "#666";
 pub(super) const GRAY_400: &str = "#888";
-const GRAY_300: &str = "#ccc";
+pub(super) const GRAY_300: &str = "#ccc";
 pub(super) const GRAY_200: &str = "#e0e0e0";
-const GRAY_100: &str = "#f5f5f5";
+pub(super) const GRAY_100: &str = "#f5f5f5";
 pub(super) const GRAY_50: &str = "#fafafa";
 const WHITE: &str = "#ffffff";
 
@@ -362,6 +362,9 @@ pub(super) struct SidebarClasses {
     pub node_module: &'static str,
     pub node_from: &'static str,
     pub node_to: &'static str,
+    pub node_external: &'static str,
+    pub node_external_transitive: &'static str,
+    pub node_external_section: &'static str,
     pub node_selected: &'static str,
     pub transient: &'static str,
     pub arc_symbols: &'static str,
@@ -482,6 +485,9 @@ pub(super) static CSS: CssClassNames = CssClassNames {
         node_module: "sidebar-node-module",
         node_from: "sidebar-node-from",
         node_to: "sidebar-node-to",
+        node_external: "sidebar-node-external",
+        node_external_transitive: "sidebar-node-external-transitive",
+        node_external_section: "sidebar-node-external-section",
         node_selected: "sidebar-node-selected",
         transient: "sidebar-transient",
         arc_symbols: "sidebar-arc-symbols",

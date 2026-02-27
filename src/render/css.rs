@@ -1,6 +1,6 @@
 use super::constants::{
-    BLUE, BLUE_100, BLUE_300, COLORS, CSS, GRAY_50, GRAY_200, GRAY_400, GRAY_600, GREEN, LAYOUT,
-    ORANGE, ORANGE_100, ORANGE_300, PURPLE,
+    BLUE, BLUE_100, BLUE_300, COLORS, CSS, GRAY_50, GRAY_100, GRAY_200, GRAY_300, GRAY_400,
+    GRAY_600, GREEN, LAYOUT, ORANGE, ORANGE_100, ORANGE_300, PURPLE,
 };
 use std::fmt::Write as _;
 
@@ -736,6 +736,47 @@ fn build_css_rules() -> Vec<CssRule> {
                 ("border", &format!("2px solid {ORANGE}")),
             ],
         ),
+        CssRule::class(
+            c.sidebar.node_external,
+            &[
+                ("background", GRAY_200),
+                ("padding", "1px 4px"),
+                ("border-radius", "3px"),
+            ],
+        ),
+        CssRule::class(
+            c.sidebar.node_external_transitive,
+            &[
+                ("background", GRAY_100),
+                ("padding", "1px 4px"),
+                ("border-radius", "3px"),
+            ],
+        ),
+        CssRule::class(
+            c.sidebar.node_external_section,
+            &[
+                ("background", GRAY_200),
+                ("padding", "1px 4px"),
+                ("border-radius", "3px"),
+            ],
+        ),
+        CssRule::new(
+            &format!(".{}.{}", c.sidebar.node_external, c.sidebar.node_selected),
+            &[
+                ("background", GRAY_300),
+                ("border", &format!("2px solid {GRAY_600}")),
+            ],
+        ),
+        CssRule::new(
+            &format!(
+                ".{}.{}",
+                c.sidebar.node_external_transitive, c.sidebar.node_selected
+            ),
+            &[
+                ("background", GRAY_200),
+                ("border", &format!("2px solid {GRAY_400}")),
+            ],
+        ),
         // Transient sidebar mode (hover preview): hide close button and collapse toggles
         CssRule::new(
             &format!(
@@ -968,6 +1009,30 @@ mod tests {
             css.contains(".sidebar-footer"),
             "CSS should contain .sidebar-footer selector"
         );
+
+        // External badge rules
+        assert!(
+            css.contains(".sidebar-node-external"),
+            "CSS should contain .sidebar-node-external"
+        );
+        assert!(
+            css.contains(".sidebar-node-external-transitive"),
+            "CSS should contain .sidebar-node-external-transitive"
+        );
+        assert!(
+            css.contains(".sidebar-node-external-section"),
+            "CSS should contain .sidebar-node-external-section"
+        );
+
+        // External selected-state rules
+        assert!(
+            css.contains(".sidebar-node-external.sidebar-node-selected"),
+            "CSS should contain .sidebar-node-external.sidebar-node-selected"
+        );
+        assert!(
+            css.contains(".sidebar-node-external-transitive.sidebar-node-selected"),
+            "CSS should contain .sidebar-node-external-transitive.sidebar-node-selected"
+        );
     }
 
     #[test]
@@ -1006,6 +1071,39 @@ mod tests {
         assert!(
             module_section.contains(ORANGE),
             "Module selected should use ORANGE border"
+        );
+    }
+
+    #[test]
+    fn test_css_contains_sidebar_external_node_selected() {
+        let css = render_styles();
+
+        // External selected: GRAY_300 background + GRAY_600 border
+        let ext_rule_idx = css
+            .find(".sidebar-node-external.sidebar-node-selected")
+            .unwrap();
+        let ext_section = &css[ext_rule_idx..ext_rule_idx + 200];
+        assert!(
+            ext_section.contains(GRAY_300),
+            "External selected should use GRAY_300 background"
+        );
+        assert!(
+            ext_section.contains(GRAY_600),
+            "External selected should use GRAY_600 border"
+        );
+
+        // External-transitive selected: GRAY_200 background + GRAY_400 border
+        let ext_t_rule_idx = css
+            .find(".sidebar-node-external-transitive.sidebar-node-selected")
+            .unwrap();
+        let ext_t_section = &css[ext_t_rule_idx..ext_t_rule_idx + 200];
+        assert!(
+            ext_t_section.contains(GRAY_200),
+            "External-transitive selected should use GRAY_200 background"
+        );
+        assert!(
+            ext_t_section.contains(GRAY_400),
+            "External-transitive selected should use GRAY_400 border"
         );
     }
 
