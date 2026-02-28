@@ -208,8 +208,13 @@ const StaticData = {
         });
       }
     }
-    outgoing.sort((a, b) => b.weight - a.weight);
-    incoming.sort((a, b) => b.weight - a.weight);
+    const byTreeOrder = (a, b) => {
+      const yA = this.getOriginalPosition(a.targetId)?.y ?? Infinity;
+      const yB = this.getOriginalPosition(b.targetId)?.y ?? Infinity;
+      return yA - yB;
+    };
+    outgoing.sort(byTreeOrder);
+    incoming.sort(byTreeOrder);
     return { outgoing, incoming };
   },
 };

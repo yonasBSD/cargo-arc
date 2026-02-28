@@ -268,14 +268,14 @@ describe('StaticData', () => {
       expect(result2.incoming).toEqual([]);
     });
 
-    test('sorts each direction by weight descending', () => {
-      // fn_1 outgoing: fn_1-crate (weight 2), fn_1-fn_2 (weight 1)
+    test('sorts each direction by tree order (ascending y position)', () => {
+      // fn_1 outgoing targets: crate (y:0), fn_2 (y:80)
       const result = StaticData.getNodeRelations('fn_1');
 
-      expect(result.outgoing[0].weight).toBe(2);
       expect(result.outgoing[0].arcId).toBe('fn_1-crate');
-      expect(result.outgoing[1].weight).toBe(1);
+      expect(result.outgoing[0].targetId).toBe('crate');
       expect(result.outgoing[1].arcId).toBe('fn_1-fn_2');
+      expect(result.outgoing[1].targetId).toBe('fn_2');
     });
   });
 

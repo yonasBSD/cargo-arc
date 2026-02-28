@@ -143,8 +143,13 @@ if (typeof document !== 'undefined') {
         if (fromId === nodeId) base.outgoing.push(entry);
         else if (toId === nodeId) base.incoming.push(entry);
       }
-      base.outgoing.sort((a, b) => b.weight - a.weight);
-      base.incoming.sort((a, b) => b.weight - a.weight);
+      const byTreeOrder = (a, b) => {
+        const yA = StaticData.getOriginalPosition(a.targetId)?.y ?? Infinity;
+        const yB = StaticData.getOriginalPosition(b.targetId)?.y ?? Infinity;
+        return yA - yB;
+      };
+      base.outgoing.sort(byTreeOrder);
+      base.incoming.sort(byTreeOrder);
       return base;
     }
 

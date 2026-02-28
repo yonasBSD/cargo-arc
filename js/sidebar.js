@@ -157,7 +157,7 @@ const SidebarLogic = {
    * Build HTML content string for node-mode sidebar.
    * Shows all incoming (dependents) and outgoing (dependencies) relations.
    * @param {string} nodeId - The selected node ID
-   * @param {{ incoming: Array, outgoing: Array }} relations - From StaticData.getNodeRelations()
+   * @param {{ incoming: Array, outgoing: Array }} relations - From collectNodeRelations() (filtered + virtual arcs)
    * @returns {string}
    */
   buildNodeContent(nodeId, relations) {
