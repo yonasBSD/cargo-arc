@@ -178,18 +178,22 @@ if (typeof document !== 'undefined') {
       const maxScroll =
         document.documentElement.scrollHeight - window.innerHeight;
       _isNavigating = true;
+      const sidebarEl = SidebarLogic._getElement();
+      if (sidebarEl) sidebarEl.style.visibility = 'hidden';
+      function finishNavigation() {
+        _isNavigating = false;
+        if (sidebarEl) sidebarEl.style.visibility = '';
+        if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
+      }
       window.addEventListener(
         'scrollend',
         () => {
-          _isNavigating = false;
-          if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
+          clearTimeout(navTimeout);
+          finishNavigation();
         },
         { once: true },
       );
-      setTimeout(() => {
-        _isNavigating = false;
-        if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
-      }, 600);
+      const navTimeout = setTimeout(() => finishNavigation(), 600);
       window.scrollTo({
         top: Math.max(0, Math.min(targetScroll, maxScroll)),
         behavior: 'smooth',
