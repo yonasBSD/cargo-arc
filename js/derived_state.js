@@ -6,6 +6,20 @@
 // No DOM dependencies - operates on Maps/Sets
 // TreeLogic is loaded before this file (see render.rs load order)
 
+/**
+ * @typedef {Object} HighlightState
+ * @property {Map<string, {role: string, cssClass: string}>} nodeHighlights
+ *   Highlighted nodes with their role and CSS class name.
+ * @property {Map<string, {highlightWidth: number, arrowScale: number, relationType: string, isVirtual: boolean}>} arcHighlights
+ *   Highlighted arcs. Keys: "from-to" for regular arcs, "v:from-to" for virtual arcs.
+ * @property {Map<string, {shadowWidth: number, visibleLength: number, dashOffset: number, glowClass: string}>} shadowData
+ *   Shadow glow data per arc. Keys: same convention as arcHighlights.
+ * @property {Set<string>} promotedHitareas
+ *   Arc IDs (without "v:" prefix) whose hitareas should be promoted to highlight layer.
+ * @property {boolean} isPinned
+ *   Whether the highlight is from a pinned (click) selection.
+ */
+
 const DerivedState = {
   /**
    * Derive which nodes are visible based on collapsed and filter state.
@@ -180,18 +194,6 @@ const DerivedState = {
 
     return positions;
   },
-
-  /**
-   * @typedef {Object} HighlightState
-   * @property {Map<string, {role: string, cssClass: string}>} nodeHighlights
-   *   Highlighted nodes with their role and CSS class name.
-   * @property {Map<string, {highlightWidth: number, arrowScale: number, relationType: string, isVirtual: boolean}>} arcHighlights
-   *   Highlighted arcs. Keys: "from-to" for regular arcs, "v:from-to" for virtual arcs.
-   * @property {Map<string, {shadowWidth: number, visibleLength: number, dashOffset: number, glowClass: string}>} shadowData
-   *   Shadow glow data per arc. Keys: same convention as arcHighlights.
-   * @property {Set<string>} promotedHitareas
-   *   Arc IDs (without "v:" prefix) whose hitareas should be promoted to highlight layer.
-   */
 
   /**
    * Derive complete highlight state from application state (pure, no DOM access).

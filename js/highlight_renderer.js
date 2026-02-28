@@ -5,6 +5,8 @@
 // Takes a HighlightState (from DerivedState.deriveHighlightState) and applies it.
 // Reset uses data-iteration (StaticData/virtualArcUsages), not CSS selectors.
 
+/** @typedef {import('./derived_state.js').HighlightState} HighlightState */
+
 const HighlightRenderer = {
   // Dirty sets: track which elements were styled in last apply() for O(1) reset
   _prevNodeIds: new Set(),

@@ -353,7 +353,7 @@ const SidebarLogic = {
 
   /**
    * Get the foreignObject element for the sidebar.
-   * @returns {Element|null}
+   * @returns {HTMLElement|null}
    */
   _getElement() {
     return DomAdapter.getElementById('relation-sidebar');
@@ -449,6 +449,7 @@ const SidebarLogic = {
     this._debounceTimer = setTimeout(() => {
       const el = this._getElement();
       if (!el) return;
+      /** @type {HTMLElement|null} */
       const innerDiv = el.querySelector('.sidebar-root');
       if (innerDiv) {
         innerDiv.innerHTML = this.buildContent(arcId, overrideData);
@@ -474,11 +475,12 @@ const SidebarLogic = {
   /**
    * Show sidebar with content for given arc.
    * @param {string} arcId
-   * @param {{ from: string, to: string, usages: string[] }} [overrideData]
+   * @param {{ from: string, to: string, usages: Array<{symbol: string, modulePath: string|null, locations: {file: string, line: number}[]}>, originalArcs?: string[] }} [overrideData]
    */
   show(arcId, overrideData) {
     const el = this._getElement();
     if (!el) return;
+    /** @type {HTMLElement|null} */
     const innerDiv = el.querySelector('.sidebar-root');
     if (innerDiv) {
       innerDiv.innerHTML = this.buildContent(arcId, overrideData);
@@ -737,6 +739,7 @@ const SidebarLogic = {
   showNode(nodeId, relations) {
     const el = this._getElement();
     if (!el) return;
+    /** @type {HTMLElement|null} */
     const innerDiv = el.querySelector('.sidebar-root');
     if (innerDiv) {
       innerDiv.innerHTML = this.buildNodeContent(nodeId, relations);
@@ -761,6 +764,7 @@ const SidebarLogic = {
     this._debounceTimer = setTimeout(() => {
       const el = this._getElement();
       if (!el) return;
+      /** @type {HTMLElement|null} */
       const innerDiv = el.querySelector('.sidebar-root');
       if (innerDiv) {
         innerDiv.innerHTML = this.buildNodeContent(nodeId, relations);
@@ -830,6 +834,7 @@ const SidebarLogic = {
     // Previous approach (shrink → measure scrollWidth) failed because nested
     // overflow containers (sidebar-content has implicit overflow-x:auto) don't
     // propagate scrollWidth reliably in foreignObject context.
+    /** @type {HTMLElement|null} */
     const innerDiv = el.querySelector('.sidebar-root');
     el.setAttribute('width', '9999');
     if (innerDiv) innerDiv.style.width = 'max-content';

@@ -1,5 +1,5 @@
 // @module SvgScript
-// @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightRenderer, VirtualEdgeLogic, TextMetrics, SidebarLogic, SearchLogic
+// @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightRenderer, VirtualEdgeLogic, TextMeasure, SidebarLogic, SearchLogic
 // @config ROW_HEIGHT, MARGIN, TOOLBAR_HEIGHT
 // svg_script.js - DOM code for interactive SVG
 // ArcLogic is loaded from arc_logic.js before this file
@@ -737,7 +737,7 @@ if (typeof document !== 'undefined') {
         countLabel.textContent = ` (+${countDescendants(nodeId)})`;
         const labelText = countLabel.parentElement;
         if (labelText) {
-          const textWidth = TextMetrics.estimateWidth(
+          const textWidth = TextMeasure.estimateWidth(
             labelText.textContent,
             12,
           );
@@ -1085,13 +1085,13 @@ if (typeof document !== 'undefined') {
 
       const rect = svg.getBoundingClientRect();
       const scrollTop = Math.max(0, -rect.top);
-      fo.setAttribute('y', scrollTop);
+      fo.setAttribute('y', String(scrollTop));
 
       // Keep toolbar aligned to visible viewport during horizontal scroll
       const scrollLeft = Math.max(0, -rect.left);
       const visibleWidth = Math.min(window.innerWidth, rect.width - scrollLeft);
-      fo.setAttribute('x', scrollLeft);
-      fo.setAttribute('width', visibleWidth);
+      fo.setAttribute('x', String(scrollLeft));
+      fo.setAttribute('width', String(visibleWidth));
 
       if (SidebarLogic.isVisible() && !_isNavigating)
         SidebarLogic.updatePosition();
@@ -1234,7 +1234,8 @@ if (typeof document !== 'undefined') {
     if (sidebarEl) {
       sidebarEl.addEventListener('click', (e) => {
         e.stopPropagation(); // Prevent SVG background click
-        if (e.target.classList.contains('sidebar-close')) {
+        const target = /** @type {Element} */ (e.target);
+        if (target.classList.contains('sidebar-close')) {
           AppState.clearPinned(appState);
           AppState.clearHover(appState);
           highlightTiming.immediate();

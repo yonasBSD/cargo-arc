@@ -18,7 +18,7 @@ const StaticData = {
   /**
    * Get arc data by ID
    * @param {string} id - Arc ID (format: "from-to")
-   * @returns {{ from: string, to: string, usages: string[] }|undefined}
+   * @returns {{ from: string, to: string, usages: Array<{symbol: string, modulePath: string|null, locations: {file: string, line: number}[]}> }|undefined}
    */
   getArc(id) {
     return STATIC_DATA.arcs[id];
@@ -50,7 +50,7 @@ const StaticData = {
   /**
    * Get arc usages (source locations array)
    * @param {string} arcId
-   * @returns {string[]}
+   * @returns {Array<{symbol: string, modulePath: string|null, locations: {file: string, line: number}[]}>}
    */
   getArcUsages(arcId) {
     return STATIC_DATA.arcs[arcId]?.usages ?? [];

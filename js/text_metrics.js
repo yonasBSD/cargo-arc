@@ -1,10 +1,10 @@
-// @module TextMetrics
+// @module TextMeasure
 // @deps
 // @config
 // text_metrics.js - Pure text width estimation without DOM
 // Replaces getBBox() calls for text measurement
 
-const TextMetrics = {
+const TextMeasure = {
   // Monospace character widths (measured from actual font rendering)
   CHAR_WIDTH_12PX: 7.2, // Monospace 12px (node labels) - matches CHAR_WIDTH in render.rs
   CHAR_WIDTH_11PX: 6.6, // Monospace 11px (floating label)
@@ -36,5 +36,5 @@ const TextMetrics = {
 
 // CommonJS export for tests (Node/Bun)
 if (typeof module !== 'undefined') {
-  module.exports = { TextMetrics };
+  module.exports = { TextMeasure };
 }

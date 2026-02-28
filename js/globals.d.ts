@@ -1,0 +1,38 @@
+// Cross-file global declarations for tsc --noEmit typecheck.
+// Each production JS file defines a top-level const (global-script pattern);
+// tsc cannot see cross-file globals, so we declare them here.
+
+// Module globals — typeof import preserves the inferred types from each file.
+declare const ArcLogic: typeof import('./arc_logic.js').ArcLogic;
+declare const AppState: typeof import('./app_state.js').AppState;
+declare const DomAdapter: typeof import('./dom_adapter.js').DomAdapter;
+declare const DerivedState: typeof import('./derived_state.js').DerivedState;
+declare const HighlightLogic: typeof import('./highlight_logic.js').HighlightLogic;
+declare const HighlightRenderer: typeof import('./highlight_renderer.js').HighlightRenderer;
+declare const LayerManager: typeof import('./layer_manager.js').LayerManager;
+declare const SearchLogic: typeof import('./search.js').SearchLogic;
+declare const Selectors: typeof import('./selectors.js').Selectors;
+declare const SidebarLogic: typeof import('./sidebar.js').SidebarLogic;
+declare const StaticData: typeof import('./static_data.js').StaticData;
+declare const TreeLogic: typeof import('./tree_logic.js').TreeLogic;
+declare const VirtualEdgeLogic: typeof import('./virtual_edge_logic.js').VirtualEdgeLogic;
+declare const TextMeasure: typeof import('./text_metrics.js').TextMeasure;
+
+// Runtime placeholders (replaced by Rust at render time)
+declare const __ROW_HEIGHT__: number;
+declare const __MARGIN__: number;
+declare const __TOOLBAR_HEIGHT__: number;
+declare const __SIDEBAR_SHADOW_PAD__: number;
+
+// Runtime global: pre-rendered static data from Rust
+declare const STATIC_DATA: {
+  nodes: Record<string, any>;
+  arcs: Record<string, any>;
+  classes: Record<string, string>;
+  cycles?: Record<string, any>;
+};
+
+// Window augmentation
+interface Window {
+  DEBUG_ARCS?: boolean;
+}
