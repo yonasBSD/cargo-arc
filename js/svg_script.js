@@ -177,27 +177,31 @@ if (typeof document !== 'undefined') {
       const targetScroll = nodeCenterPage - window.innerHeight / 2;
       const maxScroll =
         document.documentElement.scrollHeight - window.innerHeight;
-      _isNavigating = true;
-      const sidebarEl = SidebarLogic._getElement();
-      if (sidebarEl) sidebarEl.style.visibility = 'hidden';
-      function finishNavigation() {
-        _isNavigating = false;
-        if (sidebarEl) sidebarEl.style.visibility = '';
-        if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
+      const clampedTarget = Math.max(0, Math.min(targetScroll, maxScroll));
+      const scrollDistance = Math.abs(clampedTarget - window.scrollY);
+      const isLargeScroll = scrollDistance >= window.innerHeight / 4;
+
+      if (isLargeScroll) {
+        _isNavigating = true;
+        const sidebarEl = SidebarLogic._getElement();
+        if (sidebarEl) sidebarEl.style.visibility = 'hidden';
+        function finishNavigation() {
+          _isNavigating = false;
+          if (sidebarEl) sidebarEl.style.visibility = '';
+          if (SidebarLogic.isVisible()) SidebarLogic.updatePosition();
+        }
+        window.addEventListener(
+          'scrollend',
+          () => {
+            clearTimeout(navTimeout);
+            finishNavigation();
+          },
+          { once: true },
+        );
+        const navTimeout = setTimeout(() => finishNavigation(), 600);
       }
-      window.addEventListener(
-        'scrollend',
-        () => {
-          clearTimeout(navTimeout);
-          finishNavigation();
-        },
-        { once: true },
-      );
-      const navTimeout = setTimeout(() => finishNavigation(), 600);
-      window.scrollTo({
-        top: Math.max(0, Math.min(targetScroll, maxScroll)),
-        behavior: 'smooth',
-      });
+
+      window.scrollTo({ top: clampedTarget, behavior: 'smooth' });
     }
 
     SidebarLogic._onBadgeClick = (nodeId) => scrollToNode(nodeId);
