@@ -119,7 +119,7 @@ const SidebarLogic = {
       for (const group of sorted) {
         html += `<div class="sidebar-usage-group">`;
         if (group.symbol) {
-          html += `<div class="sidebar-symbol">`;
+          html += `<div class="sidebar-symbol" data-collapsible="">`;
           html += `<span class="sidebar-toggle">&#x25BE;</span>`;
           if (group.modulePath) {
             html += `<span class="sidebar-ns">${group.modulePath}::</span>`;
@@ -166,11 +166,14 @@ const SidebarLogic = {
     const nodeType = node ? node.type : '';
     const hasRelations =
       relations.incoming.length > 0 || relations.outgoing.length > 0;
+    const hasCollapsible = [...relations.incoming, ...relations.outgoing].some(
+      (rel) => (rel.usages || []).length > 0,
+    );
 
     // Header: Node name + Collapse-All ("+", since all L1 start collapsed) + Close
     let html = `<div class="sidebar-header">`;
     html += `<span class="sidebar-title"><span class="sidebar-node-${nodeType} sidebar-node-selected" data-node-id="${nodeId}">${nodeName}${this._renderCollapseIndicator(nodeId)}</span></span>`;
-    if (hasRelations) {
+    if (hasCollapsible) {
       html += `<div class="sidebar-header-actions">`;
       html += `<button class="sidebar-collapse-all">+</button>`;
       html += `<button class="sidebar-close">&#x2715;</button>`;
@@ -287,7 +290,7 @@ const SidebarLogic = {
     }
 
     // Level 1 header (collapsed)
-    html += `<div class="sidebar-symbol" data-collapsed="true">`;
+    html += `<div class="sidebar-symbol" data-collapsible="" data-collapsed="true">`;
     html += `<span class="sidebar-toggle">&#x25B8;</span>`;
     html += `<span class="${fromClass} sidebar-symbol-name" data-node-id="${fromId}">${fromName}${this._renderCollapseIndicator(fromId)}</span>`;
     html += `<span class="sidebar-arrow">&#x2192;</span>`;
@@ -303,7 +306,7 @@ const SidebarLogic = {
     for (const group of sorted) {
       html += `<div class="sidebar-usage-group">`;
       if (group.symbol) {
-        html += `<div class="sidebar-symbol">`;
+        html += `<div class="sidebar-symbol" data-collapsible="">`;
         html += `<span class="sidebar-toggle">&#x25BE;</span>`;
         if (group.modulePath) {
           html += `<span class="sidebar-ns">${group.modulePath}::</span>`;
@@ -533,7 +536,7 @@ const SidebarLogic = {
         const toName = toNode ? toNode.name : info.arc.to;
 
         html += `<div class="sidebar-usage-group${isSelected ? ' sidebar-selected-arc' : ''}">`;
-        html += `<div class="sidebar-symbol" data-collapsed="true">`;
+        html += `<div class="sidebar-symbol" data-collapsible="" data-collapsed="true">`;
         html += `<span class="sidebar-toggle">&#x25B8;</span>`;
         html += `<span class="sidebar-symbol-name" data-node-id="${info.arc.from}">${fromName}${this._renderCollapseIndicator(info.arc.from)}</span>`;
         html += `<span class="sidebar-arrow">&#x2192;</span>`;
@@ -591,7 +594,7 @@ const SidebarLogic = {
 
       // L1: Cycle group as collapsible sidebar-symbol
       contentHtml += `<div class="sidebar-usage-group">`;
-      contentHtml += `<div class="sidebar-symbol" data-collapsed="true">`;
+      contentHtml += `<div class="sidebar-symbol" data-collapsible="" data-collapsed="true">`;
       contentHtml += `<span class="sidebar-toggle">&#x25B8;</span>`;
       contentHtml += `<span class="sidebar-symbol-name">Cycle ${cycleNum} (${cycle.arcs.length} edges)</span>`;
       contentHtml += `<span class="sidebar-ref-count">${cycleLocs}</span>`;
@@ -607,7 +610,7 @@ const SidebarLogic = {
 
         // L2: Individual arc as collapsible sidebar-symbol
         contentHtml += `<div class="sidebar-usage-group${isSelected ? ' sidebar-selected-arc' : ''}">`;
-        contentHtml += `<div class="sidebar-symbol" data-collapsed="true">`;
+        contentHtml += `<div class="sidebar-symbol" data-collapsible="" data-collapsed="true">`;
         contentHtml += `<span class="sidebar-toggle">&#x25B8;</span>`;
         contentHtml += `<span class="sidebar-symbol-name" data-node-id="${info.arc.from}">${fromName}${this._renderCollapseIndicator(info.arc.from)}</span>`;
         contentHtml += `<span class="sidebar-arrow">&#x2192;</span>`;
@@ -656,8 +659,8 @@ const SidebarLogic = {
     content.addEventListener('click', (e) => {
       const symbolEl = e.target.closest('.sidebar-symbol');
       if (!symbolEl) return;
+      if (!symbolEl.hasAttribute('data-collapsible')) return;
       const locsEl = symbolEl.nextElementSibling;
-      if (!locsEl || !locsEl.classList.contains('sidebar-locations')) return;
       const isCollapsed = symbolEl.getAttribute('data-collapsed') === 'true';
       if (isCollapsed) {
         symbolEl.removeAttribute('data-collapsed');
@@ -674,7 +677,7 @@ const SidebarLogic = {
       if (allBtn) {
         const allCollapsed = Array.from(
           content.querySelectorAll(
-            ':scope > .sidebar-usage-group > .sidebar-symbol',
+            ':scope > .sidebar-usage-group > .sidebar-symbol[data-collapsible]',
           ),
         ).every((s) => s.getAttribute('data-collapsed') === 'true');
         allBtn.innerHTML = allCollapsed ? '+' : '\u2212';
@@ -704,17 +707,17 @@ const SidebarLogic = {
     const collapseAllBtn = root.querySelector('.sidebar-collapse-all');
     if (!collapseAllBtn) return;
     collapseAllBtn.addEventListener('click', () => {
-      const symbols = content.querySelectorAll(
-        ':scope > .sidebar-usage-group > .sidebar-symbol',
+      const symbols = Array.from(
+        content.querySelectorAll(
+          ':scope > .sidebar-usage-group > .sidebar-symbol[data-collapsible]',
+        ),
       );
       if (!symbols.length) return;
-      const anyExpanded = Array.from(symbols).some(
+      const anyExpanded = symbols.some(
         (s) => s.getAttribute('data-collapsed') !== 'true',
       );
       for (const symbolEl of symbols) {
         const locsEl = symbolEl.nextElementSibling;
-        if (!locsEl || !locsEl.classList.contains('sidebar-locations'))
-          continue;
         const toggle = symbolEl.querySelector('.sidebar-toggle');
         if (anyExpanded) {
           symbolEl.setAttribute('data-collapsed', 'true');

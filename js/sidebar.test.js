@@ -464,6 +464,16 @@ describe('SidebarLogic', () => {
       const html = SidebarLogic.buildContent('crate_a-crate_b');
       expect(html).toContain('sidebar-toggle');
     });
+
+    test('generated HTML uses XML-safe attributes', () => {
+      // SVG is XML — attributes inside foreignObject must have explicit values.
+      // Boolean HTML attributes like data-foo (without ="...") cause XML parsing errors.
+      const html = SidebarLogic.buildContent('crate_a-crate_b');
+      const valueless = [...html.matchAll(/\sdata-[\w-]+/g)]
+        .filter((m) => html[m.index + m[0].length] !== '=')
+        .map((m) => m[0].trim());
+      expect(valueless).toEqual([]);
+    });
   });
 
   describe('show/hide/isVisible', () => {
@@ -1053,6 +1063,7 @@ describe('SidebarLogic', () => {
   describe('collapse-all handler', () => {
     function makeSymbolEl(collapsed) {
       const attrs = new Map();
+      attrs.set('data-collapsible', '');
       const classes = new Set(['sidebar-symbol']);
       if (collapsed) attrs.set('data-collapsed', 'true');
       const toggleEl = {
@@ -1076,6 +1087,9 @@ describe('SidebarLogic', () => {
         symbolEl: {
           getAttribute(name) {
             return attrs.get(name) ?? null;
+          },
+          hasAttribute(name) {
+            return attrs.has(name);
           },
           setAttribute(name, value) {
             attrs.set(name, value);
@@ -1119,7 +1133,11 @@ describe('SidebarLogic', () => {
       const content = {
         querySelectorAll(sel) {
           if (sel === '.sidebar-symbol') return symbolEls;
-          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+          if (
+            sel === ':scope > .sidebar-usage-group > .sidebar-symbol' ||
+            sel ===
+              ':scope > .sidebar-usage-group > .sidebar-symbol[data-collapsible]'
+          )
             return symbolEls;
           return [];
         },
@@ -1203,7 +1221,11 @@ describe('SidebarLogic', () => {
       const content = {
         querySelectorAll(sel) {
           if (sel === '.sidebar-symbol') return allEls;
-          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+          if (
+            sel === ':scope > .sidebar-usage-group > .sidebar-symbol' ||
+            sel ===
+              ':scope > .sidebar-usage-group > .sidebar-symbol[data-collapsible]'
+          )
             return l1Els;
           return [];
         },
@@ -1282,6 +1304,174 @@ describe('SidebarLogic', () => {
       };
       // Should not throw
       expect(() => SidebarLogic._setupCollapseHandlers(root)).not.toThrow();
+    });
+
+    // External deps render as static symbols (no data-collapsible, no .sidebar-locations sibling)
+    function makeStaticSymbolEl() {
+      // External dep: .sidebar-symbol without data-collapsible
+      const attrs = new Map();
+      return {
+        symbolEl: {
+          getAttribute(name) {
+            return attrs.get(name) ?? null;
+          },
+          hasAttribute(name) {
+            return attrs.has(name);
+          },
+          setAttribute(name, value) {
+            attrs.set(name, value);
+          },
+          removeAttribute(name) {
+            attrs.delete(name);
+          },
+          classList: {
+            contains(c) {
+              return c === 'sidebar-symbol';
+            },
+          },
+          querySelector() {
+            return null;
+          },
+          nextElementSibling: null, // no .sidebar-locations sibling
+        },
+      };
+    }
+
+    function makeHandlerDomWithExtDeps(collapsibleDefs, extDepCount) {
+      const collapsible = collapsibleDefs.map((d) => makeSymbolEl(d.collapsed));
+      const extDeps = Array.from({ length: extDepCount }, () =>
+        makeStaticSymbolEl(),
+      );
+      // L1 symbols as querySelectorAll returns them: collapsible + external
+      const l1Els = [
+        ...collapsible.map((s) => s.symbolEl),
+        ...extDeps.map((s) => s.symbolEl),
+      ];
+      const listeners = new Map();
+      let collapseAllInner = '+';
+      const collapseAllBtn = {
+        get innerHTML() {
+          return collapseAllInner;
+        },
+        set innerHTML(v) {
+          collapseAllInner = v;
+        },
+        addEventListener(_evt, fn) {
+          if (!listeners.has('collapseAll')) listeners.set('collapseAll', []);
+          listeners.get('collapseAll').push(fn);
+        },
+      };
+      const collapsibleEls = collapsible.map((s) => s.symbolEl);
+      const content = {
+        querySelectorAll(sel) {
+          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+            return l1Els;
+          if (
+            sel ===
+            ':scope > .sidebar-usage-group > .sidebar-symbol[data-collapsible]'
+          )
+            return collapsibleEls;
+          return [];
+        },
+        addEventListener(_evt, fn) {
+          if (!listeners.has('content')) listeners.set('content', []);
+          listeners.get('content').push(fn);
+        },
+      };
+      const root = {
+        querySelector(sel) {
+          if (sel === '.sidebar-content') return content;
+          if (sel === '.sidebar-collapse-all') return collapseAllBtn;
+          return null;
+        },
+        querySelectorAll() {
+          return [];
+        },
+      };
+      return { root, collapsible, extDeps, collapseAllBtn, listeners };
+    }
+
+    test('collapse-all toggle works with external deps present', () => {
+      // Two collapsible (collapsed) + one external dep (no data-collapsed, no sibling)
+      const dom = makeHandlerDomWithExtDeps(
+        [{ collapsed: true }, { collapsed: true }],
+        1,
+      );
+      SidebarLogic._setupCollapseHandlers(dom.root);
+      const handlers = dom.listeners.get('collapseAll');
+
+      // First click: all collapsible are collapsed → should expand
+      for (const fn of handlers) fn();
+      for (const s of dom.collapsible) {
+        expect(s.symbolEl.getAttribute('data-collapsed')).toBeNull();
+        expect(s.locsEl.style.display).toBe('');
+      }
+      expect(dom.collapseAllBtn.innerHTML).toBe('\u2212');
+
+      // Second click: all collapsible are expanded → should collapse
+      for (const fn of handlers) fn();
+      for (const s of dom.collapsible) {
+        expect(s.symbolEl.getAttribute('data-collapsed')).toBe('true');
+        expect(s.locsEl.style.display).toBe('none');
+      }
+      expect(dom.collapseAllBtn.innerHTML).toBe('+');
+    });
+
+    test('per-item toggle button sync ignores external deps', () => {
+      const dom = makeHandlerDomWithExtDeps(
+        [{ collapsed: true }, { collapsed: true }],
+        1,
+      );
+      SidebarLogic._setupCollapseHandlers(dom.root);
+      const contentHandler = dom.listeners.get('content')[0];
+
+      // Expand first collapsible item
+      contentHandler({
+        target: {
+          closest(sel) {
+            return sel === '.sidebar-symbol'
+              ? dom.collapsible[0].symbolEl
+              : null;
+          },
+        },
+      });
+      // One expanded, one collapsed → button shows −
+      expect(dom.collapseAllBtn.innerHTML).toBe('\u2212');
+
+      // Expand second collapsible item
+      contentHandler({
+        target: {
+          closest(sel) {
+            return sel === '.sidebar-symbol'
+              ? dom.collapsible[1].symbolEl
+              : null;
+          },
+        },
+      });
+      // Both expanded → still −
+      expect(dom.collapseAllBtn.innerHTML).toBe('\u2212');
+
+      // Collapse both back
+      contentHandler({
+        target: {
+          closest(sel) {
+            return sel === '.sidebar-symbol'
+              ? dom.collapsible[0].symbolEl
+              : null;
+          },
+        },
+      });
+      contentHandler({
+        target: {
+          closest(sel) {
+            return sel === '.sidebar-symbol'
+              ? dom.collapsible[1].symbolEl
+              : null;
+          },
+        },
+      });
+      // All collapsible collapsed → button shows + (external dep must not poison this)
+      expect(dom.collapseAllBtn.innerHTML).toBe('+');
     });
   });
 
@@ -1516,6 +1706,28 @@ describe('SidebarLogic', () => {
       expect(html).toContain('No relations');
     });
 
+    test('only external deps (no usages): no collapse-all button', () => {
+      const html = SidebarLogic.buildNodeContent('crate_a', {
+        incoming: [],
+        outgoing: [
+          {
+            targetId: 'ext_serde',
+            weight: 0,
+            arcId: 'crate_a-ext_serde',
+            usages: [],
+          },
+          {
+            targetId: 'ext_tokio',
+            weight: 0,
+            arcId: 'crate_a-ext_tokio',
+            usages: [],
+          },
+        ],
+      });
+      expect(html).not.toContain('sidebar-collapse-all');
+      expect(html).toContain('sidebar-close');
+    });
+
     test('Level 1 collapsed, Level 2 expanded', () => {
       const html = SidebarLogic.buildNodeContent('crate_a', makeRelations());
       // Level 1: all data-collapsed="true"
@@ -1743,10 +1955,12 @@ describe('SidebarLogic', () => {
       // Cycle group headers should contain "Cycle N" text as sidebar-symbol-name
       expect(html).toContain('Cycle 1');
       expect(html).toContain('Cycle 2');
-      // All sidebar-symbol divs should be collapsed
+      // All sidebar-symbol divs should be collapsible and collapsed
       const symbolDivs = html.match(/<div class="sidebar-symbol"/g) || [];
       const collapsedDivs =
-        html.match(/<div class="sidebar-symbol" data-collapsed="true"/g) || [];
+        html.match(
+          /<div class="sidebar-symbol" data-collapsible="" data-collapsed="true"/g,
+        ) || [];
       expect(symbolDivs.length).toBeGreaterThan(0);
       expect(collapsedDivs.length).toBe(symbolDivs.length);
     });
@@ -1794,10 +2008,12 @@ describe('SidebarLogic', () => {
 
     test('single-cycle: arcs start collapsed', () => {
       const html = SidebarLogic.buildContent('A-B');
-      // All sidebar-symbol divs should have data-collapsed="true"
+      // All sidebar-symbol divs should have data-collapsible and data-collapsed="true"
       const symbolDivs = html.match(/<div class="sidebar-symbol"/g) || [];
       const collapsedDivs =
-        html.match(/<div class="sidebar-symbol" data-collapsed="true"/g) || [];
+        html.match(
+          /<div class="sidebar-symbol" data-collapsible="" data-collapsed="true"/g,
+        ) || [];
       expect(symbolDivs.length).toBeGreaterThan(0);
       expect(collapsedDivs.length).toBe(symbolDivs.length);
       // All sidebar-locations should have display:none
@@ -2245,7 +2461,11 @@ describe('SidebarLogic', () => {
       const contentListeners = new Map();
       const content = {
         querySelectorAll(sel) {
-          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+          if (
+            sel === ':scope > .sidebar-usage-group > .sidebar-symbol' ||
+            sel ===
+              ':scope > .sidebar-usage-group > .sidebar-symbol[data-collapsible]'
+          )
             return [];
           if (sel === '.sidebar-symbol') return [];
           return [];
@@ -2486,7 +2706,11 @@ describe('SidebarLogic', () => {
       const contentListeners = new Map();
       const content = {
         querySelectorAll(sel) {
-          if (sel === ':scope > .sidebar-usage-group > .sidebar-symbol')
+          if (
+            sel === ':scope > .sidebar-usage-group > .sidebar-symbol' ||
+            sel ===
+              ':scope > .sidebar-usage-group > .sidebar-symbol[data-collapsible]'
+          )
             return [];
           return [];
         },
