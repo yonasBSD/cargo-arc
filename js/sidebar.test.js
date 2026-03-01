@@ -2828,7 +2828,11 @@ describe('SidebarLogic', () => {
           { targetId: 'crate_b', weight: 2, arcId: 'a-b', usages: [] },
         ],
       };
-      const result = SidebarLogic._computeMaxBadgeLengths(relations, 'crate_a', 'crate_a');
+      const result = SidebarLogic._computeMaxBadgeLengths(
+        relations,
+        'crate_a',
+        'crate_a',
+      );
       // incoming fromNames: "render"(6), "cli"(3) → maxFrom=6
       // incoming toName: always "crate_a"(7) → maxTo=7
       expect(result.incoming.maxFrom).toBe(6);
@@ -2841,7 +2845,11 @@ describe('SidebarLogic', () => {
 
     test('empty sections return 0', () => {
       const relations = { incoming: [], outgoing: [] };
-      const result = SidebarLogic._computeMaxBadgeLengths(relations, 'crate_a', 'crate_a');
+      const result = SidebarLogic._computeMaxBadgeLengths(
+        relations,
+        'crate_a',
+        'crate_a',
+      );
       expect(result.incoming.maxFrom).toBe(0);
       expect(result.incoming.maxTo).toBe(0);
       expect(result.outgoing.maxFrom).toBe(0);
@@ -2866,7 +2874,11 @@ describe('SidebarLogic', () => {
           { targetId: 'ext_serde', weight: 1, arcId: 'a-s', usages: [] },
         ],
       };
-      const result = SidebarLogic._computeMaxBadgeLengths(relations, 'crate_a', 'crate_a');
+      const result = SidebarLogic._computeMaxBadgeLengths(
+        relations,
+        'crate_a',
+        'crate_a',
+      );
       // "serde v1.0.0" = 12 characters
       expect(result.outgoing.maxTo).toBe(12);
       delete globalThis.STATIC_DATA.nodes.ext_serde;

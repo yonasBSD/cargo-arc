@@ -188,7 +188,11 @@ const SidebarLogic = {
     if (!hasRelations) {
       html += `<div class="sidebar-usage-group">No relations</div>`;
     } else {
-      const badgeLens = this._computeMaxBadgeLengths(relations, nodeId, nodeName);
+      const badgeLens = this._computeMaxBadgeLengths(
+        relations,
+        nodeId,
+        nodeName,
+      );
 
       // Incoming (Dependents) first — selected node on the right
       for (const rel of relations.incoming) {

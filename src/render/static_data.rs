@@ -16,6 +16,8 @@ struct StaticData {
     arcs: BTreeMap<String, ArcData>,
     cycles: Vec<CycleData>,
     classes: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expand_level: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -30,6 +32,7 @@ struct NodeData {
     width: f32,
     height: f32,
     has_children: bool,
+    nesting: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<String>,
 }
@@ -166,6 +169,7 @@ fn format_source_locations_by_symbol(locs: &[SourceLocation]) -> Vec<SymbolUsage
 /// Generate `STATIC_DATA` JavaScript constant from layout data
 #[allow(clippy::too_many_lines)] // single cohesive serialization function
 fn generate_static_data(
+    config: &RenderConfig,
     ir: &LayoutIR,
     positioned: &[PositionedItem],
     parents: &HashSet<NodeId>,
@@ -203,6 +207,7 @@ fn generate_static_data(
                 width: pos.width,
                 height: pos.height,
                 has_children: parents.contains(&pos.id),
+                nesting: super::positioning::item_nesting(&item.kind),
                 version: item.version.clone(),
             },
         );
@@ -315,6 +320,7 @@ fn generate_static_data(
         arcs,
         cycles,
         classes,
+        expand_level: config.expand_level,
     };
     format!(
         "const STATIC_DATA = {};",
@@ -329,7 +335,7 @@ pub(super) fn render_script(
     parents: &HashSet<NodeId>,
 ) -> String {
     // Generate STATIC_DATA first (global scope, before IIFE)
-    let static_data = generate_static_data(ir, positioned, parents);
+    let static_data = generate_static_data(config, ir, positioned, parents);
 
     // JS modules loaded via build.rs-generated registry (topological order)
     let mut scripts = vec![static_data];

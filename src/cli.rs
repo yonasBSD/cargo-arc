@@ -88,6 +88,10 @@ pub struct Args {
     #[arg(long)]
     pub transitive_deps: bool,
 
+    /// Initial expand level for SVG (0=crates only, 1=direct modules, etc.)
+    #[arg(long)]
+    pub expand_level: Option<usize>,
+
     /// Use rust-analyzer HIR backend instead of syn (slower but may catch more)
     #[cfg(feature = "hir")]
     #[arg(long)]
@@ -172,7 +176,11 @@ pub fn run(args: Args) -> Result<()> {
         enrich_volatility(&mut layout, &args.manifest_path, vol_config);
     }
 
-    let svg = render(&layout, &RenderConfig::default());
+    let config = RenderConfig {
+        expand_level: args.expand_level,
+        ..RenderConfig::default()
+    };
+    let svg = render(&layout, &config);
     write_output(&svg, args.output.as_ref())
 }
 
@@ -514,6 +522,24 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_expand_level() {
+        let args = parse_args(&["cargo", "arc", "--expand-level", "0"]);
+        assert_eq!(args.expand_level, Some(0));
+    }
+
+    #[test]
+    fn test_parse_expand_level_two() {
+        let args = parse_args(&["cargo", "arc", "--expand-level", "2"]);
+        assert_eq!(args.expand_level, Some(2));
+    }
+
+    #[test]
+    fn test_parse_expand_level_default() {
+        let args = parse_args(&["cargo", "arc"]);
+        assert!(args.expand_level.is_none());
+    }
+
+    #[test]
     fn test_cli_volatility_config_defaults() {
         let args = parse_args(&["cargo", "arc"]);
         assert!(!args.no_volatility);
@@ -542,6 +568,7 @@ mod tests {
             volatility_high: 10,
             externals: false,
             transitive_deps: false,
+            expand_level: None,
             #[cfg(feature = "hir")]
             hir: false,
         };

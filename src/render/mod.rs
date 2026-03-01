@@ -15,7 +15,7 @@ use elements::{
 };
 use positioning::{
     PositionedItem, calculate_box_width, calculate_canvas_size, calculate_max_arc_width,
-    calculate_positions,
+    calculate_positions, collapse_positions, item_nesting,
 };
 use static_data::render_script;
 
@@ -23,11 +23,8 @@ use static_data::render_script;
 #[must_use]
 pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
     let box_width = calculate_box_width(ir);
-    let positioned = calculate_positions(ir, config, box_width);
-    let positioned_index: HashMap<NodeId, &PositionedItem> =
-        positioned.iter().map(|p| (p.id, p)).collect();
-    let max_arc_width = calculate_max_arc_width(&positioned_index, ir, config.row_height);
-    let (width, height) = calculate_canvas_size(&positioned, config, max_arc_width);
+    // Full positions for STATIC_DATA (JS needs all positions for expand/collapse)
+    let positioned_all = calculate_positions(ir, config, box_width);
 
     // Collect all node IDs that are parents (have children)
     let parents: HashSet<NodeId> = ir
@@ -41,13 +38,57 @@ pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
         })
         .collect();
 
+    // When expand_level is set, compute visibility and collapsed positions
+    let (visible_nodes, collapsed_parents) = match config.expand_level {
+        Some(level) => {
+            let visible: HashSet<NodeId> = ir
+                .items
+                .iter()
+                .filter(|item| item_nesting(&item.kind) <= level)
+                .map(|item| item.id)
+                .collect();
+            let collapsed: HashSet<NodeId> = parents
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    let item = &ir.items[id];
+                    item_nesting(&item.kind) >= level
+                })
+                .collect();
+            (Some(visible), collapsed)
+        }
+        None => (None, HashSet::new()),
+    };
+
+    // Positions for SVG rendering: collapsed or full
+    let positioned_visible = match &visible_nodes {
+        Some(visible) => collapse_positions(&positioned_all, visible, config),
+        None => positioned_all.clone(),
+    };
+
+    let positioned_vis_index: HashMap<NodeId, &PositionedItem> =
+        positioned_visible.iter().map(|p| (p.id, p)).collect();
+    let max_arc_width = calculate_max_arc_width(&positioned_vis_index, ir, config.row_height);
+    let (width, height) = calculate_canvas_size(&positioned_visible, config, max_arc_width);
+
     let mut svg = String::new();
     svg.push_str(&render_header(width, height));
     svg.push_str(&render_styles());
     svg.push_str("  <g id=\"graph-content\">\n");
-    svg.push_str(&render_tree_lines(&positioned_index, ir));
-    svg.push_str(&render_nodes(&positioned, &parents));
-    svg.push_str(&render_edges(&positioned_index, ir, config.row_height));
+    svg.push_str(&render_tree_lines(&positioned_vis_index, ir));
+    svg.push_str(&render_nodes(
+        &positioned_all,
+        &parents,
+        visible_nodes.as_ref(),
+        &collapsed_parents,
+        &positioned_vis_index,
+    ));
+    svg.push_str(&render_edges(
+        &positioned_vis_index,
+        ir,
+        config.row_height,
+        visible_nodes.as_ref(),
+    ));
     svg.push_str("  </g>\n");
     let has_externals = ir
         .items
@@ -62,13 +103,15 @@ pub fn render(ir: &LayoutIR, config: &RenderConfig) -> String {
             }
         )
     });
+    let initial_collapsed = !collapsed_parents.is_empty();
     svg.push_str(&render_toolbar(
         width,
         has_externals,
         has_transitive_externals,
+        initial_collapsed,
     ));
     svg.push_str(&render_sidebar(width));
-    svg.push_str(&render_script(config, ir, &positioned, &parents));
+    svg.push_str(&render_script(config, ir, &positioned_all, &parents));
     svg.push_str("</svg>\n");
     svg
 }
@@ -78,6 +121,87 @@ mod tests {
     use super::*;
     use crate::layout::{CycleKind, LayoutEdge};
     use crate::model::EdgeContext;
+
+    #[test]
+    fn test_render_expand_level_zero() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "my_crate".into());
+        let a = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "mod_a".into(),
+        );
+        let b = ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "mod_b".into(),
+        );
+        ir.edges
+            .push(LayoutEdge::new(a, b, EdgeContext::production()));
+
+        let config = RenderConfig {
+            expand_level: Some(0),
+            ..RenderConfig::default()
+        };
+        let svg = render(&ir, &config);
+
+        // Modules should have collapsed class
+        assert!(
+            svg.contains(r#"class="module collapsed""#),
+            "Modules should have collapsed class with expand_level=0"
+        );
+        // No edges should be rendered (all between hidden modules)
+        assert!(
+            !svg.contains(r#"class="dep-arc"#),
+            "No edges should appear with expand_level=0"
+        );
+        // STATIC_DATA should contain expandLevel
+        assert!(
+            svg.contains(r#""expandLevel":0"#),
+            "STATIC_DATA should contain expandLevel"
+        );
+        // STATIC_DATA should contain nesting
+        assert!(
+            svg.contains(r#""nesting":0"#),
+            "STATIC_DATA should contain nesting for crate"
+        );
+        assert!(
+            svg.contains(r#""nesting":1"#),
+            "STATIC_DATA should contain nesting for module"
+        );
+        // Toolbar should say "Expand All"
+        assert!(
+            svg.contains("Expand All"),
+            "Toolbar should show 'Expand All' with expand_level=0"
+        );
+    }
+
+    #[test]
+    fn test_render_expand_level_none_unchanged() {
+        let mut ir = LayoutIR::new();
+        let c = ir.add_item(ItemKind::Crate, "c".into());
+        ir.add_item(
+            ItemKind::Module {
+                nesting: 1,
+                parent: c,
+            },
+            "m".into(),
+        );
+        let svg = render(&ir, &RenderConfig::default());
+        // No collapsed class without expand_level
+        assert!(
+            !svg.contains(r#"class="module collapsed""#),
+            "No collapsed class without expand_level"
+        );
+        assert!(
+            svg.contains("Collapse All"),
+            "Toolbar should show 'Collapse All' without expand_level"
+        );
+    }
 
     #[test]
     fn test_render_empty() {

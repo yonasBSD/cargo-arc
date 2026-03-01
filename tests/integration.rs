@@ -23,6 +23,7 @@ fn fixture_args(fixture: &str, include_tests: bool) -> (tempfile::NamedTempFile,
         volatility_high: 10,
         externals: false,
         transitive_deps: false,
+        expand_level: None,
         #[cfg(feature = "hir")]
         hir: false,
     };
@@ -48,6 +49,7 @@ fn self_args() -> (tempfile::NamedTempFile, Args) {
         volatility_high: 10,
         externals: false,
         transitive_deps: false,
+        expand_level: None,
         #[cfg(feature = "hir")]
         hir: false,
     };
@@ -194,6 +196,7 @@ fn test_cfg_test_included_with_flag() {
         volatility_high: 10,
         externals: false,
         transitive_deps: false,
+        expand_level: None,
         #[cfg(feature = "hir")]
         hir: false,
     };
@@ -232,6 +235,7 @@ fn test_entry_point_imports() {
         volatility_high: 10,
         externals: false,
         transitive_deps: false,
+        expand_level: None,
         #[cfg(feature = "hir")]
         hir: false,
     };

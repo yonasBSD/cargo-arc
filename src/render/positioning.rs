@@ -1,6 +1,6 @@
 use super::constants::{LAYOUT, RenderConfig};
 use crate::layout::{ItemKind, LayoutIR, NodeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Calculate text width based on character count
 #[allow(clippy::cast_precision_loss)] // label lengths stay well below 2^23
@@ -35,6 +35,7 @@ pub(super) fn calculate_max_arc_width(
 }
 
 /// Positioned item for rendering
+#[derive(Clone)]
 pub(super) struct PositionedItem {
     pub id: NodeId,
     pub x: f32,
@@ -43,6 +44,45 @@ pub(super) struct PositionedItem {
     pub height: f32,
     pub label: String,
     pub kind: ItemKind,
+}
+
+/// Get the nesting depth for an item kind.
+/// Crate/ExternalSection = 0, Module = its nesting field, `ExternalCrate` = 1.
+#[allow(clippy::cast_possible_truncation)] // nesting u32 fits in usize
+pub(super) fn item_nesting(kind: &ItemKind) -> usize {
+    match kind {
+        ItemKind::Crate | ItemKind::ExternalSection => 0,
+        ItemKind::Module { nesting, .. } => *nesting as usize,
+        ItemKind::ExternalCrate { .. } => 1,
+    }
+}
+
+/// Build collapsed positions: filter to visible nodes, assign gap-free Y positions.
+/// `positioned_all` contains the full layout, `visible` determines which nodes to keep.
+#[allow(clippy::cast_precision_loss)] // item count stays well below 2^23
+pub(super) fn collapse_positions(
+    positioned_all: &[PositionedItem],
+    visible: &HashSet<NodeId>,
+    config: &RenderConfig,
+) -> Vec<PositionedItem> {
+    let mut result = Vec::new();
+    let mut current_y = config.margin + LAYOUT.toolbar.height;
+    for item in positioned_all {
+        if !visible.contains(&item.id) {
+            continue;
+        }
+        result.push(PositionedItem {
+            id: item.id,
+            x: item.x,
+            y: current_y,
+            width: item.width,
+            height: item.height,
+            label: item.label.clone(),
+            kind: item.kind.clone(),
+        });
+        current_y += config.row_height;
+    }
+    result
 }
 
 #[allow(clippy::cast_precision_loss)] // nesting depth and item count stay well below 2^23
@@ -194,6 +234,118 @@ mod tests {
         assert_eq!(
             widths[0], widths[1],
             "All boxes should have same width: {widths:?}"
+        );
+    }
+
+    #[test]
+    fn test_collapse_positions_hides_one_of_three() {
+        let config = RenderConfig::default();
+        let items = vec![
+            PositionedItem {
+                id: 0,
+                x: 20.0,
+                y: 60.0,
+                width: 100.0,
+                height: 24.0,
+                label: "crate".into(),
+                kind: ItemKind::Crate,
+            },
+            PositionedItem {
+                id: 1,
+                x: 40.0,
+                y: 90.0,
+                width: 100.0,
+                height: 20.0,
+                label: "mod_a".into(),
+                kind: ItemKind::Module {
+                    nesting: 1,
+                    parent: 0,
+                },
+            },
+            PositionedItem {
+                id: 2,
+                x: 40.0,
+                y: 120.0,
+                width: 100.0,
+                height: 20.0,
+                label: "mod_b".into(),
+                kind: ItemKind::Module {
+                    nesting: 1,
+                    parent: 0,
+                },
+            },
+        ];
+
+        let mut visible: HashSet<NodeId> = HashSet::new();
+        visible.insert(0);
+        visible.insert(2); // hide item 1
+
+        let result = collapse_positions(&items, &visible, &config);
+
+        assert_eq!(result.len(), 2, "should contain 2 visible items");
+        assert_eq!(result[0].id, 0);
+        assert_eq!(result[1].id, 2);
+
+        // Gap-free Y: second item directly after first
+        let expected_y0 = config.margin + LAYOUT.toolbar.height;
+        let expected_y1 = expected_y0 + config.row_height;
+        assert!(
+            (result[0].y - expected_y0).abs() < 0.01,
+            "first Y {}, expected {}",
+            result[0].y,
+            expected_y0
+        );
+        assert!(
+            (result[1].y - expected_y1).abs() < 0.01,
+            "second Y {}, expected {} (gap-free)",
+            result[1].y,
+            expected_y1
+        );
+    }
+
+    #[test]
+    fn test_collapse_positions_empty_visible_set() {
+        let config = RenderConfig::default();
+        let items = vec![PositionedItem {
+            id: 0,
+            x: 20.0,
+            y: 60.0,
+            width: 100.0,
+            height: 24.0,
+            label: "crate".into(),
+            kind: ItemKind::Crate,
+        }];
+
+        let visible: HashSet<NodeId> = HashSet::new();
+        let result = collapse_positions(&items, &visible, &config);
+
+        assert!(result.is_empty(), "empty visible set → empty result");
+    }
+
+    #[test]
+    fn test_item_nesting_variants() {
+        assert_eq!(item_nesting(&ItemKind::Crate), 0);
+        assert_eq!(item_nesting(&ItemKind::ExternalSection), 0);
+        assert_eq!(
+            item_nesting(&ItemKind::Module {
+                nesting: 1,
+                parent: 0
+            }),
+            1
+        );
+        assert_eq!(
+            item_nesting(&ItemKind::Module {
+                nesting: 3,
+                parent: 0
+            }),
+            3
+        );
+        assert_eq!(
+            item_nesting(&ItemKind::ExternalCrate {
+                parent: 0,
+                is_direct_dependency: true
+            }),
+            1
         );
     }
 

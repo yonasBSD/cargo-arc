@@ -584,4 +584,178 @@ describe('StaticData', () => {
       expect(groups.size).toBe(0);
     });
   });
+
+  describe('getExpandLevel', () => {
+    test('returns null when expandLevel not set', () => {
+      // TEST_STATIC_DATA has no expandLevel field
+      expect(StaticData.getExpandLevel()).toBeNull();
+    });
+
+    test('returns null when expandLevel is undefined', () => {
+      TEST_STATIC_DATA.expandLevel = undefined;
+      expect(StaticData.getExpandLevel()).toBeNull();
+      delete TEST_STATIC_DATA.expandLevel;
+    });
+
+    test('returns numeric value when expandLevel is set', () => {
+      TEST_STATIC_DATA.expandLevel = 2;
+      expect(StaticData.getExpandLevel()).toBe(2);
+      delete TEST_STATIC_DATA.expandLevel;
+    });
+
+    test('returns 0 when expandLevel is 0', () => {
+      TEST_STATIC_DATA.expandLevel = 0;
+      expect(StaticData.getExpandLevel()).toBe(0);
+      delete TEST_STATIC_DATA.expandLevel;
+    });
+  });
+
+  describe('getNodeNesting', () => {
+    test('returns nesting for node with nesting field', () => {
+      TEST_STATIC_DATA.nodes.nested_mod = {
+        type: 'module',
+        parent: 'crate',
+        x: 40,
+        y: 100,
+        width: 100,
+        height: 20,
+        hasChildren: false,
+        nesting: 3,
+      };
+
+      expect(StaticData.getNodeNesting('nested_mod')).toBe(3);
+
+      delete TEST_STATIC_DATA.nodes.nested_mod;
+    });
+
+    test('returns undefined for node without nesting field', () => {
+      // crate node in TEST_STATIC_DATA has no nesting field
+      expect(StaticData.getNodeNesting('crate')).toBeUndefined();
+    });
+
+    test('returns undefined for non-existent node', () => {
+      expect(StaticData.getNodeNesting('nonexistent')).toBeUndefined();
+    });
+
+    test('returns 0 for node with nesting 0', () => {
+      TEST_STATIC_DATA.nodes.root_crate = {
+        type: 'crate',
+        parent: null,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 24,
+        hasChildren: true,
+        nesting: 0,
+      };
+
+      expect(StaticData.getNodeNesting('root_crate')).toBe(0);
+
+      delete TEST_STATIC_DATA.nodes.root_crate;
+    });
+  });
+
+  describe('expand-level init logic (collapsed set population)', () => {
+    // Replicate the init-block logic from svg_script.js:
+    // for each node, if hasChildren && nesting >= expandLevel → collapse it
+    function populateCollapsed(expandLvl) {
+      const collapsed = new Set();
+      if (expandLvl === null) return collapsed;
+      for (const nodeId of StaticData.getAllNodeIds()) {
+        if (
+          StaticData.hasChildren(nodeId) &&
+          StaticData.getNodeNesting(nodeId) >= expandLvl
+        ) {
+          collapsed.add(nodeId);
+        }
+      }
+      return collapsed;
+    }
+
+    test('expandLevel null → nothing collapsed', () => {
+      expect(populateCollapsed(null).size).toBe(0);
+    });
+
+    test('expandLevel collapses parent nodes at or above threshold', () => {
+      // Setup: crate (nesting 0, hasChildren), mod_a (nesting 1, hasChildren),
+      //        sub_mod (nesting 2, hasChildren), leaf (nesting 3, no children)
+      TEST_STATIC_DATA.nodes.crate.nesting = 0;
+      TEST_STATIC_DATA.nodes.mod_a.nesting = 1;
+      TEST_STATIC_DATA.nodes.sub_mod = {
+        type: 'module',
+        parent: 'mod_a',
+        x: 40,
+        y: 90,
+        width: 100,
+        height: 20,
+        hasChildren: true,
+        nesting: 2,
+      };
+      TEST_STATIC_DATA.nodes.leaf = {
+        type: 'module',
+        parent: 'sub_mod',
+        x: 60,
+        y: 100,
+        width: 100,
+        height: 20,
+        hasChildren: false,
+        nesting: 3,
+      };
+
+      // expandLevel=1 → collapse nodes with hasChildren && nesting >= 1
+      const collapsed = populateCollapsed(1);
+      expect(collapsed.has('crate')).toBe(false); // nesting 0 < 1
+      expect(collapsed.has('mod_a')).toBe(true); // nesting 1 >= 1, hasChildren
+      expect(collapsed.has('sub_mod')).toBe(true); // nesting 2 >= 1, hasChildren
+      expect(collapsed.has('leaf')).toBe(false); // no children
+
+      delete TEST_STATIC_DATA.nodes.sub_mod;
+      delete TEST_STATIC_DATA.nodes.leaf;
+      delete TEST_STATIC_DATA.nodes.crate.nesting;
+      delete TEST_STATIC_DATA.nodes.mod_a.nesting;
+    });
+
+    test('leaf nodes are never collapsed even at expandLevel 0', () => {
+      TEST_STATIC_DATA.nodes.crate.nesting = 0;
+      TEST_STATIC_DATA.nodes.fn_1.nesting = 2;
+      TEST_STATIC_DATA.nodes.fn_2.nesting = 2;
+
+      const collapsed = populateCollapsed(0);
+      // crate has children → collapsed
+      expect(collapsed.has('crate')).toBe(true);
+      // fn_1, fn_2 have no children → not collapsed
+      expect(collapsed.has('fn_1')).toBe(false);
+      expect(collapsed.has('fn_2')).toBe(false);
+
+      delete TEST_STATIC_DATA.nodes.crate.nesting;
+      delete TEST_STATIC_DATA.nodes.fn_1.nesting;
+      delete TEST_STATIC_DATA.nodes.fn_2.nesting;
+    });
+
+    test('STATIC_DATA provides arc data for edges between collapsed children', () => {
+      // When mod_a is collapsed at expandLevel=1, fn_1 and fn_2 are hidden.
+      // STATIC_DATA.arcs must still provide their arc data (single data source).
+      TEST_STATIC_DATA.nodes.crate.nesting = 0;
+      TEST_STATIC_DATA.nodes.mod_a.nesting = 1;
+      TEST_STATIC_DATA.nodes.fn_1.nesting = 2;
+      TEST_STATIC_DATA.nodes.fn_2.nesting = 2;
+
+      const collapsed = populateCollapsed(1);
+      expect(collapsed.has('mod_a')).toBe(true);
+
+      // Arc between hidden children must be discoverable via StaticData
+      const allArcIds = StaticData.getAllArcIds();
+      expect(allArcIds).toContain('fn_1-fn_2');
+
+      const arc = StaticData.getArc('fn_1-fn_2');
+      expect(arc.from).toBe('fn_1');
+      expect(arc.to).toBe('fn_2');
+      expect(StaticData.getArcUsages('fn_1-fn_2')).toEqual(arc.usages);
+
+      delete TEST_STATIC_DATA.nodes.crate.nesting;
+      delete TEST_STATIC_DATA.nodes.mod_a.nesting;
+      delete TEST_STATIC_DATA.nodes.fn_1.nesting;
+      delete TEST_STATIC_DATA.nodes.fn_2.nesting;
+    });
+  });
 });

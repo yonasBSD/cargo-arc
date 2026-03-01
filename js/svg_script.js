@@ -60,6 +60,19 @@ if (typeof document !== 'undefined') {
     // Use AppState module for unified state management
     const appState = AppState.create();
 
+    // === Initial expand-level: populate collapsed state from Rust-rendered view ===
+    const expandLevel = StaticData.getExpandLevel();
+    if (expandLevel !== null) {
+      for (const nodeId of StaticData.getAllNodeIds()) {
+        if (
+          StaticData.hasChildren(nodeId) &&
+          StaticData.getNodeNesting(nodeId) >= expandLevel
+        ) {
+          AppState.setCollapsed(appState, nodeId, true);
+        }
+      }
+    }
+
     /**
      * Central highlight rerender: derive state from AppState, apply via HighlightRenderer.
      * Single entry point for all highlight updates (click, hover, collapse, filter toggle).
@@ -362,32 +375,25 @@ if (typeof document !== 'undefined') {
       );
     }
 
-    // Helper: Extract edge data from DOM hitareas to pure objects
-    // Uses DerivedState for visibility instead of per-edge getVisibleAncestor calls
-    function extractEdgeData(hitareas, visibleNodes) {
+    // Helper: Extract edge data from STATIC_DATA to pure objects
+    // Single code path for all scenarios (with/without expand-level, interactive collapse)
+    function extractEdgeData(visibleNodes) {
       const edges = [];
-      hitareas.forEach((hitarea) => {
-        const fromId = hitarea.dataset.from;
-        const toId = hitarea.dataset.to;
-
-        // A node is hidden if it's not in the visibleNodes set
-        // (computed once via DerivedState.deriveNodeVisibility)
-        const fromIsHidden = !visibleNodes.has(fromId);
-        const toIsHidden = !visibleNodes.has(toId);
-
-        const arcId = hitarea.dataset.arcId;
+      for (const arcId of StaticData.getAllArcIds()) {
+        const arc = StaticData.getArc(arcId);
+        const fromId = arc.from;
+        const toId = arc.to;
         edges.push({
-          hitarea,
+          hitarea: DomAdapter.getHitarea(arcId),
           arcId,
           fromId,
           toId,
-          fromHidden: fromIsHidden,
-          toHidden: toIsHidden,
+          fromHidden: !visibleNodes.has(fromId),
+          toHidden: !visibleNodes.has(toId),
           sourceLocations: StaticData.getArcUsages(arcId),
-          // Compute direction from hierarchy (no DOM read)
           direction: DerivedState._determineDirection(fromId, toId, parentMap),
         });
-      });
+      }
       return edges;
     }
 
@@ -426,8 +432,8 @@ if (typeof document !== 'undefined') {
         }
 
         if (fromHidden || toHidden) {
-          // Hide original elements
-          hitarea.style.display = 'none';
+          // Hide original elements (hitarea may be null for expand-level hidden arcs)
+          if (hitarea) hitarea.style.display = 'none';
           const visibleArc = DomAdapter.getVisibleArc(arcId);
           if (visibleArc) visibleArc.style.display = 'none';
           DomAdapter.getArrows(`${fromId}-${toId}`).forEach((arr) => {
@@ -444,7 +450,7 @@ if (typeof document !== 'undefined') {
               3,
               maxRight,
             );
-            hitarea.setAttribute('d', arc.path);
+            if (hitarea) hitarea.setAttribute('d', arc.path);
             const visibleArc = DomAdapter.getVisibleArc(arcId);
             if (visibleArc) visibleArc.setAttribute('d', arc.path);
 
@@ -459,6 +465,104 @@ if (typeof document !== 'undefined') {
             });
           }
         }
+      });
+    }
+
+    // Create DOM elements for arcs whose endpoints are both visible but were
+    // never rendered by Rust (both were collapsed at initial render time).
+    function recoverMissingArcs(edgeData, currentPositions, maxRight, layers) {
+      edgeData.forEach((edge) => {
+        const { arcId, fromId, toId, fromHidden, toHidden, hitarea } = edge;
+        if (fromHidden || toHidden || hitarea) return;
+
+        const fromPos = currentPositions.get(fromId);
+        const toPos = currentPositions.get(toId);
+        if (!fromPos || !toPos) return;
+
+        const arc = calculateArcPathFromPositions(fromPos, toPos, 3, maxRight);
+        const strokeWidth = StaticData.getArcStrokeWidth(arcId);
+        const staticArc = StaticData.getArc(arcId);
+        const isCycle = staticArc.cycleIds && staticArc.cycleIds.length > 0;
+
+        // Determine CSS classes matching Rust rendering
+        const direction = edge.direction;
+        let arcClass;
+        let arrowClass;
+        if (isCycle) {
+          arcClass = C.cycleArc;
+          arrowClass = C.cycleArrow;
+        } else if (direction === 'upward') {
+          arcClass = `${C.depArc} ${C.upward}`;
+          arrowClass = C.upwardArrow;
+        } else {
+          arcClass = `${C.depArc} ${C.downward}`;
+          arrowClass = C.depArrow;
+        }
+
+        // Crate-level vs module-level arc
+        const fromNode = StaticData.getNode(fromId);
+        const toNode = StaticData.getNode(toId);
+        const isCrateDep =
+          fromNode &&
+          toNode &&
+          (fromNode.type === 'crate' ||
+            fromNode.type === 'external' ||
+            fromNode.type === 'external-transitive') &&
+          (toNode.type === 'crate' ||
+            toNode.type === 'external' ||
+            toNode.type === 'external-transitive');
+        const depLevel = isCrateDep ? C.crateDepArc : C.moduleDepArc;
+
+        // Visible path
+        const visPath = DomAdapter.createSvgElement('path');
+        visPath.setAttribute('class', `${arcClass} ${depLevel} recovered-arc`);
+        visPath.setAttribute('id', `edge-${arcId}`);
+        visPath.setAttribute('data-arc-id', arcId);
+        visPath.setAttribute('data-direction', direction);
+        visPath.style.strokeWidth = `${strokeWidth}px`;
+        visPath.setAttribute('d', arc.path);
+        layers.baseArcs.appendChild(visPath);
+
+        // Hitarea path
+        const hitPath = DomAdapter.createSvgElement('path');
+        hitPath.setAttribute('class', `${C.arcHitarea} recovered-arc`);
+        hitPath.setAttribute('data-arc-id', arcId);
+        hitPath.setAttribute('data-from', fromId);
+        hitPath.setAttribute('data-to', toId);
+        hitPath.setAttribute('data-direction', direction);
+        hitPath.setAttribute('d', arc.path);
+        hitPath.addEventListener('click', (e) => {
+          e.stopPropagation();
+          highlightEdge(fromId, toId);
+        });
+        hitPath.addEventListener('mouseenter', () =>
+          handleMouseEnter('arc', arcId),
+        );
+        hitPath.addEventListener('mouseleave', handleMouseLeave);
+        layers.hitareas.appendChild(hitPath);
+
+        // Arrow
+        const scale = ArcLogic.scaleFromStrokeWidth(strokeWidth);
+        const arrow = DomAdapter.createSvgElement('polygon');
+        arrow.setAttribute('class', `${arrowClass} recovered-arc`);
+        arrow.setAttribute('data-edge', arcId);
+        arrow.setAttribute(
+          'points',
+          ArcLogic.getArrowPoints({ x: arc.toX, y: arc.toY }, scale),
+        );
+        layers.baseArcs.appendChild(arrow);
+
+        // Cache for DomAdapter lookups
+        DomAdapter.cacheArcElements(
+          arcId,
+          visPath,
+          Array.from(
+            layers.baseArcs.querySelectorAll(
+              `polygon[data-edge="${arcId}"].recovered-arc`,
+            ),
+          ),
+          null,
+        );
       });
     }
 
@@ -512,10 +616,17 @@ if (typeof document !== 'undefined') {
       );
       const maxRight = DerivedState.computeMaxRight(currentPositions);
 
-      const hitareas = DomAdapter.getAllHitareas();
-      const edgeData = extractEdgeData(hitareas, visibleNodes);
+      const edgeData = extractEdgeData(visibleNodes);
 
       updateOriginalEdges(edgeData, currentPositions, maxRight);
+
+      const layers = {
+        baseArcs: DomAdapter.getElementById(LayerManager.LAYERS.BASE_ARCS),
+        baseLabels: DomAdapter.getElementById(LayerManager.LAYERS.BASE_LABELS),
+        hitareas: DomAdapter.getElementById(LayerManager.LAYERS.HITAREAS),
+      };
+
+      recoverMissingArcs(edgeData, currentPositions, maxRight, layers);
 
       const virtualEdges = VirtualEdgeLogic.aggregateHiddenEdges(
         edgeData,
@@ -528,12 +639,6 @@ if (typeof document !== 'undefined') {
         ArcLogic,
         ROW_HEIGHT,
       );
-
-      const layers = {
-        baseArcs: DomAdapter.getElementById(LayerManager.LAYERS.BASE_ARCS),
-        baseLabels: DomAdapter.getElementById(LayerManager.LAYERS.BASE_LABELS),
-        hitareas: DomAdapter.getElementById(LayerManager.LAYERS.HITAREAS),
-      };
       renderVirtualElements(mergedEdges, layers);
     }
 
@@ -1275,5 +1380,10 @@ if (typeof document !== 'undefined') {
 
     // Sync toolbar foreignObject height with actual content
     syncToolbarHeight();
+
+    // Bootstrap virtual arcs for initially collapsed nodes (expand-level)
+    if (expandLevel !== null) {
+      relayout();
+    }
   })();
 }

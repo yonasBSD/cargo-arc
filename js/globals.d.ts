@@ -30,6 +30,7 @@ declare const STATIC_DATA: {
   arcs: Record<string, any>;
   classes: Record<string, string>;
   cycles?: Record<string, any>;
+  expandLevel?: number | null;
 };
 
 // Window augmentation

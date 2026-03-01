@@ -34,11 +34,12 @@ pub(super) fn render_sidebar(width: f32) -> String {
     )
 }
 
-#[allow(clippy::cast_possible_truncation)] // SVG pixel coordinates fit in i32
+#[allow(clippy::cast_possible_truncation, clippy::too_many_lines)] // SVG pixel coordinates fit in i32
 pub(super) fn render_toolbar(
     width: f32,
     has_externals: bool,
     has_transitive_externals: bool,
+    initial_collapsed: bool,
 ) -> String {
     let ct = &CSS.toolbar;
     let height = LAYOUT.toolbar.height as i32;
@@ -77,7 +78,7 @@ pub(super) fn render_toolbar(
             "  <foreignObject id=\"toolbar-fo\" x=\"0\" y=\"0\" width=\"{}\" height=\"{}\"",
             " style=\"overflow:visible\">\n",
             "    <div class=\"{}\" xmlns=\"http://www.w3.org/1999/xhtml\">\n",
-            "      <button id=\"collapse-toggle-btn\" class=\"{}\">Collapse All</button>\n",
+            "      <button id=\"collapse-toggle-btn\" class=\"{}\">{}</button>\n",
             "      <span class=\"{}\"></span>\n",
             "      <div class=\"{}\">\n",
             "        <button id=\"view-dropdown-btn\" class=\"{} {}\">View \u{25be}</button>\n",
@@ -111,16 +112,21 @@ pub(super) fn render_toolbar(
             "    </div>\n",
             "  </foreignObject>\n",
         ),
-        width,             // foreignObject width
-        height,            // foreignObject height
-        ct.root,           // .toolbar-root
-        ct.html_btn,       // collapse button class
-        ct.separator_v,    // separator
-        ct.dropdown,       // .toolbar-dropdown container
-        ct.html_btn,       // dropdown button base class
-        ct.dropdown_btn,   // dropdown button marker class
+        width,       // foreignObject width
+        height,      // foreignObject height
+        ct.root,     // .toolbar-root
+        ct.html_btn, // collapse button class
+        if initial_collapsed {
+            "Expand All"
+        } else {
+            "Collapse All"
+        }, // button text
+        ct.separator_v, // separator
+        ct.dropdown, // .toolbar-dropdown container
+        ct.html_btn, // dropdown button base class
+        ct.dropdown_btn, // dropdown button marker class
         ct.dropdown_panel, // .toolbar-dropdown-panel
-        ct.toggle,         // label.toolbar-toggle (crate dep)
+        ct.toggle,   // label.toolbar-toggle (crate dep)
         ct.checkbox,
         ct.checked, // checkbox span (checked)
         ct.toggle,  // label.toolbar-toggle (module dep)
@@ -180,11 +186,28 @@ pub(super) fn render_tree_lines(
     lines
 }
 
-pub(super) fn render_nodes(positioned: &[PositionedItem], parents: &HashSet<NodeId>) -> String {
+#[allow(clippy::too_many_lines)]
+pub(super) fn render_nodes(
+    positioned: &[PositionedItem],
+    parents: &HashSet<NodeId>,
+    visible_nodes: Option<&HashSet<NodeId>>,
+    collapsed_parents: &HashSet<NodeId>,
+    visible_index: &HashMap<NodeId, &PositionedItem>,
+) -> String {
     let mut nodes = String::new();
     nodes.push_str("  <g id=\"nodes\">\n");
 
     for item in positioned {
+        // Hidden nodes get collapsed class and use off-screen position
+        let is_hidden = visible_nodes.is_some_and(|v| !v.contains(&item.id));
+        let is_collapsed_parent = collapsed_parents.contains(&item.id);
+
+        // Use visible position if available, otherwise original
+        let (render_x, render_y) = if let Some(vis_pos) = visible_index.get(&item.id) {
+            (vis_pos.x, vis_pos.y)
+        } else {
+            (item.x, item.y)
+        };
         let class = match &item.kind {
             ItemKind::Crate => CSS.nodes.crate_node,
             ItemKind::Module { .. } => CSS.nodes.module,
@@ -218,40 +241,73 @@ pub(super) fn render_nodes(positioned: &[PositionedItem], parents: &HashSet<Node
             ""
         };
 
+        // CSS class: add "collapsed" for hidden nodes
+        let collapsed_cls = CSS.nodes.collapsed;
+        let full_class = if is_hidden {
+            format!("{class} {collapsed_cls}")
+        } else {
+            class.to_string()
+        };
+
         let label = escape_xml(&item.label);
-        let text_x = item.x + LAYOUT.text_padding_x;
-        let text_y = item.y + item.height / 2.0 + LAYOUT.text_y_offset;
+        let text_x = render_x + LAYOUT.text_padding_x;
+        let text_y = render_y + item.height / 2.0 + LAYOUT.text_y_offset;
 
         let _ = writeln!(
             nodes,
-            "    <rect class=\"{class}\" id=\"node-{}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{rx}\"{parent_attr}{has_children_attr}/>",
-            item.id, item.x, item.y, item.width, item.height
+            "    <rect class=\"{full_class}\" id=\"node-{}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{rx}\"{parent_attr}{has_children_attr}/>",
+            item.id, render_x, render_y, item.width, item.height
         );
 
         // Label with optional child-count tspan for parents
         let lbl = CSS.nodes.label;
         let cc = CSS.nodes.child_count;
+        let label_class = if is_hidden {
+            format!("{lbl} {collapsed_cls}")
+        } else {
+            lbl.to_string()
+        };
         if parents.contains(&item.id) {
+            // Show child count for collapsed parents
+            let count_text = if is_collapsed_parent {
+                let child_count = positioned
+                    .iter()
+                    .filter(|p| match &p.kind {
+                        ItemKind::Module { parent, .. }
+                        | ItemKind::ExternalCrate { parent, .. } => *parent == item.id,
+                        _ => false,
+                    })
+                    .count();
+                format!(" (+{child_count})")
+            } else {
+                String::new()
+            };
             let _ = writeln!(
                 nodes,
-                "    <text class=\"{lbl}\" x=\"{text_x}\" y=\"{text_y}\">{label}<tspan id=\"count-{}\" class=\"{cc}\"></tspan></text>",
+                "    <text class=\"{label_class}\" x=\"{text_x}\" y=\"{text_y}\">{label}<tspan id=\"count-{}\" class=\"{cc}\">{count_text}</tspan></text>",
                 item.id
             );
         } else {
             let _ = writeln!(
                 nodes,
-                "    <text class=\"{lbl}\" x=\"{text_x}\" y=\"{text_y}\">{label}</text>"
+                "    <text class=\"{label_class}\" x=\"{text_x}\" y=\"{text_y}\">{label}</text>"
             );
         }
 
         // Toggle icon (+/-) for parents
         if parents.contains(&item.id) {
-            let toggle_x = item.x + item.width - LAYOUT.toggle_offset;
-            let toggle_y = item.y + item.height / 2.0 + LAYOUT.toggle_y_offset;
+            let toggle_x = render_x + item.width - LAYOUT.toggle_offset;
+            let toggle_y = render_y + item.height / 2.0 + LAYOUT.toggle_y_offset;
             let ct = CSS.nodes.collapse_toggle;
+            let toggle_icon = if is_collapsed_parent { "+" } else { "−" };
+            let toggle_cls = if is_hidden {
+                format!("{ct} {collapsed_cls}")
+            } else {
+                ct.to_string()
+            };
             let _ = writeln!(
                 nodes,
-                "    <text class=\"{ct}\" data-target=\"{}\" x=\"{}\" y=\"{}\">−</text>",
+                "    <text class=\"{toggle_cls}\" data-target=\"{}\" x=\"{}\" y=\"{}\">{toggle_icon}</text>",
                 item.id, toggle_x, toggle_y
             );
         }
@@ -261,10 +317,12 @@ pub(super) fn render_nodes(positioned: &[PositionedItem], parents: &HashSet<Node
     nodes
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn render_edges(
     positioned_index: &HashMap<NodeId, &PositionedItem>,
     ir: &LayoutIR,
     row_height: f32,
+    visible_nodes: Option<&HashSet<NodeId>>,
 ) -> String {
     let mut base_arcs = String::new();
     let mut hitareas = String::new();
@@ -290,6 +348,12 @@ pub(super) fn render_edges(
 
     for &idx in &edge_order {
         let edge = &ir.edges[idx];
+        // Skip edges to/from hidden nodes
+        if let Some(visible) = visible_nodes
+            && (!visible.contains(&edge.from) || !visible.contains(&edge.to))
+        {
+            continue;
+        }
         let from_pos = positioned_index.get(&edge.from).copied();
         let to_pos = positioned_index.get(&edge.to).copied();
 
@@ -526,7 +590,15 @@ mod tests {
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
         let parents: HashSet<NodeId> = [c].into();
-        let output = render_nodes(&positioned, &parents);
+        let positioned_index: HashMap<NodeId, &PositionedItem> =
+            positioned.iter().map(|p| (p.id, p)).collect();
+        let output = render_nodes(
+            &positioned,
+            &parents,
+            None,
+            &HashSet::new(),
+            &positioned_index,
+        );
         assert!(output.contains(r#"id="node-0""#), "Crate should have id");
         assert!(output.contains(r#"id="node-1""#), "Module should have id");
     }
@@ -546,7 +618,15 @@ mod tests {
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
         let parents: HashSet<NodeId> = [c].into();
-        let output = render_nodes(&positioned, &parents);
+        let positioned_index: HashMap<NodeId, &PositionedItem> =
+            positioned.iter().map(|p| (p.id, p)).collect();
+        let output = render_nodes(
+            &positioned,
+            &parents,
+            None,
+            &HashSet::new(),
+            &positioned_index,
+        );
         assert!(
             output.contains(r#"data-parent="0""#),
             "Module should have data-parent attribute pointing to crate"
@@ -568,7 +648,15 @@ mod tests {
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
         let parents: HashSet<NodeId> = [c].into();
-        let output = render_nodes(&positioned, &parents);
+        let positioned_index: HashMap<NodeId, &PositionedItem> =
+            positioned.iter().map(|p| (p.id, p)).collect();
+        let output = render_nodes(
+            &positioned,
+            &parents,
+            None,
+            &HashSet::new(),
+            &positioned_index,
+        );
         assert!(
             output.contains(r#"data-has-children="true""#),
             "Crate with children should have data-has-children attribute"
@@ -590,7 +678,15 @@ mod tests {
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
         let parents: HashSet<NodeId> = [c].into();
-        let output = render_nodes(&positioned, &parents);
+        let positioned_index: HashMap<NodeId, &PositionedItem> =
+            positioned.iter().map(|p| (p.id, p)).collect();
+        let output = render_nodes(
+            &positioned,
+            &parents,
+            None,
+            &HashSet::new(),
+            &positioned_index,
+        );
         assert!(
             output.contains(r#"class="collapse-toggle""#),
             "Parent nodes should have collapse toggle"
@@ -616,7 +712,15 @@ mod tests {
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
         let parents: HashSet<NodeId> = [c].into();
-        let output = render_nodes(&positioned, &parents);
+        let positioned_index: HashMap<NodeId, &PositionedItem> =
+            positioned.iter().map(|p| (p.id, p)).collect();
+        let output = render_nodes(
+            &positioned,
+            &parents,
+            None,
+            &HashSet::new(),
+            &positioned_index,
+        );
         assert!(
             output.contains(r#"id="count-0""#),
             "Parent should have child-count tspan with id"
@@ -629,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_contains_elements() {
-        let output = render_toolbar(800.0, false, false);
+        let output = render_toolbar(800.0, false, false, false);
         assert!(
             output.contains(r#"id="toolbar-fo""#),
             "Should have foreignObject with toolbar-fo id"
@@ -694,7 +798,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_external_checkbox_when_externals_present() {
-        let output = render_toolbar(800.0, true, false);
+        let output = render_toolbar(800.0, true, false, false);
         assert!(
             output.contains(r#"id="external-dep-checkbox""#),
             "Should have external-dep checkbox when externals present"
@@ -707,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_no_external_checkbox_without_externals() {
-        let output = render_toolbar(800.0, false, false);
+        let output = render_toolbar(800.0, false, false, false);
         assert!(
             !output.contains(r#"id="external-dep-checkbox""#),
             "Should NOT have external-dep checkbox without externals"
@@ -716,7 +820,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_transitive_checkbox_when_transitive_present() {
-        let output = render_toolbar(800.0, true, true);
+        let output = render_toolbar(800.0, true, true, false);
         assert!(
             output.contains(r#"id="transitive-dep-checkbox""#),
             "Should have transitive-dep checkbox when transitive externals present"
@@ -729,7 +833,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_no_transitive_checkbox_without_transitive() {
-        let output = render_toolbar(800.0, true, false);
+        let output = render_toolbar(800.0, true, false, false);
         assert!(
             !output.contains(r#"id="transitive-dep-checkbox""#),
             "Should NOT have transitive-dep checkbox without transitive externals"
@@ -738,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_render_toolbar_no_transitive_checkbox_without_externals() {
-        let output = render_toolbar(800.0, false, true);
+        let output = render_toolbar(800.0, false, true, false);
         assert!(
             !output.contains(r#"id="transitive-dep-checkbox""#),
             "Transitive checkbox should be nested inside external checkbox block"
@@ -770,7 +874,7 @@ mod tests {
         let positioned = calculate_positions(&ir, &config, box_width);
         let positioned_index: HashMap<_, _> = positioned.iter().map(|p| (p.id, p)).collect();
 
-        let output = render_edges(&positioned_index, &ir, config.row_height);
+        let output = render_edges(&positioned_index, &ir, config.row_height, None);
         assert!(output.contains(r#"id="edge-1-2""#), "Edge should have id");
         assert!(
             output.contains(r#"data-from="1""#),
@@ -811,7 +915,7 @@ mod tests {
         let positioned = calculate_positions(&ir, &config, box_width);
         let positioned_index: HashMap<_, _> = positioned.iter().map(|p| (p.id, p)).collect();
 
-        let output = render_edges(&positioned_index, &ir, config.row_height);
+        let output = render_edges(&positioned_index, &ir, config.row_height, None);
 
         assert!(
             output.contains(r#"class="arc-hitarea""#),
@@ -852,7 +956,7 @@ mod tests {
         let positioned = calculate_positions(&ir, &config, box_width);
         let positioned_index: HashMap<_, _> = positioned.iter().map(|p| (p.id, p)).collect();
 
-        let output = render_edges(&positioned_index, &ir, config.row_height);
+        let output = render_edges(&positioned_index, &ir, config.row_height, None);
         assert!(
             output.contains("crate-dep-arc"),
             "Crate-to-crate edges should have crate-dep-arc class"
@@ -897,7 +1001,7 @@ mod tests {
         let positioned = calculate_positions(&ir, &config, box_width);
         let positioned_index: HashMap<_, _> = positioned.iter().map(|p| (p.id, p)).collect();
 
-        let output = render_edges(&positioned_index, &ir, config.row_height);
+        let output = render_edges(&positioned_index, &ir, config.row_height, None);
 
         // Cycle arc path should have data-cycle-ids="0"
         let cycle_path = output
@@ -968,7 +1072,7 @@ mod tests {
         let box_width = calculate_box_width(&ir);
         let positioned = calculate_positions(&ir, &config, box_width);
         let positioned_index: HashMap<_, _> = positioned.iter().map(|p| (p.id, p)).collect();
-        let output = render_edges(&positioned_index, &ir, config.row_height);
+        let output = render_edges(&positioned_index, &ir, config.row_height, None);
 
         // Visible path should have comma-separated cycle IDs
         let cycle_path = output

@@ -511,6 +511,8 @@ pub struct RenderConfig {
     pub row_height: f32,
     pub indent_size: f32,
     pub margin: f32,
+    /// Initial expand level. `None` = all expanded (default), `Some(0)` = crates only.
+    pub expand_level: Option<usize>,
 }
 
 impl Default for RenderConfig {
@@ -519,6 +521,7 @@ impl Default for RenderConfig {
             row_height: 30.0,
             indent_size: 20.0,
             margin: 20.0,
+            expand_level: None,
         }
     }
 }

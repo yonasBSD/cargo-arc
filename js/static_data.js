@@ -18,7 +18,7 @@ const StaticData = {
   /**
    * Get arc data by ID
    * @param {string} id - Arc ID (format: "from-to")
-   * @returns {{ from: string, to: string, usages: Array<{symbol: string, modulePath: string|null, locations: {file: string, line: number}[]}> }|undefined}
+   * @returns {{ from: string, to: string, usages: Array<{symbol: string, modulePath: string|null, locations: {file: string, line: number}[]}>, cycleIds?: number[] }|undefined}
    */
   getArc(id) {
     return STATIC_DATA.arcs[id];
@@ -151,6 +151,23 @@ const StaticData = {
     const arc = STATIC_DATA.arcs[arcId];
     if (!arc) return false;
     return this.isTransitiveNode(arc.from) || this.isTransitiveNode(arc.to);
+  },
+
+  /**
+   * Get nesting level of a node.
+   * @param {string} id - Node ID
+   * @returns {number|undefined}
+   */
+  getNodeNesting(id) {
+    return STATIC_DATA.nodes[id]?.nesting;
+  },
+
+  /**
+   * Get the expand level from config (null if not set = all expanded).
+   * @returns {number|null}
+   */
+  getExpandLevel() {
+    return STATIC_DATA.expandLevel ?? null;
   },
 
   /**
