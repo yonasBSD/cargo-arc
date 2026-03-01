@@ -20,7 +20,7 @@ const VirtualEdgeLogic = {
 
   /**
    * Aggregate hidden edges by their visible endpoints.
-   * @param {Array<{arcId: string, fromId: string, toId: string, fromHidden: boolean, toHidden: boolean, sourceLocations?: Array<{symbol: string, modulePath: string|null, locations: {file: string, line: number}[]}>, direction?: string}>} edges
+   * @param {Array<{arcId: string, fromId: string, toId: string, fromHidden: boolean, toHidden: boolean, sourceLocations?: StaticArcData["usages"], direction?: string}>} edges
    * @param {function(string): string} getVisibleAncestorFn - Function to get visible ancestor for a node
    * @returns {Map<string, {count: number, hiddenEdgeData: string[], directions: string[], originalArcs: string[]}>}
    */

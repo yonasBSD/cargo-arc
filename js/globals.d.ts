@@ -25,11 +25,38 @@ declare const __TOOLBAR_HEIGHT__: number;
 declare const __SIDEBAR_SHADOW_PAD__: number;
 
 // Runtime global: pre-rendered static data from Rust
+interface StaticNodeData {
+  type: string;
+  name: string;
+  parent?: string | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  hasChildren: boolean;
+  nesting: number;
+  version?: string;
+}
+interface StaticArcData {
+  from: string;
+  to: string;
+  context: { kind: string; subKind?: string | null; features: string[] };
+  usages: {
+    symbol: string;
+    modulePath?: string | null;
+    locations: { file: string; line: number }[];
+  }[];
+  cycleIds?: number[];
+}
+interface StaticCycleData {
+  nodes: string[];
+  arcs: string[];
+}
 declare const STATIC_DATA: {
-  nodes: Record<string, any>;
-  arcs: Record<string, any>;
+  nodes: Record<string, StaticNodeData>;
+  arcs: Record<string, StaticArcData>;
   classes: Record<string, string>;
-  cycles?: Record<string, any>;
+  cycles?: Record<string, StaticCycleData>;
   expandLevel?: number | null;
 };
 

@@ -53,7 +53,7 @@ const SidebarLogic = {
 
   /**
    * Format a compact symbol annotation string from usages for cycle sidebar headers.
-   * @param {Array<{symbol: string, modulePath: string|null, locations: Array}>} usages
+   * @param {StaticArcData["usages"]} usages
    * @returns {string} e.g. "::Symbol", "::{S1, S2}", "::{S1, S2, …}", or ""
    */
   formatArcSymbols(usages) {
@@ -71,7 +71,7 @@ const SidebarLogic = {
    * Uses overrideData if provided, otherwise STATIC_DATA.arcs[arcId].
    * Expects structured usages: [{ symbol, modulePath, locations: [{ file, line }] }]
    * @param {string} arcId
-   * @param {{ from: string, to: string, usages: Array, originalArcs?: string[] }} [overrideData]
+   * @param {{ from: string, to: string, usages: StaticArcData["usages"], originalArcs?: string[], cycleIds?: number[] }} [overrideData]
    * @returns {string}
    */
   buildContent(arcId, overrideData) {
@@ -518,7 +518,7 @@ const SidebarLogic = {
    * Show sidebar transiently (hover preview). Debounced to prevent flicker.
    * No collapse handlers, adds sidebar-transient CSS class.
    * @param {string} arcId
-   * @param {{ from: string, to: string, usages: Array, originalArcs?: string[] }} [overrideData]
+   * @param {{ from: string, to: string, usages: StaticArcData["usages"], originalArcs?: string[], cycleIds?: number[] }} [overrideData]
    */
   showTransient(arcId, overrideData) {
     clearTimeout(this._debounceTimer);
@@ -551,7 +551,7 @@ const SidebarLogic = {
   /**
    * Show sidebar with content for given arc.
    * @param {string} arcId
-   * @param {{ from: string, to: string, usages: Array<{symbol: string, modulePath: string|null, locations: {file: string, line: number}[]}>, originalArcs?: string[] }} [overrideData]
+   * @param {{ from: string, to: string, usages: StaticArcData["usages"], originalArcs?: string[], cycleIds?: number[] }} [overrideData]
    */
   show(arcId, overrideData) {
     const el = this._getElement();
