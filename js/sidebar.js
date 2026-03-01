@@ -453,6 +453,16 @@ const SidebarLogic = {
     this._cachedX = null;
   },
 
+  /**
+   * Reset stored original viewBox dimensions. Call when the base SVG size
+   * changes (e.g. after relayout resizes the viewport) so the sidebar
+   * recaptures correct dimensions on next updatePosition().
+   */
+  resetStoredViewBox() {
+    this._originalViewBoxHeight = null;
+    this._originalViewBoxWidth = null;
+  },
+
   /** Cached X position — set once in show(), reused by updatePosition(). */
   _cachedX: null,
   /** Cached max arc right X — only changes on collapse/relayout, not on hover. */

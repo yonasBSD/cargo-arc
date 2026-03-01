@@ -1,6 +1,6 @@
 // @module SvgScript
 // @deps ArcLogic, StaticData, AppState, Selectors, DomAdapter, LayerManager, TreeLogic, DerivedState, HighlightRenderer, VirtualEdgeLogic, TextMeasure, SidebarLogic, SearchLogic
-// @config ROW_HEIGHT, MARGIN, TOOLBAR_HEIGHT
+// @config ROW_HEIGHT, MARGIN, TOOLBAR_HEIGHT, SIDEBAR_SHADOW_PAD
 // svg_script.js - DOM code for interactive SVG
 // ArcLogic is loaded from arc_logic.js before this file
 // Placeholders replaced at runtime: __ROW_HEIGHT__, __MARGIN__, __TOOLBAR_HEIGHT__
@@ -38,6 +38,10 @@ if (typeof document !== 'undefined') {
     const ROW_HEIGHT = __ROW_HEIGHT__;
     const MARGIN = __MARGIN__;
     const TOOLBAR_HEIGHT = __TOOLBAR_HEIGHT__;
+    const SIDEBAR_SHADOW_PAD =
+      typeof __SIDEBAR_SHADOW_PAD__ !== 'undefined'
+        ? __SIDEBAR_SHADOW_PAD__
+        : 12;
     const TOGGLE_OFFSET = 14;
     const C = STATIC_DATA.classes;
 
@@ -306,9 +310,50 @@ if (typeof document !== 'undefined') {
       });
     }
 
+    // Update SVG viewport dimensions to fit visible content.
+    // Mirrors the Rust calculate_canvas_size formula so expand/collapse
+    // keeps the SVG large enough for all visible nodes and arcs.
+    function updateSvgViewport(currentY, visiblePositionY) {
+      const svg = DomAdapter.getSvgRoot();
+      if (!svg) return;
+
+      const neededHeight = currentY + MARGIN + SIDEBAR_SHADOW_PAD;
+
+      // Width: maxNodeRight + arcSpace + sidebarSpace + margin
+      let maxNodeRight = 0;
+      for (const nodeId of visiblePositionY.keys()) {
+        const orig = StaticData.getOriginalPosition(nodeId);
+        maxNodeRight = Math.max(maxNodeRight, orig.x + orig.width);
+      }
+
+      let maxArcWidth = 50; // arc_min_space
+      for (const arcId of StaticData.getAllArcIds()) {
+        const arc = StaticData.getArc(arcId);
+        const fromY = visiblePositionY.get(arc.from);
+        const toY = visiblePositionY.get(arc.to);
+        if (fromY === undefined || toY === undefined) continue;
+        const hops = Math.max(1, Math.round(Math.abs(toY - fromY) / ROW_HEIGHT));
+        // arc_base (20) + hops * arc_scale (15) + arrow_length (8)
+        maxArcWidth = Math.max(maxArcWidth, 20 + hops * 15 + 8);
+      }
+
+      const sidebarSpace = 280 + SIDEBAR_SHADOW_PAD;
+      const neededWidth = maxNodeRight + Math.max(maxArcWidth, 50) + sidebarSpace + MARGIN;
+
+      const vb = svg.viewBox.baseVal;
+      vb.width = neededWidth;
+      vb.height = neededHeight;
+      svg.setAttribute('width', String(neededWidth));
+      svg.setAttribute('height', String(neededHeight));
+
+      // Base SVG size changed — sidebar must recapture on next show/update
+      SidebarLogic.resetStoredViewBox();
+    }
+
     // Relayout visible nodes
     function relayout() {
       let currentY = MARGIN + TOOLBAR_HEIGHT;
+      const visiblePositionY = new Map();
 
       // Get all node IDs sorted by original Y position (no DOM query for list)
       const sortedIds = StaticData.getAllNodeIds().sort((a, b) => {
@@ -325,6 +370,9 @@ if (typeof document !== 'undefined') {
 
         // Get height from StaticData (no DOM read)
         const height = StaticData.getOriginalPosition(nodeId).height;
+
+        // Track position for viewport calculation
+        visiblePositionY.set(nodeId, currentY);
 
         // Update rect position
         node.setAttribute('y', currentY);
@@ -355,6 +403,9 @@ if (typeof document !== 'undefined') {
       });
 
       recalculateVirtualEdges();
+
+      // Resize SVG to fit visible content
+      updateSvgViewport(currentY, visiblePositionY);
 
       // Re-apply highlights after edges were recreated
       highlightTiming.immediate();
