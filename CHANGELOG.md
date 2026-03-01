@@ -1,0 +1,68 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.0] - 2026-03-01
+
+### Added
+- `--expand-level` flag to start with deeper modules pre-collapsed
+- External dependency visualization with `--externals` flag
+- `--transitive-deps` flag to include transitive external dependencies
+- Direct vs transitive dependency distinction (separate visual styling)
+- Sidebar shows external dependencies as flat rows with pill-styled badges
+- Click sidebar badges to navigate to the corresponding graph node
+- Toggle (+/−) on sidebar node badges for expand/collapse
+- Sidebar refreshes when nodes are expanded or collapsed
+- Search dimming extended to arcs and external dependency nodes
+- Toolbar toggle for transitive dependency filtering
+
+### Changed
+- Sidebar entries sorted by tree position
+- Sidebar styling aligned with tree nodes (font-weight, badge widths)
+- Sidebar hides during navigation scroll
+- Toolbar checkboxes moved into dropdown menu
+
+### Fixed
+- SVG viewport clipping after expand/collapse
+- Missing arcs after expanding all initially collapsed nodes
+- Sidebar collapse broken with external dependencies present
+- Sidebar scroll jitter on short navigation jumps
+- Sidebar flicker during badge navigation scroll
+- Sidebar collapse-all needing two clicks
+- Collapse-all action not matching button label
+- Missing selection styling on sidebar header
+- Phantom highlight after background deselect
+- Hover lag during active search
+- Toolbar overflowing browser viewport width
+- Dimmed nodes not clickable when pinned
+- Sidebar not filling available viewport height
+
+### Performance
+- DOM element cache for O(1) hover lookups
+- Debounced hover highlights to reduce render churn
+- Cached filter-hidden node set per toggle cycle
+- Diff-based search highlight updates (skip stable matches)
+
+## [0.1.0] - 2026-02-23
+
+Initial public release.
+
+### Added
+- Interactive workspace dependency visualization as arc diagram
+- Collapsible crates and parent modules
+- Highlight relationships on hover and click
+- Symbol-level tooltips (imported symbols per dependency)
+- Cross-crate dependency edges via `syn`-based `use` statement parsing
+- Feature-based dependency graph filtering
+- Cycle detection via Johnson's algorithm with badge navigation
+- Search with dimming of non-matching nodes
+- HTML report generation (single self-contained file)
+
+[Unreleased]: https://github.com/seflue/cargo-arc/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/seflue/cargo-arc/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/seflue/cargo-arc/releases/tag/v0.1.0

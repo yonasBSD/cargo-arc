@@ -1,5 +1,6 @@
 # cargo-arc
 
+[![Crates.io](https://img.shields.io/crates/v/cargo-arc)](https://crates.io/crates/cargo-arc)
 [![CI](https://github.com/seflue/cargo-arc/actions/workflows/ci.yml/badge.svg)](https://github.com/seflue/cargo-arc/actions/workflows/ci.yml)
 
 Generates a collapsible arc diagram of your Cargo workspace as SVG.
@@ -9,7 +10,7 @@ that trace `use` dependencies between them.
 ## Installation
 
 ```bash
-cargo install --git https://github.com/seflue/cargo-arc
+cargo install cargo-arc
 ```
 
 Requires a stable Rust toolchain.
@@ -39,6 +40,7 @@ Arcs between nodes show where dependencies exist.
 - **Cross-crate module dependencies** — traces `use` dependencies across the whole workspace at module level
 - **Feature filtering** — show only crates involved in a specific Cargo feature
 - **Interactive SVG** — collapse, expand, and select directly in the browser
+- **External dependencies** — visualize which external crates your modules depend on
 - **Volatility report** — identifies frequently-changed modules based on git history
 
 ### Feature Filtering
@@ -53,6 +55,35 @@ cargo arc --features web -o web-deps.svg
 cargo arc --features web --no-default-features -o web-deps.svg
 ```
 
+### External Dependencies
+
+Show which external crates your modules depend on:
+
+```bash
+# Direct external dependencies only
+cargo arc --externals -o deps.svg
+
+# Include transitive external dependencies
+cargo arc --externals --transitive-deps -o deps.svg
+```
+
+External dependencies appear as separate nodes in the graph. The sidebar
+distinguishes direct from transitive dependencies with distinct styling.
+
+### Expand Level
+
+Start with deeper modules pre-collapsed to keep large workspaces readable:
+
+```bash
+# Show only crates (everything collapsed)
+cargo arc --expand-level 0 -o deps.svg
+
+# Show crates and their direct modules
+cargo arc --expand-level 1 -o deps.svg
+```
+
+Nodes beyond the given depth start collapsed. Click to expand interactively.
+
 ### Volatility Report
 
 Analyze which modules changed most frequently over the last months:
@@ -64,6 +95,19 @@ cargo arc --volatility
 Useful for identifying hotspots before refactoring. The analysis period
 and thresholds are configurable (`--volatility-months`, `--volatility-low`,
 `--volatility-high`).
+
+## Similar Projects
+
+- [cargo tree](https://doc.rust-lang.org/cargo/commands/cargo-tree.html) — built-in textual dependency tree (crate-level)
+- [cargo-modules](https://github.com/regexident/cargo-modules) — module tree and dependency visualization
+- [cargo-depgraph](https://github.com/jplatte/cargo-depgraph) — crate-level dependency graph as DOT with color-coded dependency kinds
+- [cargo-coupling](https://github.com/nwiizo/cargo-coupling) — coupling analysis based on Khononov's framework
+
+## References
+
+The arc diagram layout is inspired by Martin Wattenberg's
+[Arc Diagrams: Visualizing Structure in Strings](http://hint.fm/papers/arc-diagrams.pdf)
+(IEEE InfoVis 2002).
 
 ## Development
 

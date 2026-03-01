@@ -332,13 +332,17 @@ if (typeof document !== 'undefined') {
         const fromY = visiblePositionY.get(arc.from);
         const toY = visiblePositionY.get(arc.to);
         if (fromY === undefined || toY === undefined) continue;
-        const hops = Math.max(1, Math.round(Math.abs(toY - fromY) / ROW_HEIGHT));
+        const hops = Math.max(
+          1,
+          Math.round(Math.abs(toY - fromY) / ROW_HEIGHT),
+        );
         // arc_base (20) + hops * arc_scale (15) + arrow_length (8)
         maxArcWidth = Math.max(maxArcWidth, 20 + hops * 15 + 8);
       }
 
       const sidebarSpace = 280 + SIDEBAR_SHADOW_PAD;
-      const neededWidth = maxNodeRight + Math.max(maxArcWidth, 50) + sidebarSpace + MARGIN;
+      const neededWidth =
+        maxNodeRight + Math.max(maxArcWidth, 50) + sidebarSpace + MARGIN;
 
       const vb = svg.viewBox.baseVal;
       vb.width = neededWidth;
