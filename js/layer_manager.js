@@ -1,6 +1,28 @@
 // @module LayerManager
 // @deps
 // @config
+const LAYER_TABLE = [
+  {
+    check: (el, cls) =>
+      el.classList?.contains(cls.depArc) ||
+      el.classList?.contains(cls.cycleArc) ||
+      el.classList?.contains(cls.virtualArc) ||
+      el.tagName === 'polygon',
+    base: 'BASE_ARCS',
+    highlight: 'HIGHLIGHT_ARCS',
+  },
+  {
+    check: (el, cls) => el.classList?.contains(cls.arcCountGroup),
+    base: 'BASE_LABELS',
+    highlight: 'HIGHLIGHT_LABELS',
+  },
+  {
+    check: (el, cls) => el.classList?.contains(cls.arcHitarea),
+    base: 'HITAREAS',
+    highlight: 'HIGHLIGHT_HITAREAS',
+  },
+];
+
 /**
  * LayerManager - SVG layer management for highlight/base layer switching
  * Pure functions where possible, DOM operations via DomAdapter
@@ -26,25 +48,10 @@ const LayerManager = {
     if (!element) return null;
 
     const cls = STATIC_DATA.classes;
-    const isArc =
-      element.classList?.contains(cls.depArc) ||
-      element.classList?.contains(cls.cycleArc) ||
-      element.classList?.contains(cls.virtualArc) ||
-      element.tagName === 'polygon';
-    const isLabel = element.classList?.contains(cls.arcCountGroup);
-    const isHitarea = element.classList?.contains(cls.arcHitarea);
-
-    if (isArc)
-      return highlighted ? this.LAYERS.HIGHLIGHT_ARCS : this.LAYERS.BASE_ARCS;
-    if (isLabel)
-      return highlighted
-        ? this.LAYERS.HIGHLIGHT_LABELS
-        : this.LAYERS.BASE_LABELS;
-    if (isHitarea)
-      return highlighted
-        ? this.LAYERS.HIGHLIGHT_HITAREAS
-        : this.LAYERS.HITAREAS;
-    return null;
+    const entry = LAYER_TABLE.find(({ check }) => check(element, cls));
+    return entry
+      ? this.LAYERS[highlighted ? entry.highlight : entry.base]
+      : null;
   },
 
   /**
