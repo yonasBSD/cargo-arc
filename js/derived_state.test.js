@@ -658,7 +658,7 @@ describe('DerivedState', () => {
     test('full deselect returns null (ca-0301 regression)', () => {
       AppState.setHover(appState, 'node', 'fn_1');
       AppState.setSelection(appState, 'node', 'fn_1');
-      AppState.clearPinned(appState);
+      AppState.clearSelection(appState);
       AppState.clearHover(appState);
       const result = DerivedState.deriveHighlightState(
         appState,

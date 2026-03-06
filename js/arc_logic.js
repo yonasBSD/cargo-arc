@@ -7,6 +7,7 @@
 // Arrow base dimensions (at scale 1.0)
 const ARROW_LENGTH = 8;
 const ARROW_HALF_WIDTH = 4;
+const BASE_STROKE_WIDTH = 1.5;
 
 const ArcLogic = {
   // === Arrow geometry ===
@@ -45,7 +46,7 @@ const ArcLogic = {
    * @returns {number}
    */
   scaleFromStrokeWidth(strokeWidth) {
-    return strokeWidth / 1.5; // 1.5 was the original base stroke-width
+    return strokeWidth / BASE_STROKE_WIDTH;
   },
 
   /**

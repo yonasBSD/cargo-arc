@@ -6,11 +6,9 @@
  * Pure functions, no DOM access - testable in isolation
  */
 const Selectors = {
-  // IDs
   nodeId: (id) => `node-${id}`,
   countId: (id) => `count-${id}`,
 
-  // CSS Selectors
   baseArc: (arcId) => {
     const c = STATIC_DATA.classes;
     return `.${c.depArc}[data-arc-id="${arcId}"], .${c.cycleArc}[data-arc-id="${arcId}"]`;

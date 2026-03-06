@@ -205,32 +205,14 @@ describe('AppState', () => {
       AppState.setHover(state, 'node', 'node-1');
       expect(AppState.getPinned(state)).toBeNull();
     });
-
-    test('togglePinned works like toggleSelection', () => {
-      const state = AppState.create();
-      const result1 = AppState.togglePinned(state, 'node', 'node-1');
-      expect(result1).toBe(true);
-      const result2 = AppState.togglePinned(state, 'node', 'node-1');
-      expect(result2).toBe(false);
-    });
-
-    test('clearPinned works like clearSelection', () => {
-      const state = AppState.create();
-      AppState.setSelection(state, 'node', 'node-1');
-      AppState.clearPinned(state);
-      expect(AppState.getPinned(state)).toBeNull();
-    });
   });
 
   describe('deselect clears stale hover (ca-0301 regression)', () => {
-    test('clearPinned without clearHover leaves stale hover', () => {
+    test('clearSelection without clearHover leaves stale hover', () => {
       const state = AppState.create();
-      // Simulate: hover node A, then pin it
       AppState.setHover(state, 'node', 'A');
       AppState.setSelection(state, 'node', 'A');
-      // Simulate: deselect via background click (only clearPinned, no clearHover)
-      AppState.clearPinned(state);
-      // BUG: getSelection returns stale hover instead of none
+      AppState.clearSelection(state);
       const sel = AppState.getSelection(state);
       expect(sel.mode).toBe('hover');
       expect(sel.id).toBe('A');
@@ -240,8 +222,7 @@ describe('AppState', () => {
       const state = AppState.create();
       AppState.setHover(state, 'node', 'A');
       AppState.setSelection(state, 'node', 'A');
-      // Correct deselect: clear both
-      AppState.clearPinned(state);
+      AppState.clearSelection(state);
       AppState.clearHover(state);
       const sel = AppState.getSelection(state);
       expect(sel.mode).toBe('none');

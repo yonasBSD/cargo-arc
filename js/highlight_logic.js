@@ -59,19 +59,8 @@ const HighlightLogic = {
   },
 
   /**
-   * Calculate arrow scale for virtual arrows based on stroke width.
-   * Virtual arrows use stroke-based scaling (strokeWidth / 1.5).
-   * @param {number} strokeWidth - Current stroke width
-   * @returns {number} - Arrow scale factor
-   */
-  calculateVirtualArrowScale(strokeWidth) {
-    return ArcLogic.scaleFromStrokeWidth(strokeWidth);
-  },
-
-  /**
-   * Calculate all shadow-related data in one call.
    * @param {number} originalWidth - Original arc stroke width (not highlighted)
-   * @param {number} pathLength - Total path length from getTotalLength()
+   * @param {number} pathLength - Total path length
    * @returns {{shadowWidth: number, overhang: number, visibleLength: number, dashOffset: number}}
    */
   calculateShadowData(originalWidth, pathLength) {

@@ -370,24 +370,26 @@ const SidebarLogic = {
     };
     const selectedLen = effectiveLen(nodeId, nodeName);
     let inMaxFrom = 0;
-    let inMaxTo = 0;
     for (const rel of relations.incoming) {
       const target = StaticData.getNode(rel.targetId);
       const targetName = this._formatNodeName(target, rel.targetId);
       inMaxFrom = Math.max(inMaxFrom, effectiveLen(rel.targetId, targetName));
-      inMaxTo = Math.max(inMaxTo, selectedLen);
     }
-    let outMaxFrom = 0;
     let outMaxTo = 0;
     for (const rel of relations.outgoing) {
       const target = StaticData.getNode(rel.targetId);
       const targetName = this._formatNodeName(target, rel.targetId);
-      outMaxFrom = Math.max(outMaxFrom, selectedLen);
       outMaxTo = Math.max(outMaxTo, effectiveLen(rel.targetId, targetName));
     }
     return {
-      incoming: { maxFrom: inMaxFrom, maxTo: inMaxTo },
-      outgoing: { maxFrom: outMaxFrom, maxTo: outMaxTo },
+      incoming: {
+        maxFrom: inMaxFrom,
+        maxTo: relations.incoming.length > 0 ? selectedLen : 0,
+      },
+      outgoing: {
+        maxFrom: relations.outgoing.length > 0 ? selectedLen : 0,
+        maxTo: outMaxTo,
+      },
     };
   },
 

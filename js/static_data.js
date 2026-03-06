@@ -42,8 +42,7 @@ const StaticData = {
    * @returns {number}
    */
   getArcWeight(arcId) {
-    const usages = STATIC_DATA.arcs[arcId]?.usages;
-    if (!usages) return 0;
+    const usages = STATIC_DATA.arcs[arcId]?.usages ?? [];
     return usages.reduce((sum, g) => sum + g.locations.length, 0);
   },
 

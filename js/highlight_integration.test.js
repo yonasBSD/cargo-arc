@@ -361,8 +361,7 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
 
     // === HIGHLIGHT ===
     const highlightWidth = HighlightLogic.calculateHighlightWidth(strokeWidth);
-    const highlightScale =
-      HighlightLogic.calculateVirtualArrowScale(highlightWidth);
+    const highlightScale = ArcLogic.scaleFromStrokeWidth(highlightWidth);
     const currentTip = ArcLogic.parseTipFromPoints(
       arrow.getAttribute('points'),
     );
@@ -397,7 +396,7 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
 
     // === HOVER AGAIN ===
     const secondTip = ArcLogic.parseTipFromPoints(arrow.getAttribute('points'));
-    const secondHighlightScale = HighlightLogic.calculateVirtualArrowScale(
+    const secondHighlightScale = ArcLogic.scaleFromStrokeWidth(
       HighlightLogic.calculateHighlightWidth(resetStrokeWidth),
     );
     arrow.setAttribute(
@@ -427,7 +426,7 @@ describe('Virtual Arc Hover Bug Regression Tests', () => {
     // Simulate 5 hover/unhover cycles
     for (let i = 0; i < 5; i++) {
       // Highlight
-      const highlightScale = HighlightLogic.calculateVirtualArrowScale(
+      const highlightScale = ArcLogic.scaleFromStrokeWidth(
         HighlightLogic.calculateHighlightWidth(strokeWidth),
       );
       const currentTip = ArcLogic.parseTipFromPoints(
@@ -544,15 +543,15 @@ describe('AppState without originalValues', () => {
   test('selection operations still work', () => {
     const appState = AppState.create();
 
-    // Toggle pinned
-    expect(AppState.togglePinned(appState, 'node', 'node-1')).toBe(true);
+    // Toggle selection
+    expect(AppState.toggleSelection(appState, 'node', 'node-1')).toBe(true);
     expect(AppState.getPinned(appState)).toEqual({
       type: 'node',
       id: 'node-1',
     });
 
     // Toggle again to deselect
-    expect(AppState.togglePinned(appState, 'node', 'node-1')).toBe(false);
+    expect(AppState.toggleSelection(appState, 'node', 'node-1')).toBe(false);
     expect(AppState.getPinned(appState)).toBeNull();
   });
 });

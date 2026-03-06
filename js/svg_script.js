@@ -115,7 +115,7 @@ if (typeof document !== 'undefined') {
     // Shared toggle core for all clickable elements (edge, node, virtual edge).
     // The showSidebar callback provides the type-specific sidebar display logic.
     function toggleHighlight(type, id, showSidebar) {
-      const isPinned = AppState.togglePinned(appState, type, id);
+      const isPinned = AppState.toggleSelection(appState, type, id);
       highlightTiming.immediate();
       if (!isPinned) {
         SidebarLogic.hide();
@@ -1259,7 +1259,7 @@ if (typeof document !== 'undefined') {
     });
 
     DomAdapter.getSvgRoot().addEventListener('click', () => {
-      AppState.clearPinned(appState);
+      AppState.clearSelection(appState);
       AppState.clearHover(appState);
       highlightTiming.immediate();
       SidebarLogic.hide();
@@ -1276,7 +1276,7 @@ if (typeof document !== 'undefined') {
         e.stopPropagation(); // Prevent SVG background click
         const target = /** @type {Element} */ (e.target);
         if (target.classList.contains('sidebar-close')) {
-          AppState.clearPinned(appState);
+          AppState.clearSelection(appState);
           AppState.clearHover(appState);
           highlightTiming.immediate();
           SidebarLogic.hide();

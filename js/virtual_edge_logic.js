@@ -12,7 +12,7 @@ const VirtualEdgeLogic = {
    * @returns {string} - Aggregated direction
    */
   determineAggregatedDirection(directions) {
-    if (!directions || directions.length === 0) return 'downward';
+    if (directions.length === 0) return 'downward';
     return directions.every((d) => d === directions[0])
       ? directions[0]
       : 'downward';

@@ -549,9 +549,7 @@ const DerivedState = {
   ) {
     const highlightWidth =
       HighlightLogic.calculateHighlightWidth(originalWidth);
-    const arrowScale = isVirtual
-      ? HighlightLogic.calculateVirtualArrowScale(highlightWidth)
-      : ArcLogic.scaleFromStrokeWidth(highlightWidth);
+    const arrowScale = ArcLogic.scaleFromStrokeWidth(highlightWidth);
     return {
       arcHighlight: { highlightWidth, arrowScale, relationType, isVirtual },
       shadow: this._computeShadowEntry(
@@ -575,7 +573,7 @@ const DerivedState = {
     isCycle,
   ) {
     if (!fromPos || !toPos) return null;
-    const pathData = this._computeArcPath(
+    const pathData = ArcLogic.calculateArcPathFromPositions(
       fromPos,
       toPos,
       ctx.yOffset,
@@ -612,26 +610,6 @@ const DerivedState = {
     if (!toRole || toRole === 'group-member') {
       nodeHighlights.set(toId, { role: 'dependency', cssClass: 'depNode' });
     }
-  },
-
-  /**
-   * Compute arc path between two node positions.
-   * @private
-   * @param {{x: number, y: number, width: number, height: number}} fromPos
-   * @param {{x: number, y: number, width: number, height: number}} toPos
-   * @param {number} yOffset - Y offset for arc endpoints
-   * @param {number} maxRight - Rightmost X coordinate
-   * @param {number} rowHeight - Row height for arc offset calculation
-   * @returns {{path: string, toX: number, toY: number, ctrlX: number, midY: number}}
-   */
-  _computeArcPath(fromPos, toPos, yOffset, maxRight, rowHeight) {
-    return ArcLogic.calculateArcPathFromPositions(
-      fromPos,
-      toPos,
-      yOffset,
-      maxRight,
-      rowHeight,
-    );
   },
 
   /**

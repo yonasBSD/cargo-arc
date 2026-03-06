@@ -70,14 +70,6 @@ describe('HighlightLogic', () => {
     });
   });
 
-  describe('calculateVirtualArrowScale', () => {
-    test('divides stroke width by 1.5', () => {
-      expect(HighlightLogic.calculateVirtualArrowScale(1.5)).toBe(1.0);
-      expect(HighlightLogic.calculateVirtualArrowScale(3.0)).toBe(2.0);
-      expect(HighlightLogic.calculateVirtualArrowScale(0.75)).toBe(0.5);
-    });
-  });
-
   describe('calculateShadowData', () => {
     test('combines all shadow calculations', () => {
       const result = HighlightLogic.calculateShadowData(1.0, 100);

@@ -43,27 +43,22 @@ const TreeLogic = {
    */
   getVisibleAncestor(nodeId, collapsedSet, parentMap) {
     const parentId = parentMap.get(nodeId);
-    if (!parentId) return nodeId; // Root - always visible
+    if (!parentId) return nodeId;
 
-    // Check if parent is collapsed
     if (collapsedSet.has(parentId)) {
-      // Parent is collapsed -> return parent's visible ancestor
       return this.getVisibleAncestor(parentId, collapsedSet, parentMap);
     }
 
-    // Parent is not collapsed, but check if parent is visible
-    // (i.e., no ancestor of parent is collapsed)
     const parentsVisibleAncestor = this.getVisibleAncestor(
       parentId,
       collapsedSet,
       parentMap,
     );
     if (parentsVisibleAncestor !== parentId) {
-      // Parent is hidden (has collapsed ancestor) -> return that ancestor
       return parentsVisibleAncestor;
     }
 
-    return nodeId; // This node is visible
+    return nodeId;
   },
 };
 

@@ -30,12 +30,7 @@ const AppState = {
 
   // === Collapse Operations ===
 
-  /**
-   * Check if node is collapsed
-   * @param {Object} state - AppState object
-   * @param {string} nodeId
-   * @returns {boolean}
-   */
+  /** @param {Object} state @param {string} nodeId @returns {boolean} */
   isCollapsed(state, nodeId) {
     return state.collapsed.has(nodeId);
   },
@@ -185,46 +180,19 @@ const AppState = {
     state.hiddenArcIds.delete(arcId);
   },
 
-  /**
-   * Check if arc is hidden by filter
-   * @param {Object} state
-   * @param {string} arcId
-   * @returns {boolean}
-   */
+  /** @param {Object} state @param {string} arcId @returns {boolean} */
   isArcHidden(state, arcId) {
     return state.hiddenArcIds.has(arcId);
   },
 
-  // === Legacy Compatibility ===
-  // These mirror HighlightState API for easier migration
-
   /**
-   * Get pinned (click) selection (legacy API)
+   * Get pinned (click) selection.
    * @param {Object} state
    * @returns {null|{type: string, id: string}}
    */
   getPinned(state) {
     if (state.clickSelection.type === null) return null;
     return { ...state.clickSelection };
-  },
-
-  /**
-   * Toggle pinned state (legacy API, delegates to toggleSelection)
-   * @param {Object} state
-   * @param {'node'|'arc'} type
-   * @param {string} id
-   * @returns {boolean} - true if newly pinned, false if unpinned
-   */
-  togglePinned(state, type, id) {
-    return this.toggleSelection(state, type, id);
-  },
-
-  /**
-   * Clear pinned selection (legacy API, delegates to clearSelection)
-   * @param {Object} state
-   */
-  clearPinned(state) {
-    this.clearSelection(state);
   },
 };
 

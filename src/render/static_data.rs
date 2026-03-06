@@ -1244,8 +1244,8 @@ mod tests {
         let config = RenderConfig::default();
         let script = render_script(&config, &ir, &[], &HashSet::new());
         assert!(
-            script.contains("AppState.togglePinned(appState, type, id)"),
-            "toggleHighlight should use AppState.togglePinned"
+            script.contains("AppState.toggleSelection(appState, type, id)"),
+            "toggleHighlight should use AppState.toggleSelection"
         );
     }
 
