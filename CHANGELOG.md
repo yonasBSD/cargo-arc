@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-03-13
+
+### Added
+- Single-file crates rendered in workspace diagrams
+
+### Changed
+- Node and arc filter toggling unified
+- Shared show logic extracted in sidebar
+- Shared arc-row logic extracted in cycle sidebar
+- Layer dispatch replaced with table lookup
+- Virtual arcs rendered in single pass
+- Redundant no-op wrappers removed, accessor methods introduced
+- `classList.toggle` used instead of manual class manipulation
+
+### Fixed
+- Single-file crates invisible in workspace diagrams (anchor detection required Contains-edges)
+
 ## [0.2.0] - 2026-03-01
 
 ### Added
@@ -63,6 +80,7 @@ Initial public release.
 - Search with dimming of non-matching nodes
 - HTML report generation (single self-contained file)
 
-[Unreleased]: https://github.com/seflue/cargo-arc/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/seflue/cargo-arc/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/seflue/cargo-arc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/seflue/cargo-arc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/seflue/cargo-arc/releases/tag/v0.1.0
